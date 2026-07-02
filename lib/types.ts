@@ -80,6 +80,7 @@ export interface ToolResultMessage {
   toolName?: string;
   content: (TextContent | ImageContent)[];
   isError?: boolean;
+  details?: unknown;
   timestamp?: number;
 }
 
@@ -164,6 +165,13 @@ export type ExtensionUiRequest =
       id: string;
       method: "set_editor_text";
       text: string;
+    }
+  | {
+      type: "extension_ui_request";
+      id: string;
+      method: "custom";
+      lines: string[];
+      closed?: boolean;
     };
 
 export type ExtensionUiResponse =
