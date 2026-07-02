@@ -162,8 +162,14 @@ function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
       return normalizeToolCalls(entry.message);
     case "compaction":
       return {
-        role: "user",
-        content: `*The conversation history before this point was compacted into the following summary:*\n\n${entry.summary}`,
+        role: "custom",
+        customType: "compaction",
+        content: entry.summary,
+        display: true,
+        details: {
+          tokensBefore: entry.tokensBefore,
+          firstKeptEntryId: entry.firstKeptEntryId,
+        },
         timestamp: Date.parse(entry.timestamp) || undefined,
       };
     case "branch_summary":
@@ -192,5 +198,4 @@ export function getLeafId(entries: SessionEntry[]): string | null {
   if (entries.length === 0) return null;
   return entries[entries.length - 1].id;
 }
-
 
