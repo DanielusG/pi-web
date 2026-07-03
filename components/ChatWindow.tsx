@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
-import type { AgentMessage, AssistantMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolCallContent, ToolResultMessage } from "@/lib/types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
+import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -87,18 +88,26 @@ function countToolCalls(messages: AgentMessage[], indices: number[]): number {
   for (const idx of indices) {
     const msg = messages[idx];
     if (msg?.role !== "assistant") continue;
-    count += ((msg as AssistantMessage).content ?? [])
-      .filter((block): block is ToolCallContent => block.type === "toolCall")
-      .length;
+    count += countToolCallBlocks(getDisplayableAssistantBlocks(msg as AssistantMessage));
   }
   return count;
 }
 
-function processMessageCount(messages: AgentMessage[], indices: number[]): number {
-  return indices.filter((idx) => {
-    const role = messages[idx]?.role;
-    return role === "assistant" || role === "custom";
-  }).length;
+function hasDisplayableProcessMessage(message: AgentMessage): boolean {
+  if (message.role === "assistant") {
+    return getDisplayableAssistantBlocks(message as AssistantMessage).length > 0;
+  }
+  return message.role === "custom";
+}
+
+function withAssistantBlocks(
+  message: AssistantMessage,
+  content: AssistantContentBlock[],
+  options: { omitUsage?: boolean } = {},
+): AssistantMessage {
+  const next = { ...message, content };
+  if (options.omitUsage) next.usage = undefined;
+  return next;
 }
 
 function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
@@ -469,8 +478,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string } = {}): ReactNode => {
-                const msg = messages[idx];
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean } = {}): ReactNode => {
+                const msg = options.messageOverride ?? messages[idx];
                 const prevAssistantEntryId =
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
                     ? entryIds[idx - 1]
@@ -491,6 +500,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                     showTimestamp = false;
                   }
                 }
+                if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
                 const view = (
                   <MessageView
                     key={`${keyPrefix}-view-${idx}`}
@@ -555,18 +565,29 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
                   processIndices.push(processIdx);
                 }
+                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
+                const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
+                const finalSplit = splitFinalAssistantBlocks(finalAssistant);
+                const finalProcessMessage = finalSplit.processBlocks.length > 0
+                  ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
+                  : null;
+                const finalAnswerMessage = finalSplit.answerBlocks.length > 0
+                  ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
+                  : null;
 
-                const processCount = processMessageCount(messages, processIndices);
+                const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
                 if (processCount > 0) {
-                  const processRefIdx = processIndices
+                  const processRefIdx = visibleProcessIndices
                     .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
-                    .find((value): value is number => typeof value === "number");
+                    .find((value): value is number => typeof value === "number")
+                    ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
                   const processGroup = (
                     <ProcessDetailsGroup
                       messageCount={processCount}
-                      toolCallCount={countToolCalls(messages, processIndices)}
+                      toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
                     >
-                      {processIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
+                      {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
+                      {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
                     </ProcessDetailsGroup>
                   );
                   rendered.push(
@@ -579,7 +600,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   );
                 }
 
-                rendered.push(renderMessage(finalAssistantIdx));
+                if (finalAnswerMessage) {
+                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
+                }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
                   rendered.push(renderMessage(renderIdx));
                 }
