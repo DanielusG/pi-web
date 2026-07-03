@@ -41,6 +41,10 @@ function phaseLabel(phase: AgentPhase): string {
   return "Thinking...";
 }
 
+const CHAT_MINIMAP_WIDTH = 36;
+const CHAT_COLUMN_PADDING = 16;
+const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
+
 const TYPEWRITER_PHRASES = [
   "ready when you are.",
   "ask me anything.",
@@ -61,10 +65,6 @@ const TYPEWRITER_PHRASES = [
   "make it pretty.",
   "rubber-duck with me.",
 ];
-
-const CHAT_MINIMAP_WIDTH = 36;
-const CHAT_COLUMN_PADDING = 16;
-const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
 function assistantTextLength(message: AgentMessage): number {
   if (message.role !== "assistant") return 0;
