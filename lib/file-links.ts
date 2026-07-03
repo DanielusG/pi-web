@@ -74,6 +74,7 @@ export function resolveLocalFileHref(href: string | undefined, cwd?: string): st
   if (!cleanHref) return null;
 
   let candidate: string | null = null;
+  let candidateKind: "absolute" | "relative" | null = null;
   const decodedHref = safeDecode(cleanHref);
   const normalizedHref = normalizeFilePathSlashes(decodedHref);
   const lowerHref = normalizedHref.toLowerCase();
@@ -83,17 +84,21 @@ export function resolveLocalFileHref(href: string | undefined, cwd?: string): st
 
   if (lowerHref.startsWith("file:")) {
     candidate = fileUrlToPath(normalizedHref);
+    candidateKind = candidate ? "absolute" : null;
   } else if (/^[a-zA-Z]:\//.test(normalizedHref)) {
     candidate = normalizedHref;
+    candidateKind = "absolute";
   } else if (normalizedHref.startsWith("/")) {
     candidate = normalizedHref;
+    candidateKind = "absolute";
   } else if (cwd && looksLikeRelativeFileHref(normalizedHref)) {
     candidate = `${normalizeFilePathSlashes(cwd).replace(/\/+$/, "")}/${normalizedHref}`;
+    candidateKind = "relative";
   }
 
   if (!candidate) return null;
 
   const filePath = stripLineSuffix(normalizeLocalPath(candidate));
-  if (cwd && !isPathInside(filePath, cwd)) return null;
+  if (candidateKind === "relative" && cwd && !isPathInside(filePath, cwd)) return null;
   return filePath;
 }

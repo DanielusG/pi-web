@@ -1,5 +1,5 @@
 import { SessionManager, buildSessionContext as piBuildSessionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { AgentMessage, SessionEntry, SessionInfo, SessionContext, SessionTreeNode } from "./types";
+import type { AgentMessage, SessionEntry, SessionInfo, SessionContext } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 
@@ -60,6 +60,11 @@ export function cacheSessionPath(sessionId: string, filePath: string): void {
 
 export function invalidateSessionPathCache(sessionId: string): void {
   getPathCache().delete(sessionId);
+}
+
+export function getSessionEntries(filePath: string): SessionEntry[] {
+  const entries = SessionManager.open(filePath).getEntries();
+  return entries as unknown as SessionEntry[];
 }
 
 export function buildSessionContext(entries: SessionEntry[], leafId?: string | null): SessionContext {

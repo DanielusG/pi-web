@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getDisplayableAssistantBlocks } from "@/lib/message-display";
 import type {
   AgentMessage,
@@ -1081,6 +1082,7 @@ function PairedResult({ text, isEmpty, isError }: {
 
 function CompactionMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
   const summary = getMessageText(message.content);
+  const parsedSummary = useMemo(() => parseCompactionSummary(summary), [summary]);
   const time = formatTime(message.timestamp);
 
   return (
@@ -1117,13 +1119,44 @@ function CompactionMessageView({ message, cwd, onOpenFile }: { message: CustomMe
           <div style={{ marginTop: 3, marginBottom: 10, color: "var(--text)", fontSize: 14, lineHeight: 1.5 }}>
             The conversation history before this point was compacted into the following summary:
           </div>
-          {summary ? (
-            <MarkdownBody className="markdown-compaction-message" cwd={cwd} onOpenFile={onOpenFile}>{summary}</MarkdownBody>
+          {parsedSummary.body ? (
+            <MarkdownBody className="markdown-compaction-message" cwd={cwd} onOpenFile={onOpenFile}>{parsedSummary.body}</MarkdownBody>
           ) : (
             <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no summary)</span>
           )}
+          <CompactionFileMetadata readFiles={parsedSummary.readFiles} modifiedFiles={parsedSummary.modifiedFiles} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function CompactionFileMetadata({ readFiles, modifiedFiles }: { readFiles: string[]; modifiedFiles: string[] }) {
+  const total = readFiles.length + modifiedFiles.length;
+  if (total === 0) return null;
+
+  const parts = [];
+  if (readFiles.length > 0) parts.push(`${readFiles.length} read`);
+  if (modifiedFiles.length > 0) parts.push(`${modifiedFiles.length} modified`);
+
+  return (
+    <details className="compaction-file-details">
+      <summary>File context: {parts.join(", ")}</summary>
+      {modifiedFiles.length > 0 && <CompactionFileList title="Modified files" files={modifiedFiles} />}
+      {readFiles.length > 0 && <CompactionFileList title="Read files" files={readFiles} />}
+    </details>
+  );
+}
+
+function CompactionFileList({ title, files }: { title: string; files: string[] }) {
+  return (
+    <div className="compaction-file-section">
+      <div className="compaction-file-title">{title}</div>
+      <ul className="compaction-file-list">
+        {files.map((file) => (
+          <li key={file}>{file}</li>
+        ))}
+      </ul>
     </div>
   );
 }
