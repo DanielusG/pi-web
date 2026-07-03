@@ -20,6 +20,8 @@ interface Props {
   isStreaming?: boolean;
   toolResults?: Map<string, ToolResultMessage>;
   modelNames?: Record<string, string>;
+  cwd?: string;
+  onOpenFile?: (filePath: string) => void;
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
@@ -62,12 +64,12 @@ function copyText(text: string): Promise<void> {
   }
 }
 
-export function MessageView({ message, isStreaming, toolResults, modelNames, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp }: Props) {
+export function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -75,15 +77,17 @@ export function MessageView({ message, isStreaming, toolResults, modelNames, ent
   }
   if (message.role === "custom") {
     if ((message as CustomMessage).customType === "compaction") {
-      return <CompactionMessageView message={message as CustomMessage} />;
+      return <CompactionMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
     }
-    return <CustomMessageView message={message as CustomMessage} />;
+    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   return null;
 }
 
-function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
   message: UserMessage;
+  cwd?: string;
+  onOpenFile?: (filePath: string) => void;
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
@@ -164,7 +168,7 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
               })}
             </div>
           )}
-          {content && <MarkdownBody className="markdown-user-message">{content}</MarkdownBody>}
+          {content && <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</MarkdownBody>}
         </div>
 
       </div>
@@ -285,6 +289,8 @@ function AssistantMessageView({
   isStreaming,
   toolResults,
   modelNames,
+  cwd,
+  onOpenFile,
   showTimestamp,
   prevTimestamp,
 }: {
@@ -292,6 +298,8 @@ function AssistantMessageView({
   isStreaming?: boolean;
   toolResults?: Map<string, ToolResultMessage>;
   modelNames?: Record<string, string>;
+  cwd?: string;
+  onOpenFile?: (filePath: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
 }) {
@@ -453,7 +461,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blocks.map((block, i) => (
-          <BlockView key={i} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(i) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} />
+          <BlockView key={i} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(i) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} />
         ))}
       </div>
 
@@ -506,9 +514,9 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number> }) {
+function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void }) {
   if (block.type === "text") {
-    return <TextBlock block={block as TextContent} isStreaming={isStreaming} />;
+    return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (block.type === "thinking") {
     return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} />;
@@ -522,8 +530,8 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
   return null;
 }
 
-function TextBlock({ block, isStreaming }: { block: TextContent; isStreaming?: boolean }) {
-  return <MarkdownBody isStreaming={isStreaming}>{block.text}</MarkdownBody>;
+function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void }) {
+  return <MarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{block.text}</MarkdownBody>;
 }
 
 function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?: number }) {
@@ -1068,7 +1076,7 @@ function PairedResult({ text, isEmpty, isError }: {
   );
 }
 
-function CompactionMessageView({ message }: { message: CustomMessage }) {
+function CompactionMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
   const summary = getMessageText(message.content);
   const time = formatTime(message.timestamp);
 
@@ -1107,7 +1115,7 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
             The conversation history before this point was compacted into the following summary:
           </div>
           {summary ? (
-            <MarkdownBody className="markdown-compaction-message">{summary}</MarkdownBody>
+            <MarkdownBody className="markdown-compaction-message" cwd={cwd} onOpenFile={onOpenFile}>{summary}</MarkdownBody>
           ) : (
             <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no summary)</span>
           )}
@@ -1117,7 +1125,7 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
   );
 }
 
-function CustomMessageView({ message }: { message: CustomMessage }) {
+function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -1185,7 +1193,7 @@ function CustomMessageView({ message }: { message: CustomMessage }) {
                 })}
               </div>
             )}
-            {text ? <MarkdownBody className="markdown-custom-message">{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no message)</span>}
+            {text ? <MarkdownBody className="markdown-custom-message" cwd={cwd} onOpenFile={onOpenFile}>{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no message)</span>}
           </div>
         ) : (
           <button

@@ -12,6 +12,7 @@ import { PluginsConfig } from "./PluginsConfig";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { getFileName } from "@/lib/file-paths";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -273,6 +274,10 @@ export function AppShell() {
     // On mobile the file panel is full-screen; close the drawer so it shows.
     if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
+
+  const handleOpenLinkedFile = useCallback((filePath: string) => {
+    handleOpenFile(filePath, getFileName(filePath));
+  }, [handleOpenFile]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
     setFileTabs((prev) => {
@@ -953,6 +958,7 @@ export function AppShell() {
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onContextUsageChange={handleContextUsageChange}
+              onOpenFile={handleOpenLinkedFile}
             />
           ) : showPlaceholder ? (
             activeCwd ? (

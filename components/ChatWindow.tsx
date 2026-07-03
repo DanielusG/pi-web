@@ -24,6 +24,7 @@ interface Props {
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
+  onOpenFile?: (filePath: string) => void;
 }
 
 function phaseLabel(phase: AgentPhase): string {
@@ -166,7 +167,7 @@ function Typewriter({ phrases }: { phrases: string[] }) {
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
   const {
     loading, error, messages, entryIds, streamState,
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
@@ -254,6 +255,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const messageRefs = useMessageRefs(visibleMessages.length);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !agentRunning;
+  const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -485,6 +487,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                     message={msg}
                     toolResults={toolResultsMap}
                     modelNames={modelNames}
+                    cwd={messageCwd}
+                    onOpenFile={onOpenFile}
                     entryId={entryIds[idx]}
                     onFork={agentRunning || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
@@ -577,7 +581,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             })()}
 
             {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
             )}
 
             {agentRunning && !streamState.streamingMessage && (
