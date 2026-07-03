@@ -72,6 +72,16 @@ function assistantTextLength(message: AgentMessage): number {
     .reduce((sum, block) => sum + block.text.trim().length, 0);
 }
 
+function findFinalAssistantIndex(messages: AgentMessage[], userIdx: number, endIdx: number): number {
+  for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
+    if (assistantTextLength(messages[candidateIdx]) > 0) return candidateIdx;
+  }
+  for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
+    if (messages[candidateIdx]?.role === "assistant") return candidateIdx;
+  }
+  return -1;
+}
+
 function countToolCalls(messages: AgentMessage[], indices: number[]): number {
   let count = 0;
   for (const idx of indices) {
@@ -507,11 +517,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 );
               };
 
-              const shouldCollapseProcess = !agentRunning && !streamState.isStreaming;
-              if (!shouldCollapseProcess) {
-                return messages.map((_, idx) => renderMessage(idx));
-              }
-
               const rendered: ReactNode[] = [];
               for (let idx = 0; idx < messages.length;) {
                 const msg = messages[idx];
@@ -525,15 +530,18 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 let endIdx = userIdx + 1;
                 while (endIdx < messages.length && messages[endIdx].role !== "user") endIdx += 1;
 
-                let finalAssistantIdx = -1;
-                for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
-                  if (assistantTextLength(messages[candidateIdx]) > 0) {
-                    finalAssistantIdx = candidateIdx;
-                    break;
-                  }
-                }
+                const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
 
                 if (finalAssistantIdx === -1) {
+                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+                    rendered.push(renderMessage(renderIdx));
+                  }
+                  idx = endIdx;
+                  continue;
+                }
+
+                const isLiveTail = (agentRunning || streamState.isStreaming) && endIdx === messages.length && userIdx === lastUserIdx;
+                if (isLiveTail) {
                   for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
                     rendered.push(renderMessage(renderIdx));
                   }
