@@ -112,8 +112,8 @@ function withAssistantBlocks(
 
 function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
-  const parts = ["过程详情", `${messageCount} 条消息`];
-  if (toolCallCount > 0) parts.push(`${toolCallCount} 个工具调用`);
+  const parts = ["Process details", `${messageCount} ${messageCount === 1 ? "message" : "messages"}`];
+  if (toolCallCount > 0) parts.push(`${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`);
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -134,7 +134,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
           fontSize: 12,
           textAlign: "left",
         }}
-        title={expanded ? "收起过程详情" : "展开过程详情"}
+        title={expanded ? "Collapse process details" : "Expand process details"}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
