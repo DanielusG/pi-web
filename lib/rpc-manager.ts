@@ -1,4 +1,4 @@
-import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
@@ -901,7 +901,6 @@ export async function startRpcSession(
   if (inflight) return inflight;
 
   const starting = (async () => {
-    const { SessionManager, getAgentDir } = await import("@earendil-works/pi-coding-agent");
     const agentDir = getAgentDir();
 
     const sessionManager = sessionFile
@@ -909,7 +908,7 @@ export async function startRpcSession(
       : SessionManager.create(cwd, undefined);
 
     // Determine which tools to pass based on requested toolNames.
-    // Since v0.68.0, createAgentSession expects string[] tool names instead of Tool[] instances.
+    // Since v0.68.0, session creation expects string[] tool names instead of Tool[] instances.
     let toolsOption: string[] | undefined;
     if (toolNames !== undefined) {
       // toolNames === [] -> "all off" (an empty allow-list disables every tool).
@@ -922,9 +921,11 @@ export async function startRpcSession(
       toolsOption = toolNames.length === 0 ? [] : undefined;
     }
 
-    const { session: inner } = await createAgentSession({
-      cwd,
-      agentDir,
+    // Build services first so extension-registered providers are available
+    // before the SDK restores the saved model from the session file.
+    const services = await createAgentSessionServices({ cwd, agentDir });
+    const { session: inner } = await createAgentSessionFromServices({
+      services,
       sessionManager,
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
     });

@@ -12,6 +12,29 @@ Lint: `npm run lint`
 
 ---
 
+## Personal Fork Workflow
+
+This checkout is maintained as a personal fork.
+
+- Daily development happens on the `personal` branch.
+- Keep `main` aligned with the official upstream project; avoid personal-only commits on `main`.
+- When upstream changes arrive, update `main` from upstream first, then merge `main` into `personal`.
+- Preserve personal changes intentionally on `personal`. During conflicts, treat `main` as the upstream baseline and re-apply or adapt local differences there.
+- Prefer merge for syncing upstream into `personal`; use rebase only when it is clearly safe and simpler.
+- After local changes or upstream merges, run a production build and restart the corresponding `systemctl` service before testing.
+
+Typical flow:
+
+```bash
+git switch main
+git pull upstream main
+
+git switch personal
+git merge main
+```
+
+---
+
 ## Architecture
 
 ```
