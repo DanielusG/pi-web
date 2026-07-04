@@ -75,7 +75,17 @@ type AgentStateResponse = {
   isCompacting?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
+  queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
 };
+
+export interface QueuedMessages {
+  steering: string[];
+  followUp: string[];
+}
+
+function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
+  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+}
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
@@ -148,6 +158,7 @@ const USER_SCROLL_INTENT_MS = 1200;
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
+const AGENT_STATE_RECONCILE_MS = 15_000;
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
@@ -210,6 +221,52 @@ function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
   }
 }
 
+function extractMessageText(message: Partial<AgentMessage>): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) =>
+      block && typeof block === "object"
+        && (block as { type?: string }).type === "text"
+        && typeof (block as { text?: unknown }).text === "string"
+        ? (block as { text: string }).text
+        : "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function imageSignature(block: unknown): string {
+  if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "image") return "";
+  const source = (block as { source?: unknown }).source;
+  if (source && typeof source === "object") {
+    const src = source as { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+    return [
+      src.type === "url" ? "url" : "base64",
+      typeof src.media_type === "string" ? src.media_type : "",
+      typeof src.data === "string" ? src.data : "",
+      typeof src.url === "string" ? src.url : "",
+    ].join(":");
+  }
+  const flat = block as { data?: unknown; mimeType?: unknown };
+  return [
+    "base64",
+    typeof flat.mimeType === "string" ? flat.mimeType : "",
+    typeof flat.data === "string" ? flat.data : "",
+    "",
+  ].join(":");
+}
+
+function userMessageKey(message: Partial<AgentMessage>): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return JSON.stringify({ text: content, images: [] });
+  if (!Array.isArray(content)) return JSON.stringify({ text: "", images: [] });
+  return JSON.stringify({
+    text: extractMessageText(message),
+    images: content.map(imageSignature).filter(Boolean),
+  });
+}
+
 function readCompactResult(result: unknown, reason: string): CompactResultInfo | null {
   if (!result || typeof result !== "object") return null;
   const r = result as CompactCommandResult;
@@ -220,6 +277,7 @@ function readCompactResult(result: unknown, reason: string): CompactResultInfo |
 export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (content: string) => void;
+  prependText: (text: string) => void;
   addImages: (files: File[]) => void;
 }
 
@@ -285,6 +343,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -301,6 +360,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
+  const optimisticUserMessageKeyRef = useRef<string | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -372,6 +432,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setError(null);
       if (d.agentState?.state?.extensionStatuses) setExtensionStatuses(d.agentState.state.extensionStatuses);
       if (d.agentState?.state?.extensionWidgets) setExtensionWidgets(d.agentState.state.extensionWidgets);
+      if (d.agentState?.state?.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(d.agentState.state.queuedMessages));
+      else if (d.agentState && !d.agentState.running) setQueuedMessages({ steering: [], followUp: [] });
       // If no live agent state, fall back to thinking level from session file
       if (!d.agentState?.state?.thinkingLevel && d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
         setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
@@ -620,10 +682,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, opts.chatInputRef]);
 
   const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId?: number) => {
+    // Bail out before loadSession too: a stale finish for a previous run
+    // must not overwrite the messages of the run currently streaming.
+    if (runId !== undefined && promptRunIdRef.current !== runId) return;
     try {
       if (sid) await loadSession(sid);
     } finally {
       if (runId !== undefined && promptRunIdRef.current !== runId) return;
+      optimisticUserMessageKeyRef.current = null;
       if (!agentRunningRef.current) return;
       agentRunningRef.current = false;
       setAgentRunning(false);
@@ -657,6 +723,67 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [finishPromptWithoutStream]);
 
+  // Reconcile client streaming state with the server. When SSE events are
+  // missed (network drop, mobile tab backgrounded, half-open connection),
+  // agent_end never arrives and the UI stays in streaming state forever.
+  // If the server reports idle while we still think it's running, finish
+  // through the same path as prompt_done.
+  const reconcileAgentState = useCallback(async (sid: string) => {
+    if (!agentRunningRef.current) return;
+    const runId = promptRunIdRef.current;
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+      if (!res.ok) return;
+      const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
+      // A slow response can straddle a run boundary (previous run finished
+      // and the user already started the next one while this request was in
+      // flight) — everything in it is stale, drop it.
+      if (promptRunIdRef.current !== runId) return;
+      const state = data.state;
+      // Mirror compaction state unconditionally: a missed compaction_end
+      // would otherwise leave the "Stop compaction" UI stuck. No state
+      // (wrapper destroyed) means nothing is compacting.
+      setIsCompacting(state?.isCompacting ?? false);
+      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+      const busy = data.running && state
+        && (state.isStreaming || state.isPromptRunning || state.isCompacting);
+      if (busy || !agentRunningRef.current) return;
+      if (state) {
+        if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
+        if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
+        if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
+        if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
+      }
+      await finishPromptWithoutStream(sid, runId);
+    } catch {
+      // Network still down — the next poll / visibility / online tick retries.
+    }
+  }, [finishPromptWithoutStream]);
+
+  // Recovery net for missed SSE events: while the agent is running, verify
+  // against the server periodically and whenever the tab returns to the
+  // foreground or the network comes back.
+  useEffect(() => {
+    if (!agentRunning) return;
+    const reconcile = () => {
+      // Read the ref on every tick: for brand-new sessions the id is
+      // assigned only after ensure_session returns.
+      const sid = sessionIdRef.current;
+      if (sid) void reconcileAgentState(sid);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reconcile();
+    };
+    const interval = setInterval(reconcile, AGENT_STATE_RECONCILE_MS);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", reconcile);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", reconcile);
+    };
+  }, [agentRunning, reconcileAgentState]);
+
   useEffect(() => {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
@@ -670,6 +797,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         dispatch({ type: "start" });
         break;
       case "agent_end":
+        // A late agent_end can arrive over SSE after reconcileAgentState
+        // already finished this run — don't re-trigger completion.
+        if (!agentRunningRef.current) break;
         agentRunningRef.current = false;
         setAgentRunning(false);
         setAgentPhase(null);
@@ -684,6 +814,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
               if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
+              // Aborted turns can leave messages queued in pi (delivered with the
+              // next turn); dead wrapper (no state) means the queue is gone.
+              setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
             })
             .catch(() => {});
         }
@@ -704,6 +837,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       case "message_start":
       case "message_update": {
+        // Ignore streaming events arriving after this run already finished
+        // (e.g. SSE data buffered while the tab was frozen, flushed after
+        // reconcile) — they would resurrect a ghost streaming bubble.
+        if (!agentRunningRef.current) break;
         const msg = event.message as Partial<AgentMessage> | undefined;
         if (msg?.role === "user") {
           break;
@@ -715,8 +852,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "message_end": {
+        // Same late-event guard: after reconcile finished this run,
+        // loadSession already loaded this message from the session file —
+        // appending it again would duplicate it.
+        if (!agentRunningRef.current) break;
         const completed = event.message as AgentMessage | undefined;
-        if (completed && completed.role !== "user") {
+        if (completed && completed.role === "user") {
+          // Delivered steering/follow-up messages surface here as user
+          // messages. The run's initial prompt also emits one, but handleSend
+          // already appended it optimistically. Consume only the still-adjacent
+          // optimistic bubble; later same-text queue deliveries must render.
+          const delivered = normalizeToolCalls(completed);
+          const deliveredKey = userMessageKey(delivered);
+          const optimisticKey = optimisticUserMessageKeyRef.current;
+          optimisticUserMessageKeyRef.current = null;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
+              return optimisticKey === deliveredKey
+                ? prev
+                : [...prev.slice(0, -1), delivered];
+            }
+            return [...prev, delivered];
+          });
+        } else if (completed) {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
         }
         dispatch({ type: "reset" });
@@ -743,6 +902,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
+      case "queue_update":
+        setQueuedMessages({
+          steering: [...((event.steering as string[] | undefined) ?? [])],
+          followUp: [...((event.followUp as string[] | undefined) ?? [])],
+        });
+        break;
       case "auto_retry_start":
         setRetryInfo({ attempt: event.attempt as number, maxAttempts: event.maxAttempts as number, errorMessage: event.errorMessage as string | undefined });
         break;
@@ -789,6 +954,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       timestamp: Date.now(),
     };
     setMessages((prev) => [...prev, userMsg]);
+    optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
     setAgentRunning(true);
@@ -860,6 +1026,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Failed to send message:", e);
+      optimisticUserMessageKeyRef.current = null;
       agentRunningRef.current = false;
       setAgentRunning(false);
       setAgentPhase(null);
@@ -1038,10 +1205,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, ensureNewSession, isCompacting, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
 
+  // Queued (undelivered) messages live in the queue panel only; the chat gets
+  // the real user message when pi delivers it (user message_end event). An
+  // optimistic chat bubble here would duplicate the queue panel and turn into
+  // a ghost message if the queue is recalled.
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    setMessages((prev) => [...prev, { role: "user", content: `[steer] ${message}`, timestamp: Date.now() } as AgentMessage]);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
@@ -1061,11 +1231,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   ) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    setMessages((prev) => [...prev, {
-      role: "user",
-      content: behavior === "steer" ? `[steer] ${message}` : message,
-      timestamp: Date.now(),
-    } as AgentMessage]);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
@@ -1082,7 +1247,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    setMessages((prev) => [...prev, { role: "user", content: message, timestamp: Date.now() } as AgentMessage]);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
       await sendAgentCommand(sid, {
@@ -1104,6 +1268,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to abort compaction:", e);
     }
   }, []);
+
+  const handleRecallQueue = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
+      // clearQueue also emits an empty queue_update, but that only reaches us
+      // while SSE is connected — clear locally so idle recalls update the UI.
+      setQueuedMessages({ steering: [], followUp: [] });
+      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
+      if (texts.length > 0) {
+        opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
+      }
+    } catch (e) {
+      console.error("Failed to recall queued messages:", e);
+      addNotice({ type: "error", message: "Failed to recall queued messages" });
+    }
+  }, [opts.chatInputRef, addNotice]);
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
     setThinkingLevel(level);
@@ -1184,6 +1366,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (agentState.state.extensionStatuses !== undefined) setExtensionStatuses(agentState.state.extensionStatuses ?? []);
           if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
+          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
         }
       });
     }
@@ -1307,7 +1490,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
-    slashCommands, slashCommandsLoading,
+    slashCommands, slashCommandsLoading, queuedMessages,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
@@ -1318,6 +1501,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
+    handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     dispatch, setAgentRunning, setForkingEntryId,

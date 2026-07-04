@@ -187,12 +187,30 @@ function Typewriter({ phrases }: { phrases: string[] }) {
 }
 
 export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+  const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
+  const isMobile = useIsMobile();
+
+  // Wrap onAgentEnd to play the completion sound. This is more reliable than
+  // wrapping handleAgentEventRef because useAgentSession overwrites that ref
+  // on every render (it syncs the latest callback), which would blow away an
+  // externally-installed wrapper after the first re-render.
+  const playDoneSoundRef = useRef(playDoneSound);
+  playDoneSoundRef.current = playDoneSound;
+  const soundEnabledRef = useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
+  const wrappedOnAgentEnd = useCallback(() => {
+    if (soundEnabledRef.current) {
+      playDoneSoundRef.current();
+    }
+    onAgentEnd?.();
+  }, [onAgentEnd]);
+
   const {
     loading, error, messages, entryIds, streamState,
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
-    slashCommands, slashCommandsLoading,
+    slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -201,30 +219,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
+    handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, handleAgentEventRef,
+    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
   } = useAgentSession({
-    session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
-    modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
+    session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
+    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
-
-  const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
-  const isMobile = useIsMobile();
-  const playDoneSoundRef = useRef(playDoneSound);
-  playDoneSoundRef.current = playDoneSound;
-  const soundEnabledRef = useRef(soundEnabled);
-  soundEnabledRef.current = soundEnabled;
-
-  // Wrap agent event handler to play sound on agent_end
-  const origHandler = handleAgentEventRef.current;
-  useEffect(() => {
-    handleAgentEventRef.current = (event) => {
-      if (event.type === "agent_end" && soundEnabledRef.current) {
-        playDoneSoundRef.current();
-      }
-      origHandler?.(event);
-    };
-  }, [origHandler, handleAgentEventRef]);
 
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
@@ -265,8 +266,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
 
   const onDrop = useCallback((files: File[]) => {
+    if (agentRunning) return;
     chatInputRef?.current?.addImages(files);
-  }, [chatInputRef]);
+  }, [agentRunning, chatInputRef]);
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
@@ -310,13 +312,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}
+      queuedMessages={queuedMessages}
+      onRecallQueue={handleRecallQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
       onLoadSlashCommands={loadSlashCommands}
       onBuiltinCommand={handleBuiltinSlashCommand}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
+      onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
+      cwd={session?.cwd ?? newSessionCwd}
     />
   );
 
@@ -347,7 +353,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {isDragOver && (
+      {isDragOver && !agentRunning && (
         <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {[0, 0.8, 1.6].map((delay) => (
