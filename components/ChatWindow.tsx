@@ -45,37 +45,16 @@ const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
-const TYPEWRITER_PHRASES = [
-  "ready when you are.",
-  "ask me anything.",
-  "let's build something cool.",
-  "explore your codebase.",
-  "draft an email.",
-  "summarize that paper.",
-  "plan your weekend.",
-  "explain it like I'm five.",
-  "pair-program with me.",
-  "fix that pesky bug.",
-  "translate to 中文.",
-  "write a haiku.",
-  "brainstorm ideas.",
-  "review my pull request.",
-  "what should we cook tonight?",
-  "ship it.",
-  "make it pretty.",
-  "rubber-duck with me.",
-];
-
-function assistantTextLength(message: AgentMessage): number {
-  if (message.role !== "assistant") return 0;
-  return ((message as AssistantMessage).content ?? [])
-    .filter((block) => block.type === "text")
-    .reduce((sum, block) => sum + block.text.trim().length, 0);
+function hasFinalAssistantAnswer(message: AgentMessage): boolean {
+  if (message.role !== "assistant") return false;
+  return splitFinalAssistantBlocks(message as AssistantMessage).answerBlocks.some((block) => (
+    block.type === "image" || (block.type === "text" && block.text.trim().length > 0)
+  ));
 }
 
 function findFinalAssistantIndex(messages: AgentMessage[], userIdx: number, endIdx: number): number {
   for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
-    if (assistantTextLength(messages[candidateIdx]) > 0) return candidateIdx;
+    if (hasFinalAssistantAnswer(messages[candidateIdx])) return candidateIdx;
   }
   for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
     if (messages[candidateIdx]?.role === "assistant") return candidateIdx;
@@ -118,17 +97,18 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
   return (
     <div style={{ marginBottom: 14 }}>
       <button
+        type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          width: "100%",
-          minHeight: 30,
-          padding: "5px 9px",
-          border: "1px solid var(--border)",
-          borderRadius: 7,
-          background: "var(--bg-panel)",
+          width: "auto",
+          minHeight: 24,
+          padding: "2px 0",
+          border: "none",
+          background: "transparent",
           color: "var(--text-muted)",
           cursor: "pointer",
           fontSize: 12,
@@ -144,45 +124,11 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
         </span>
       </button>
       {expanded && (
-        <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: "2px solid var(--border)" }}>
+        <div style={{ marginTop: 8 }}>
           {children}
         </div>
       )}
     </div>
-  );
-}
-
-function Typewriter({ phrases }: { phrases: string[] }) {
-  const [phraseIdx, setPhraseIdx] = useState(() => Math.floor(Math.random() * phrases.length));
-  const [text, setText] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [caretOn, setCaretOn] = useState(true);
-
-  useEffect(() => {
-    const blink = setInterval(() => setCaretOn((v) => !v), 530);
-    return () => clearInterval(blink);
-  }, []);
-
-  useEffect(() => {
-    const current = phrases[phraseIdx];
-    let timeout: ReturnType<typeof setTimeout>;
-    if (!deleting && text === current) {
-      timeout = setTimeout(() => setDeleting(true), 1800);
-    } else if (deleting && text === "") {
-      setDeleting(false);
-      setPhraseIdx((i) => (i + 1) % phrases.length);
-    } else {
-      const next = deleting ? current.slice(0, text.length - 1) : current.slice(0, text.length + 1);
-      timeout = setTimeout(() => setText(next), deleting ? 28 : 55);
-    }
-    return () => clearTimeout(timeout);
-  }, [text, deleting, phraseIdx, phrases]);
-
-  return (
-    <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>
-      {text}
-      <span style={{ opacity: caretOn ? 1 : 0, color: "var(--accent)", marginLeft: 1 }}>▍</span>
-    </span>
   );
 }
 
@@ -417,9 +363,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
                 <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Agent Web</span>
-                <span style={{ fontSize: 14, flex: "1 1 0", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", display: "block" }}>
-                  <Typewriter phrases={TYPEWRITER_PHRASES} />
-                </span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
