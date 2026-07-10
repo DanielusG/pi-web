@@ -11,7 +11,7 @@ import type {
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
-import type { ToolEntry } from "@/lib/tool-presets";
+import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
 export interface SessionData {
@@ -151,7 +151,7 @@ export interface UseAgentSessionOptions {
   setToolPreset?: (preset: "none" | "default" | "full") => void;
 }
 
-export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
 const USER_SCROLL_INTENT_MS = 1200;
@@ -159,10 +159,27 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
+const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
+
+type EventStreamConnectionStatus = "connected" | "timeout" | "closed";
+
+type EventStreamConnectionResult = {
+  status: EventStreamConnectionStatus;
+  source: EventSource;
+};
+
+class EventStreamConnectionError extends Error {
+  constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
+    super(status === "timeout"
+      ? "Timed out connecting to the agent event stream. Please try again."
+      : "Failed to connect to the agent event stream. Please try again.");
+    this.name = "EventStreamConnectionError";
+  }
+}
 
 function createNoticeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -504,8 +521,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const promise = (async () => {
       const selectedModel = newSessionModel ?? newSessionDefaultModel;
       if (selectedModel) setPendingModel(selectedModel);
-      const { PRESET_NONE, PRESET_DEFAULT, PRESET_FULL } = await import("@/lib/tool-presets");
-      const toolNames = toolPreset === "none" ? PRESET_NONE : toolPreset === "default" ? PRESET_DEFAULT : PRESET_FULL;
+      const toolNames = getToolNamesForPreset(toolPreset);
       const res = await fetch("/api/agent/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -553,7 +569,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [ensureNewSession]);
 
-  const connectEvents = useCallback((sid: string): Promise<void> => {
+  const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -563,35 +579,50 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     return new Promise((resolve) => {
       let settled = false;
-      const settle = () => {
+      const settle = (status: EventStreamConnectionStatus) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        resolve();
+        resolve({ status, source: es });
       };
-      const timeout = setTimeout(settle, 1500);
+      const timeout = setTimeout(() => settle("timeout"), EVENT_STREAM_CONNECT_TIMEOUT_MS);
 
       es.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data) as AgentEvent;
-          if (event.type === "connected") settle();
+          if (event.type === "connected") settle("connected");
           handleAgentEventRef.current?.(event);
         } catch {
           // ignore
         }
       };
       es.onerror = () => {
-        settle();
-        if (eventSourceRef.current === es && agentRunningRef.current) {
-          es.close();
-          eventSourceRef.current = null;
-          setTimeout(() => {
-            if (agentRunningRef.current) void connectEvents(sid);
-          }, 1000);
+        if (es.readyState === EventSource.CLOSED) {
+          // Fatal error (404/500/content-type mismatch): browser won't
+          // auto-reconnect. Settle the Promise and manually reconnect for
+          // already-running sessions.
+          settle("closed");
+          if (eventSourceRef.current === es && agentRunningRef.current) {
+            eventSourceRef.current = null;
+            setTimeout(() => {
+              if (agentRunningRef.current) void connectEvents(sid);
+            }, 1000);
+          }
         }
+        // Recoverable errors (CONNECTING): let EventSource auto-reconnect.
+        // The timeout above resolves only to let callers decide whether this
+        // connection must be ready before they continue.
       };
     });
   }, []);
+
+  const ensureEventsConnected = useCallback(async (sid: string) => {
+    const result = await connectEvents(sid);
+    if (result.status === "connected" || result.source.readyState === EventSource.OPEN) return;
+    if (eventSourceRef.current === result.source) eventSourceRef.current = null;
+    result.source.close();
+    throw new EventStreamConnectionError(result.status);
+  }, [connectEvents]);
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
@@ -976,42 +1007,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (isNew && newSessionCwd) {
         const selectedModel = newSessionModel;
         const existingSid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
+        const sid = existingSid ?? await ensureNewSession();
 
-        if (existingSid) {
-          sentSessionId = existingSid;
+        if (sid) {
+          sentSessionId = sid;
           if (selectedModel) {
             setPendingModel(selectedModel);
-            await sendAgentCommand(existingSid, { type: "set_model", provider: selectedModel.provider, modelId: selectedModel.modelId });
+            if (existingSid) {
+              await sendAgentCommand(sid, { type: "set_model", provider: selectedModel.provider, modelId: selectedModel.modelId });
+            }
           }
-          await connectEvents(existingSid);
-          await sendAgentCommand(existingSid, {
-            type: "prompt",
-            message,
-            ...(piImages?.length ? { images: piImages } : {}),
-          });
-          promoteNewSession(1, message);
-        } else {
-          if (selectedModel) setPendingModel(selectedModel);
-          const { PRESET_NONE, PRESET_DEFAULT, PRESET_FULL } = await import("@/lib/tool-presets");
-          const toolNames = toolPreset === "none" ? PRESET_NONE : toolPreset === "default" ? PRESET_DEFAULT : PRESET_FULL;
-          const res = await fetch("/api/agent/new", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cwd: newSessionCwd,
-              type: "ensure_session",
-              toolNames,
-              ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
-              ...(thinkingLevel !== "auto" ? { thinkingLevel } : {}),
-            }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const result = await res.json() as { sessionId: string };
-          const realId = result.sessionId;
-          sessionIdRef.current = realId;
-          sentSessionId = realId;
-          await connectEvents(realId);
-          await sendAgentCommand(realId, {
+          await ensureEventsConnected(sid);
+          await sendAgentCommand(sid, {
             type: "prompt",
             message,
             ...(piImages?.length ? { images: piImages } : {}),
@@ -1020,7 +1027,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
       } else if (session) {
         sentSessionId = session.id;
-        await connectEvents(session.id);
+        await ensureEventsConnected(session.id);
         await sendAgentCommand(session.id, {
           type: "prompt",
           message,
@@ -1032,13 +1039,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Failed to send message:", e);
+      if (e instanceof EventStreamConnectionError) {
+        const optimisticKey = optimisticUserMessageKeyRef.current;
+        if (optimisticKey) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            return last?.role === "user" && userMessageKey(last) === optimisticKey
+              ? prev.slice(0, -1)
+              : prev;
+          });
+        }
+        addNotice({ type: "error", message: e.message });
+      }
       optimisticUserMessageKeyRef.current = null;
       agentRunningRef.current = false;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, toolPreset, thinkingLevel, session, agentRunning, connectEvents, promoteNewSession, waitForPromptSettlement]);
+  }, [isNew, newSessionCwd, newSessionModel, session, agentRunning, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice]);
 
   const handleAbort = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -1327,8 +1346,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const handleToolPresetChange = useCallback(async (preset: "none" | "default" | "full") => {
-    const { PRESET_NONE, PRESET_DEFAULT, PRESET_FULL } = await import("@/lib/tool-presets");
-    const toolNames = preset === "none" ? PRESET_NONE : preset === "default" ? PRESET_DEFAULT : PRESET_FULL;
+    const toolNames = getToolNamesForPreset(preset);
     setToolPresetState(preset);
     const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
     if (!sid) return;
