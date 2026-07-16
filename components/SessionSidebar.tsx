@@ -2,7 +2,15 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { FileExplorer } from "./FileExplorer";
+import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+
+declare global {
+  interface Window {
+    piDesktop?: {
+      selectDirectory: () => Promise<string | null>;
+    };
+  }
+}
 
 interface Props {
   selectedSessionId: string | null;
@@ -17,6 +25,7 @@ interface Props {
   onOpenFile?: (filePath: string, fileName: string) => void;
   explorerRefreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
+  onAtMentions?: (relativePaths: string[]) => void;
 }
 
 interface WorktreeEntry {
@@ -310,7 +319,7 @@ function PiAgentTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention, onAtMentions }: Props) {
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -337,6 +346,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerKey, setExplorerKey] = useState(0);
+  const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
@@ -347,6 +357,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sseAuthoritativeRef = useRef(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileExplorerRef = useRef<FileExplorerHandle>(null);
 
   const loadSessions = useCallback(async (showLoading = false) => {
     try {
@@ -543,8 +554,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [allSessions, selectedCwd, initialSessionId, onSelectSession, onInitialRestoreDone]);
 
-  const commitCustomPath = useCallback(async () => {
-    const path = customPathValue.trim();
+  const commitCustomPath = useCallback(async (candidate?: string) => {
+    const path = (candidate ?? customPathValue).trim();
     if (!path || customPathValidating) return;
 
     setCustomPathValidating(true);
@@ -570,6 +581,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       setCustomPathValidating(false);
     }
   }, [customPathValue, customPathValidating]);
+
+  const handleCustomPathClick = useCallback(async () => {
+    const desktop = window.piDesktop;
+    if (!desktop) {
+      setCustomPathOpen(true);
+      setCustomPathError(null);
+      setTimeout(() => customPathInputRef.current?.focus(), 0);
+      return;
+    }
+
+    try {
+      setCustomPathError(null);
+      const path = await desktop.selectDirectory();
+      if (path === null) return;
+
+      setCustomPathValue(path);
+      setCustomPathOpen(true);
+      await commitCustomPath(path);
+    } catch (e) {
+      setCustomPathOpen(true);
+      setCustomPathError(e instanceof Error ? e.message : String(e));
+      setTimeout(() => customPathInputRef.current?.focus(), 0);
+    }
+  }, [commitCustomPath]);
 
   const handleDefaultCwd = useCallback(async () => {
     try {
@@ -997,9 +1032,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setCustomPathOpen(true);
-                    setCustomPathError(null);
-                    setTimeout(() => customPathInputRef.current?.focus(), 0);
+                    void handleCustomPathClick();
                   }}
                   style={{
                     display: "flex",
@@ -1500,6 +1533,34 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               </svg>
               Explorer
             </button>
+            {explorerOpen && (
+              <button
+                onClick={() => fileExplorerRef.current?.openUploadPicker()}
+                disabled={explorerUploadBusy}
+                title="Upload files to project root"
+                aria-label="Upload files"
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 26, height: 26, padding: 0,
+                  background: "none",
+                  border: "none",
+                  color: "var(--text-dim)",
+                  cursor: explorerUploadBusy ? "default" : "pointer",
+                  borderRadius: 5,
+                  flexShrink: 0,
+                  opacity: explorerUploadBusy ? 0.6 : 1,
+                  transition: "color 0.3s, background 0.3s",
+                }}
+                onMouseEnter={(e) => { if (explorerUploadBusy) return; e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { if (explorerUploadBusy) return; e.currentTarget.style.color = "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="m17 8-5-5-5 5" />
+                  <path d="M12 3v12" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={() => {
                 setExplorerKey((k) => k + 1);
@@ -1537,10 +1598,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           {explorerOpen && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <FileExplorer
+                ref={fileExplorerRef}
                 cwd={selectedCwd ?? selectedCwdProp!}
                 onOpenFile={onOpenFile ?? (() => {})}
                 refreshKey={explorerKey}
                 onAtMention={onAtMention}
+                onAtMentions={onAtMentions}
+                onUploadBusyChange={setExplorerUploadBusy}
               />
             </div>
           )}
