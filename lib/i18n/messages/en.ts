@@ -51,7 +51,7 @@ export const enLocale: LocalePlugin = {
     "session.infoSection": "Session Info",
     "session.messages": "Messages",
     "session.tokens": "Tokens",
-    "session.totalActive": "Estimated Active Time",
+    "session.totalActive": "Active Time",
     "session.copyFile": "Copy file path",
     "session.copyId": "Copy session ID",
     "workspace.opening": "Opening workspace...",
