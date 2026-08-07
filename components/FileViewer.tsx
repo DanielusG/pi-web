@@ -24,6 +24,11 @@ import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDi
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
+import {
+  firstRevertErrorMessage,
+  revertGitChangesClient,
+  type RevertResult,
+} from "@/lib/git-revert-client";
 import { useI18n } from "@/hooks/useI18n";
 
 interface Props {
@@ -35,6 +40,18 @@ interface Props {
   gitRefreshKey?: number;
   initialDisplayMode?: DisplayMode;
   onFileSaved?: () => void;
+  /**
+   * Fired after a successful git revert. Receives whether the file was deleted
+   * by the revert (added/untracked files are removed), so the parent can close
+   * the now-stale tab. Mirrors onFileSaved for the refresh case.
+   */
+  onFileReverted?: (filePath: string, deleted: boolean) => void;
+  /**
+   * Bumped by the parent after a batch git revert so open tabs refetch their
+   * content. Separate from gitRefreshKey (which only refreshes the diff) to
+   * avoid redundant content fetches on ordinary save/create/delete mutations.
+   */
+  contentRefreshKey?: number;
 }
 
 interface FileData {
@@ -264,6 +281,15 @@ async function saveFileEdit(filePath: string, content: string): Promise<number> 
   }
   const body = await response.json() as { size?: number };
   return typeof body.size === "number" ? body.size : 0;
+}
+
+async function revertFileChanges(cwd: string, paths: string[]): Promise<RevertResult> {
+  const result = await revertGitChangesClient(cwd, paths);
+  // Surface the first per-path error/unsupported reason as a thrown Error so
+  // the caller's catch block shows something actionable.
+  const msg = firstRevertErrorMessage(result);
+  if (msg) throw new Error(msg);
+  return result;
 }
 
 type DiffLine = {
@@ -823,7 +849,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved, onFileReverted, contentRefreshKey }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
@@ -833,10 +859,10 @@ export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMenti
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} onFileSaved={onFileSaved} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} onFileSaved={onFileSaved} onFileReverted={onFileReverted} contentRefreshKey={contentRefreshKey} />;
 }
 
-function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved, onFileReverted, contentRefreshKey }: Props) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [data, setData] = useState<FileData | null>(null);
@@ -857,6 +883,13 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [externalModified, setExternalModified] = useState(false);
+  const [isReverting, setIsReverting] = useState(false);
+  const [revertError, setRevertError] = useState<string | null>(null);
+  // Bumped after restoring a deleted file so the main SSE/watcher useEffect
+  // re-runs and re-establishes the EventSource that was closed when
+  // isDeletedDiff became true. Without this the live-sync indicator stays
+  // grey until the user switches tabs.
+  const [watchRestartKey, setWatchRestartKey] = useState(0);
   const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const draftLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const saveRequestRef = useRef(0);
@@ -920,6 +953,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     setSaveError(null);
     setExternalModified(false);
     setIsSaving(false);
+    setRevertError(null);
+    setIsReverting(false);
 
     if (esRef.current) {
       esRef.current.close();
@@ -959,7 +994,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId]);
+  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchRestartKey]);
 
   useEffect(() => {
     void fetchGitDiff(filePath);
@@ -973,6 +1008,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
 
   const hasGitDiff = gitDiff?.supported === true && typeof gitDiff.patch === "string";
   const isDeletedDiff = hasGitDiff && gitDiff.status === "deleted";
+  // Revert is only meaningful for working-tree changes the server can undo.
+  // renamed/conflict are reported as unsupported by lib/git-revert.ts, so the
+  // button would always fail — hide it for those statuses.
+  const canRevert =
+    hasGitDiff &&
+    isFileEditingEnabled() &&
+    gitDiff.status !== "renamed" &&
+    gitDiff.status !== "conflict";
 
   useEffect(() => {
     if (!hasGitDiff && displayMode === "diff") setDisplayMode("source");
@@ -984,6 +1027,31 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     esRef.current = null;
     setWatching(false);
   }, [isDeletedDiff]);
+
+  // Batch git revert in the explorer bumps contentRefreshKey so open tabs
+  // refetch their content (gitRefreshKey only refreshes the diff). A ref
+  // guards the first run — the main mount effect already does the initial
+  // content load. We deliberately do NOT branch on isDeletedDiff here: this
+  // effect fires for every open tab on every revert, and a stale
+  // isDeletedDiff cannot tell us whether *this* file was in the revert
+  // range. Bumping watchRestartKey on a tab whose file is still deleted
+  // would re-run the mount effect and surface a spurious fetch error.
+  // Restoring a deleted file via the single-file revert button is handled
+  // in handleRevert via its own watchRestartKey bump.
+  const prevContentRefreshKeyRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (contentRefreshKey === undefined) return;
+    if (prevContentRefreshKeyRef.current === contentRefreshKey) return;
+    const firstRun = prevContentRefreshKeyRef.current === undefined;
+    prevContentRefreshKeyRef.current = contentRefreshKey;
+    if (firstRun) return;
+    // Skip while editing to avoid clobbering the user's draft (matching
+    // the SSE change handler's behavior). Diff refresh is handled by the
+    // gitRefreshKey effect, which AppShell bumps via explorerRefreshKey.
+    if (displayModeRef.current !== "edit") {
+      void fetchContent(filePath);
+    }
+  }, [contentRefreshKey, filePath, fetchContent]);
 
   // Opened from the Changes list (initialDisplayMode === "diff"): switch to the
   // diff view once the git diff has resolved. We do this after the diff loads
@@ -1102,6 +1170,52 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       setIsSaving(false);
     }
   }, [data, isSaving, draftContent, filePath, exitEdit, fetchGitDiff, onFileSaved]);
+
+  const handleRevert = useCallback(async () => {
+    if (!cwd || !filePath || !hasGitDiff || isReverting) return;
+    const name = getFileName(filePath);
+    const status = gitDiff?.status;
+    // Capture the cached deleted-diff state up front: the SSE watcher was
+    // closed when isDeletedDiff became true, so restoring the file needs to
+    // re-establish it (see watchRestartKey). The cached status only drives
+    // the confirmation message and this watcher-restart decision — whether
+    // the file was actually removed is taken from the server response below.
+    const wasDeletedDiff = status === "deleted";
+    const message = wasDeletedDiff
+      ? t("files.confirmRestoreDeleted", { name })
+      : t("files.confirmRevertChanges", { name });
+    if (!window.confirm(message)) return;
+    setIsReverting(true);
+    setRevertError(null);
+    try {
+      const result = await revertFileChanges(cwd, [filePath]);
+      // Trust the server's `deleted` list instead of the cached status: the
+      // file may have been reclassified (e.g. external `git rm --cached`)
+      // between the client's status fetch and the revert request.
+      const wasDeleted = result.deleted?.includes(filePath) ?? false;
+      if (!wasDeleted) {
+        if (wasDeletedDiff) {
+          // Restored a deleted file: re-establish the SSE watcher (it was
+          // closed when isDeletedDiff became true). The main useEffect will
+          // refetch content + diff, so no need to do it here.
+          setWatchRestartKey((k) => k + 1);
+        } else {
+          // Modified/added/untracked reverted in place: refresh content +
+          // diff for immediate feedback. The SSE watcher is still running
+          // and will also fire a change event.
+          await fetchContent(filePath);
+          await fetchGitDiff(filePath);
+        }
+        // Bump the explorer so the changes list updates.
+        onFileSaved?.();
+      }
+      onFileReverted?.(filePath, wasDeleted);
+    } catch (e) {
+      setRevertError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsReverting(false);
+    }
+  }, [cwd, filePath, hasGitDiff, gitDiff?.status, isReverting, t, fetchContent, fetchGitDiff, onFileSaved, onFileReverted]);
 
   // Cmd/Ctrl+S to save while editing; Esc to cancel.
   useEffect(() => {
@@ -1286,8 +1400,30 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                   </svg>
                 </button>
               </>
-            ) : effectiveDisplayMode === "source" ? (
+            ) : (
               <>
+                {canRevert && (
+                  <button
+                    type="button"
+                    onClick={() => void handleRevert()}
+                    disabled={isReverting}
+                    title={isDeletedDiff ? t("files.restore") : t("files.revert")}
+                    aria-label={isDeletedDiff ? t("files.restore") : t("files.revert")}
+                    className="file-viewer-icon-button"
+                    style={{ color: "#f87171" }}
+                  >
+                    {isReverting ? (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
+                        <path d="M21 12a9 9 0 1 1-5.7-8.4" />
+                      </svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M3 7v6h6" />
+                        <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13" />
+                      </svg>
+                    )}
+                  </button>
+                )}
                 {canEdit && (
                   <button
                     type="button"
@@ -1299,48 +1435,42 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                     <EditIcon />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={handleMentionSelectedLines}
-                  title={t("i18n.mentionSelectedLines")}
-                  aria-label={t("i18n.mentionSelectedLines")}
-                  disabled={!selectedLineRange}
-                  className="file-viewer-icon-button"
-                >
-                  <MentionIcon />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWrapLines((value) => !value)}
-                  title={wrapLines ? t("i18n.disableWrap") : t("i18n.enableWrap")}
-                  aria-label={wrapLines ? t("i18n.disableWrap") : t("i18n.enableWrap")}
-                  aria-pressed={wrapLines}
-                  className="file-viewer-icon-button"
-                  style={{
-                    background: wrapLines ? "var(--bg-selected)" : "transparent",
-                    color: wrapLines ? "var(--text)" : "var(--text-muted)",
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M3 6h18" />
-                    <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
-                    <path d="m16 16-2 2 2 2" />
-                    <path d="M3 18h7" />
-                  </svg>
-                </button>
+                {effectiveDisplayMode === "source" && (
+                  <>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={handleMentionSelectedLines}
+                      title={t("i18n.mentionSelectedLines")}
+                      aria-label={t("i18n.mentionSelectedLines")}
+                      disabled={!selectedLineRange}
+                      className="file-viewer-icon-button"
+                    >
+                      <MentionIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWrapLines((value) => !value)}
+                      title={wrapLines ? t("i18n.disableWrap") : t("i18n.enableWrap")}
+                      aria-label={wrapLines ? t("i18n.disableWrap") : t("i18n.enableWrap")}
+                      aria-pressed={wrapLines}
+                      className="file-viewer-icon-button"
+                      style={{
+                        background: wrapLines ? "var(--bg-selected)" : "transparent",
+                        color: wrapLines ? "var(--text)" : "var(--text-muted)",
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M3 6h18" />
+                        <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+                        <path d="m16 16-2 2 2 2" />
+                        <path d="M3 18h7" />
+                      </svg>
+                    </button>
+                  </>
+                )}
               </>
-            ) : canEdit ? (
-              <button
-                type="button"
-                onClick={enterEdit}
-                title={t("files.edit")}
-                aria-label={t("files.edit")}
-                className="file-viewer-icon-button"
-              >
-                <EditIcon />
-              </button>
-            ) : null}
+            )}
           </div>
 
           {!isDeletedDiff && effectiveDisplayMode !== "edit" && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
@@ -1349,6 +1479,39 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
 
       {/* Content area */}
       <div ref={contentRef} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
+        {revertError && (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 12px",
+              borderBottom: "1px solid var(--border)",
+              background: "rgba(248,113,113,0.12)",
+              color: "#f87171",
+              fontSize: 11,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ flex: 1, overflowWrap: "anywhere" }}>{t("files.revertFailed", { error: revertError })}</span>
+            <button
+              type="button"
+              onClick={() => setRevertError(null)}
+              style={{
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "1px solid #f87171",
+                borderRadius: 4,
+                background: "transparent",
+                color: "#f87171",
+                cursor: "pointer",
+              }}
+            >
+              {t("files.dismissError")}
+            </button>
+          </div>
+        )}
         {effectiveDisplayMode === "edit" ? (
           <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
             {externalModified && (

@@ -27,7 +27,7 @@ async function git(cwd: string, args: string[], maxBuffer = GIT_STATUS_MAX_BUFFE
   return stdout;
 }
 
-async function findRepositoryRoot(cwd: string): Promise<string | null> {
+export async function findRepositoryRoot(cwd: string): Promise<string | null> {
   try {
     return (await git(cwd, ["rev-parse", "--show-toplevel"])).trim() || null;
   } catch {
@@ -35,16 +35,16 @@ async function findRepositoryRoot(cwd: string): Promise<string | null> {
   }
 }
 
-function isWithinPath(parent: string, target: string): boolean {
+export function isWithinPath(parent: string, target: string): boolean {
   const relative = path.relative(path.resolve(parent), path.resolve(target));
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function toGitPath(filePath: string): string {
+export function toGitPath(filePath: string): string {
   return filePath.split(path.sep).join("/");
 }
 
-async function readStatusEntries(repositoryRoot: string): Promise<GitPorcelainEntry[]> {
+export async function readStatusEntries(repositoryRoot: string): Promise<GitPorcelainEntry[]> {
   const output = await git(repositoryRoot, [
     "status",
     "--porcelain=v1",

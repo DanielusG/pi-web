@@ -92,6 +92,7 @@ interface Props {
   onAtMentions?: (relativePaths: string[]) => void;
   onFileCreated?: (filePath: string) => void;
   onFileDeleted?: (filePath: string, isDir: boolean) => void;
+  onFilesReverted?: (deletedPaths: string[]) => void;
 }
 
 interface WorktreeEntry {
@@ -386,7 +387,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onFileCreated, onFileDeleted }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onFileCreated, onFileDeleted, onFilesReverted }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1686,6 +1687,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 onChangesCountChange={setChangesCount}
                 onFileCreated={onFileCreated}
                 onFileDeleted={onFileDeleted}
+                onFilesReverted={onFilesReverted}
               />
             </div>
           )}

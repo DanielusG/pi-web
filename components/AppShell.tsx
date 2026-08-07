@@ -65,6 +65,11 @@ export function AppShell() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  // Bumped after a batch git revert so open FileViewer tabs refetch their
+  // content (gitRefreshKey only refreshes the diff). Kept separate from
+  // explorerRefreshKey so ordinary mutations (save/create/delete) don't
+  // trigger redundant content fetches in unrelated tabs.
+  const [contentRefreshKey, setContentRefreshKey] = useState(0);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
@@ -569,6 +574,47 @@ export function AppShell() {
     });
   }, [fileTabs]);
 
+  // After a git revert: if the file was deleted by the revert (added/untracked),
+  // close the now-stale tab via the same logic as handleFileDeleted. Otherwise
+  // just bump the explorer refresh — the FileViewer already reloaded its own
+  // content and diff.
+  const handleFileReverted = useCallback((filePath: string, deleted: boolean) => {
+    if (deleted) {
+      handleFileDeleted(filePath, false);
+    } else {
+      setExplorerRefreshKey((k) => k + 1);
+    }
+  }, [handleFileDeleted]);
+
+  // Batch variant for "Revert all" in the explorer: close tabs for every file
+  // the revert removed from disk (added/untracked entries). Batching into one
+  // setFileTabs pass (instead of looping handleFileDeleted) avoids re-reading
+  // the stale fileTabs closure inside each setActiveFileTabId updater, which
+  // could otherwise land the active id on a tab that's already been closed.
+  const handleFilesReverted = useCallback((deletedPaths: string[]) => {
+    const affected = new Set(deletedPaths);
+    setExplorerRefreshKey((k) => k + 1);
+    // Bump content refresh so surviving tabs (modified/deleted restored)
+    // reload their content. Tabs in `affected` are closed below and ignore
+    // the bump via the unmount.
+    setContentRefreshKey((k) => k + 1);
+    setFileTabs((prev) => {
+      const next = prev.filter((t) => !t.filePath || !affected.has(t.filePath));
+      if (next.length === 0) setRightPanelOpen(false);
+      return next;
+    });
+    setActiveFileTabId((cur) => {
+      if (!cur) return cur;
+      // fileTabs is the same pre-batch snapshot setFileTabs saw (React batches
+      // both updaters in one render), so the fallback id always points at a
+      // surviving tab.
+      const activeTab = fileTabs.find((t) => t.id === cur);
+      if (!activeTab?.filePath || !affected.has(activeTab.filePath)) return cur;
+      const remaining = fileTabs.filter((t) => !t.filePath || !affected.has(t.filePath));
+      return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+    });
+  }, [fileTabs]);
+
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
     window.open(
@@ -665,6 +711,7 @@ export function AppShell() {
         onAtMentions={handleAtMentions}
         onFileCreated={handleFileCreated}
         onFileDeleted={handleFileDeleted}
+        onFilesReverted={handleFilesReverted}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -1636,6 +1683,8 @@ export function AppShell() {
                 { sourceSessionId: activeFileTab.sourceSessionId },
               )}
               onFileSaved={() => setExplorerRefreshKey((k) => k + 1)}
+              onFileReverted={handleFileReverted}
+              contentRefreshKey={contentRefreshKey}
             />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>

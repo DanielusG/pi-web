@@ -13,6 +13,7 @@ import {
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
 import { isFileEditingEnabled } from "@/lib/file-editing";
+import { revertGitChangesClient, type RevertResult } from "@/lib/git-revert-client";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 interface FileEntry {
@@ -42,6 +43,12 @@ interface Props {
   onChangesCountChange?: (count: number) => void;
   onFileCreated?: (filePath: string) => void;
   onFileDeleted?: (filePath: string, isDir: boolean) => void;
+  /**
+   * Fired after a batch "Revert all" completes. `deletedPaths` lists the
+   * reverted files that were removed from disk (added/untracked entries),
+   * so the parent can close their now-stale tabs. Mirrors onFileDeleted.
+   */
+  onFilesReverted?: (deletedPaths: string[]) => void;
 }
 
 export interface FileExplorerHandle {
@@ -269,6 +276,10 @@ async function deleteEntry(targetPath: string): Promise<void> {
     }
     throw new Error(message);
   }
+}
+
+async function revertChanges(cwd: string, paths: string[]): Promise<RevertResult> {
+  return revertGitChangesClient(cwd, paths);
 }
 
 function DismissButton({ onClick, title }: { onClick: () => void; title: string }) {
@@ -673,6 +684,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   onChangesCountChange,
   onFileCreated,
   onFileDeleted,
+  onFilesReverted,
 }, ref) {
   const { t } = useI18n();
   const [roots, setRoots] = useState<FileNode[]>([]);
@@ -689,6 +701,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [uploadSummary, setUploadSummary] = useState<UploadSummary | null>(null);
   const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [isRevertingAll, setIsRevertingAll] = useState(false);
   const prevCwdRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
@@ -860,6 +873,36 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setMutationError(e instanceof Error ? e.message : String(e));
     }
   }, [onFileDeleted, t]);
+
+  const handleRevertAll = useCallback(async () => {
+    if (gitFiles.length === 0 || isRevertingAll) return;
+    setMutationError(null);
+    const message = t("files.confirmRevertAll", { count: gitFiles.length });
+    if (!window.confirm(message)) return;
+    setIsRevertingAll(true);
+    try {
+      const paths = gitFiles.map((f) => f.filePath);
+      const result = await revertChanges(cwd, paths);
+      const skipped = (result.unsupported ?? []).length + (result.errors ?? []).length;
+      if (skipped > 0) {
+        setMutationError(t("files.revertAllPartial", {
+          reverted: (result.reverted ?? []).length,
+          skipped,
+        }));
+      }
+      setTreeRefreshKey((k) => k + 1);
+      // Always notify the parent (even with no deletions) so it can bump the
+      // content-refresh key for open tabs — otherwise modified-file reverts
+      // would leave already-open viewers showing stale content + diff. The
+      // server's `deleted` list (paths actually removed from disk) is passed
+      // through so the parent can close those stale tabs.
+      onFilesReverted?.(result.deleted ?? []);
+    } catch (e) {
+      setMutationError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsRevertingAll(false);
+    }
+  }, [gitFiles, isRevertingAll, cwd, t, onFilesReverted]);
 
   useImperativeHandle(ref, () => ({
     openUploadPicker() {
@@ -1078,6 +1121,44 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
             </span>
             <span style={{ color: GIT_STATUS_COLORS.added, fontFamily: "var(--font-mono)" }}>+{gitLineStats.additions}</span>
             <span style={{ color: GIT_STATUS_COLORS.deleted, fontFamily: "var(--font-mono)" }}>-{gitLineStats.deletions}</span>
+            {mutationsEnabled && (
+              <button
+                type="button"
+                onClick={() => void handleRevertAll()}
+                disabled={isRevertingAll}
+                title={t("files.revertAll")}
+                aria-label={t("files.revertAll")}
+                style={{
+                  marginLeft: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
+                  padding: 0,
+                  border: "none",
+                  borderRadius: 4,
+                  background: "none",
+                  color: "#f87171",
+                  cursor: isRevertingAll ? "default" : "pointer",
+                  opacity: isRevertingAll ? 0.6 : 1,
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(event) => { if (!isRevertingAll) event.currentTarget.style.background = "rgba(248,113,113,0.15)"; }}
+                onMouseLeave={(event) => { event.currentTarget.style.background = "none"; }}
+              >
+                {isRevertingAll ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-5.7-8.4" />
+                  </svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 7v6h6" />
+                    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13" />
+                  </svg>
+                )}
+              </button>
+            )}
           </div>
           {gitFiles.map((status) => (
             <ChangeRow key={status.filePath} status={status} cwd={cwd} onOpenFile={onOpenFile} t={t} />
