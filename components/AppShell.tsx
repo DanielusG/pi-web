@@ -539,6 +539,36 @@ export function AppShell() {
     });
   }, [fileTabs]);
 
+  // A newly created file is opened in a fresh tab, mirroring the upload-then-
+  // view flow. Directories are not opened.
+  const handleFileCreated = useCallback((filePath: string) => {
+    setExplorerRefreshKey((k) => k + 1);
+    handleOpenFile(filePath, getFileName(filePath));
+  }, [handleOpenFile]);
+
+  // Close any open tabs pointing at a deleted file, or — for a deleted
+  // directory — any tab whose file lived underneath it. Mirrors
+  // handleCloseFileTab's active-tab fallback so the right panel never shows a
+  // stale path after deletion.
+  const handleFileDeleted = useCallback((filePath: string, isDir: boolean) => {
+    setExplorerRefreshKey((k) => k + 1);
+    const prefix = filePath.endsWith("/") ? filePath : filePath + "/";
+    const isAffected = (tabPath: string) =>
+      tabPath === filePath || (isDir && (tabPath.startsWith(prefix)));
+    setFileTabs((prev) => {
+      const next = prev.filter((t) => !t.filePath || !isAffected(t.filePath));
+      if (next.length === 0) setRightPanelOpen(false);
+      return next;
+    });
+    setActiveFileTabId((cur) => {
+      if (!cur) return cur;
+      const activeTab = fileTabs.find((t) => t.id === cur);
+      if (!activeTab?.filePath || !isAffected(activeTab.filePath)) return cur;
+      const remaining = fileTabs.filter((t) => !t.filePath || !isAffected(t.filePath));
+      return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+    });
+  }, [fileTabs]);
+
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
     window.open(
@@ -633,6 +663,8 @@ export function AppShell() {
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
+        onFileCreated={handleFileCreated}
+        onFileDeleted={handleFileDeleted}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -1603,6 +1635,7 @@ export function AppShell() {
                 getFileName(filePath),
                 { sourceSessionId: activeFileTab.sourceSessionId },
               )}
+              onFileSaved={() => setExplorerRefreshKey((k) => k + 1)}
             />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>

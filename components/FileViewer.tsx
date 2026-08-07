@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Prism as SyntaxHighlighter,
   createElement as renderSyntaxNode,
@@ -19,6 +19,7 @@ import {
 } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
+import { isFileEditingEnabled } from "@/lib/file-editing";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { parseUnifiedPatch } from "@/lib/patch";
@@ -33,6 +34,7 @@ interface Props {
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   gitRefreshKey?: number;
   initialDisplayMode?: DisplayMode;
+  onFileSaved?: () => void;
 }
 
 interface FileData {
@@ -41,13 +43,33 @@ interface FileData {
   size: number;
 }
 
-type DisplayMode = "source" | "preview" | "diff";
+type DisplayMode = "source" | "preview" | "diff" | "edit";
 
 const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   source: "Source",
   preview: "Preview",
   diff: "Diff",
+  edit: "Edit",
 };
+
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function SaveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
 
 const FILE_CODE_STYLE: CSSProperties = {
   fontFamily: "var(--font-mono)",
@@ -224,6 +246,24 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
       </svg>
     </a>
   );
+}
+
+function hasBinaryContent(content: string): boolean {
+  return content.includes("\u0000");
+}
+
+async function saveFileEdit(filePath: string, content: string): Promise<number> {
+  const response = await fetch(`/api/files/${encodeFilePathForApi(filePath)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${response.status}`);
+  }
+  const body = await response.json() as { size?: number };
+  return typeof body.size === "number" ? body.size : 0;
 }
 
 type DiffLine = {
@@ -783,7 +823,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
@@ -793,10 +833,10 @@ export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMenti
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} onFileSaved={onFileSaved} />;
 }
 
-function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode, onFileSaved }: Props) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [data, setData] = useState<FileData | null>(null);
@@ -811,6 +851,20 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const gitDiffRequestRef = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
+
+  const [draftContent, setDraftContent] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [externalModified, setExternalModified] = useState(false);
+  const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftLineNumbersRef = useRef<HTMLDivElement | null>(null);
+  const saveRequestRef = useRef(0);
+  const displayModeRef = useRef<DisplayMode>("source");
+  useEffect(() => { displayModeRef.current = displayMode; }, [displayMode]);
+
+  const isDirty = displayMode === "edit" && draftContent !== originalContent;
+  const isBinary = Boolean(data?.content && hasBinaryContent(data.content));
 
   const fetchContent = useCallback((filePath: string) => {
     return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
@@ -861,6 +915,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     setDisplayMode("source");
     setWrapLines(false);
     setWatching(false);
+    setDraftContent("");
+    setOriginalContent("");
+    setSaveError(null);
+    setExternalModified(false);
+    setIsSaving(false);
 
     if (esRef.current) {
       esRef.current.close();
@@ -878,6 +937,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     });
 
     es.addEventListener("change", () => {
+      // While editing, never clobber the textarea with a fresh fetch — just
+      // flag the external change so the user can choose to reload.
+      if (displayModeRef.current === "edit") {
+        setExternalModified(true);
+        return;
+      }
       void fetchContent(filePath);
       void fetchGitDiff(filePath);
     });
@@ -990,6 +1055,110 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [displayMode, mentionLineRange, onMentionLines]);
 
+  const enterEdit = useCallback(() => {
+    if (!data || isBinary) return;
+    setDraftContent(data.content);
+    setOriginalContent(data.content);
+    setSaveError(null);
+    setExternalModified(false);
+    setDisplayMode("edit");
+  }, [data, isBinary]);
+
+  const exitEdit = useCallback(() => {
+    setDisplayMode("source");
+    setDraftContent("");
+    setOriginalContent("");
+    setSaveError(null);
+    setExternalModified(false);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    if (isDirty && !window.confirm(t("files.unsavedChanges"))) return;
+    exitEdit();
+  }, [isDirty, exitEdit, t]);
+
+  const saveEdit = useCallback(async () => {
+    if (!data || isSaving) return;
+    const requestId = ++saveRequestRef.current;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const size = await saveFileEdit(filePath, draftContent);
+      if (requestId !== saveRequestRef.current) return;
+      // Refresh the on-disk content snapshot so SSE change events compare
+      // against the just-saved version instead of the pre-edit one.
+      setData((prev) => prev ? { ...prev, content: draftContent, size } : prev);
+      setOriginalContent(draftContent);
+      setIsSaving(false);
+      exitEdit();
+      // The SSE change event fired by our own write arrives while
+      // displayModeRef is still "edit" and gets swallowed; refresh git diff
+      // and the file tree explicitly here.
+      void fetchGitDiff(filePath);
+      onFileSaved?.();
+    } catch (e) {
+      if (requestId !== saveRequestRef.current) return;
+      setSaveError(e instanceof Error ? e.message : String(e));
+      setIsSaving(false);
+    }
+  }, [data, isSaving, draftContent, filePath, exitEdit, fetchGitDiff, onFileSaved]);
+
+  // Cmd/Ctrl+S to save while editing; Esc to cancel.
+  useEffect(() => {
+    if (displayMode !== "edit") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isSaveShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s";
+      if (isSaveShortcut) {
+        event.preventDefault();
+        void saveEdit();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelEdit();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [displayMode, saveEdit, cancelEdit]);
+
+  // Warn before navigating away with unsaved edits.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // Keep textarea and line-number gutter scroll in sync.
+  const handleDraftScroll = useCallback(() => {
+    const ta = draftTextareaRef.current;
+    const gutter = draftLineNumbersRef.current;
+    if (ta && gutter) gutter.scrollTop = ta.scrollTop;
+  }, []);
+
+  // Insert two spaces on Tab instead of moving focus while editing.
+  const handleDraftKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab" || event.metaKey || event.ctrlKey || event.altKey) return;
+    event.preventDefault();
+    const ta = event.currentTarget;
+    const { selectionStart, selectionEnd } = ta;
+    const indent = "  ";
+    const next = ta.value.slice(0, selectionStart) + indent + ta.value.slice(selectionEnd);
+    setDraftContent(next);
+    // Defer selection restore until React re-renders the textarea.
+    requestAnimationFrame(() => {
+      const el = draftTextareaRef.current;
+      if (!el) return;
+      const pos = selectionStart + indent.length;
+      el.selectionStart = pos;
+      el.selectionEnd = pos;
+    });
+  }, []);
+
   if (loading || (initialDisplayMode === "diff" && gitDiffLoading && !data)) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
@@ -1016,6 +1185,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const markdownDirectory = getFileDirectory(filePath);
   const lines = content.split("\n");
   const effectiveDisplayMode = isDeletedDiff ? "diff" : displayMode;
+  const canEdit = !isDeletedDiff && !isBinary && isFileEditingEnabled();
   const displayModes: DisplayMode[] = isDeletedDiff
     ? ["diff"]
     : [
@@ -1061,7 +1231,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
         )}
 
         <div className="file-viewer-controls">
-          {displayModes.length > 1 && (
+          {displayModes.length > 1 && effectiveDisplayMode !== "edit" && (
             <div className="file-viewer-mode-switch" aria-label={t("i18n.fileViewMode")}>
               {displayModes.map((mode) => {
                 const active = effectiveDisplayMode === mode;
@@ -1086,8 +1256,49 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
           )}
 
           <div className="file-viewer-actions">
-            {effectiveDisplayMode === "source" && (
+            {effectiveDisplayMode === "edit" ? (
               <>
+                <button
+                  type="button"
+                  onClick={() => void saveEdit()}
+                  disabled={isSaving}
+                  title={t("files.saveHint")}
+                  aria-label={t("files.save")}
+                  className="file-viewer-icon-button"
+                  style={{
+                    background: "var(--bg-selected)",
+                    color: "var(--text)",
+                  }}
+                >
+                  <SaveIcon />
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  disabled={isSaving}
+                  title={t("files.cancelEdit")}
+                  aria-label={t("files.cancelEdit")}
+                  className="file-viewer-icon-button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+              </>
+            ) : effectiveDisplayMode === "source" ? (
+              <>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={enterEdit}
+                    title={t("files.edit")}
+                    aria-label={t("files.edit")}
+                    className="file-viewer-icon-button"
+                  >
+                    <EditIcon />
+                  </button>
+                )}
                 <button
                   type="button"
                   onMouseDown={(event) => event.preventDefault()}
@@ -1119,16 +1330,125 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                   </svg>
                 </button>
               </>
-            )}
+            ) : canEdit ? (
+              <button
+                type="button"
+                onClick={enterEdit}
+                title={t("files.edit")}
+                aria-label={t("files.edit")}
+                className="file-viewer-icon-button"
+              >
+                <EditIcon />
+              </button>
+            ) : null}
           </div>
 
-          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
+          {!isDeletedDiff && effectiveDisplayMode !== "edit" && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
         </div>
       </div>
 
       {/* Content area */}
       <div ref={contentRef} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
-        {effectiveDisplayMode === "diff" && hasGitDiff ? (
+        {effectiveDisplayMode === "edit" ? (
+          <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+            {externalModified && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "5px 12px",
+                  borderBottom: "1px solid var(--border)",
+                  background: "rgba(214,168,75,0.14)",
+                  color: "#d6a84b",
+                  fontSize: 11,
+                  flexShrink: 0,
+                }}
+              >
+                <span style={{ flex: 1 }}>{t("files.externalModified")}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isDirty && !window.confirm(t("files.reloadOverwriteConfirm"))) return;
+                    void fetchContent(filePath).then((d) => {
+                      if (!d) return;
+                      setDraftContent(d.content);
+                      setOriginalContent(d.content);
+                      setExternalModified(false);
+                    });
+                  }}
+                  disabled={isSaving}
+                  style={{
+                    padding: "2px 8px",
+                    fontSize: 11,
+                    border: "1px solid #d6a84b",
+                    borderRadius: 4,
+                    background: "transparent",
+                    color: "#d6a84b",
+                    cursor: "pointer",
+                  }}
+                >
+                  {t("files.reload")}
+                </button>
+              </div>
+            )}
+            {saveError && (
+              <div
+                style={{
+                  padding: "5px 12px",
+                  borderBottom: "1px solid var(--border)",
+                  background: "rgba(248,113,113,0.14)",
+                  color: "#f87171",
+                  fontSize: 11,
+                  flexShrink: 0,
+                }}
+              >
+                {t("files.saveFailed", { error: saveError })}
+              </div>
+            )}
+            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+              <div
+                ref={draftLineNumbersRef}
+                aria-hidden="true"
+                style={{
+                  ...FILE_LINE_NUMBER_STYLE,
+                  height: "100%",
+                  overflow: "hidden",
+                  whiteSpace: "pre",
+                  pointerEvents: "none",
+                }}
+              >
+                {draftContent.split("\n").map((_, i) => `${i + 1}\n`).join("")}
+              </div>
+              <textarea
+                ref={draftTextareaRef}
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                onScroll={handleDraftScroll}
+                onKeyDown={handleDraftKeyDown}
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                wrap="off"
+                style={{
+                  flex: 1,
+                  height: "100%",
+                  resize: "none",
+                  border: "none",
+                  outline: "none",
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  ...FILE_CODE_STYLE,
+                  whiteSpace: "pre",
+                  overflow: "auto",
+                  padding: 0,
+                  tabSize: 2,
+                }}
+              />
+            </div>
+          </div>
+        ) : effectiveDisplayMode === "diff" && hasGitDiff ? (
           <DiffView patch={gitDiff.patch!} />
         ) : isHtml && effectiveDisplayMode === "preview" ? (
           <iframe

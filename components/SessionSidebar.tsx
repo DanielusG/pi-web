@@ -5,6 +5,7 @@ import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+import { isFileEditingEnabled } from "@/lib/file-editing";
 
 declare global {
   interface Window {
@@ -89,6 +90,8 @@ interface Props {
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
+  onFileCreated?: (filePath: string) => void;
+  onFileDeleted?: (filePath: string, isDir: boolean) => void;
 }
 
 interface WorktreeEntry {
@@ -383,7 +386,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onFileCreated, onFileDeleted }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1600,6 +1603,35 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 </svg>
               </ToolbarIconButton>
             )}
+            {explorerOpen && isFileEditingEnabled() && (
+              <>
+                <ToolbarIconButton
+                  onClick={() => fileExplorerRef.current?.openCreateFilePicker()}
+                  disabled={explorerUploadBusy}
+                  title={t("files.newFile")}
+                  color="var(--text-dim)"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="12" y1="13" x2="12" y2="19" />
+                    <line x1="9" y1="16" x2="15" y2="16" />
+                  </svg>
+                </ToolbarIconButton>
+                <ToolbarIconButton
+                  onClick={() => fileExplorerRef.current?.openCreateFolderPicker()}
+                  disabled={explorerUploadBusy}
+                  title={t("files.newFolder")}
+                  color="var(--text-dim)"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                    <line x1="12" y1="10" x2="12" y2="17" />
+                    <line x1="8.5" y1="13.5" x2="15.5" y2="13.5" />
+                  </svg>
+                </ToolbarIconButton>
+              </>
+            )}
             {explorerOpen && (
               <ToolbarIconButton
                 onClick={() => fileExplorerRef.current?.openUploadPicker()}
@@ -1652,6 +1684,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 onUploadBusyChange={setExplorerUploadBusy}
                 changesCollapsed={changesCollapsed}
                 onChangesCountChange={setChangesCount}
+                onFileCreated={onFileCreated}
+                onFileDeleted={onFileDeleted}
               />
             </div>
           )}

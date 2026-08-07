@@ -12,6 +12,7 @@ import {
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { isFileEditingEnabled } from "@/lib/file-editing";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 interface FileEntry {
@@ -39,10 +40,14 @@ interface Props {
   onUploadBusyChange?: (busy: boolean) => void;
   changesCollapsed: boolean;
   onChangesCountChange?: (count: number) => void;
+  onFileCreated?: (filePath: string) => void;
+  onFileDeleted?: (filePath: string, isDir: boolean) => void;
 }
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  openCreateFilePicker: (parentDir?: string) => void;
+  openCreateFolderPicker: (parentDir?: string) => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -190,6 +195,82 @@ function MentionIcon({ size = 11 }: { size?: number }) {
   );
 }
 
+function NewFileIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="12" y1="13" x2="12" y2="19" />
+      <line x1="9" y1="16" x2="15" y2="16" />
+    </svg>
+  );
+}
+
+function NewFolderIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+      <line x1="12" y1="10" x2="12" y2="17" />
+      <line x1="8.5" y1="13.5" x2="15.5" y2="13.5" />
+    </svg>
+  );
+}
+
+function TrashIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
+interface CreateEntryResponse {
+  path?: string;
+  kind?: string;
+  size?: number;
+  error?: string;
+}
+
+async function createEntry(
+  parentDir: string,
+  name: string,
+  kind: "file" | "directory",
+  content?: string,
+): Promise<{ path: string }> {
+  const res = await fetch(
+    `/api/files/${encodeFilePathForApi(parentDir)}?type=create`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, kind, content: content ?? "" }),
+    },
+  );
+  const data = await res.json().catch(() => ({})) as CreateEntryResponse;
+  if (!res.ok || !data.path) {
+    throw new Error(data.error ?? `Create failed (HTTP ${res.status})`);
+  }
+  return { path: data.path };
+}
+
+async function deleteEntry(targetPath: string): Promise<void> {
+  const res = await fetch(`/api/files/${encodeFilePathForApi(targetPath)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    let message = `Delete failed (HTTP ${res.status})`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(message);
+  }
+}
+
 function DismissButton({ onClick, title }: { onClick: () => void; title: string }) {
   return (
     <button
@@ -209,6 +290,22 @@ function DismissButton({ onClick, title }: { onClick: () => void; title: string 
   );
 }
 
+const HOVER_ICON_BUTTON_STYLE: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 4,
+  padding: "0 5px",
+  height: 20,
+  background: "var(--bg-panel)",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 600,
+  whiteSpace: "nowrap",
+};
+
 function TreeNode({
   node,
   depth,
@@ -221,6 +318,10 @@ function TreeNode({
   highlightedPaths,
   gitStatusByPath,
   changedDirectoryPaths,
+  editingEnabled,
+  onCreateFile,
+  onCreateFolder,
+  onDelete,
   t,
 }: {
   node: FileNode;
@@ -234,6 +335,10 @@ function TreeNode({
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
   changedDirectoryPaths: Set<string>;
+  editingEnabled: boolean;
+  onCreateFile: (parentDir: string) => void;
+  onCreateFolder: (parentDir: string) => void;
+  onDelete: (filePath: string, name: string, isDir: boolean) => void;
   t: Translate;
 }) {
   const open = expandedPaths.has(node.fullPath);
@@ -359,73 +464,112 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
-        {onAtMention && hovered && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
-            }}
-            title={t("files.insertPath")}
-            style={{
-              position: "absolute",
-              right: !node.isDir ? 28 : 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 8px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--accent)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-            }}
-          >
-            <MentionIcon />
-            {t("files.mention")}
-          </button>
-        )}
-        {hovered && !node.isDir && (
-          <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
-            download
-            onClick={(e) => e.stopPropagation()}
-            title={t("files.download")}
-            style={{
-              position: "absolute",
-              right: 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 5px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              textDecoration: "none",
-            }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </a>
-        )}
+        {hovered && (() => {
+          // Collect the hover actions so they can share one absolutely
+          // positioned flex row instead of overlapping individual absolutes.
+          // Order is left-to-right; the rightmost action sits at right: 4.
+          const actions: Array<React.ReactNode> = [];
+          if (onAtMention) {
+            actions.push(
+              <button
+                key="mention"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
+                }}
+                title={t("files.insertPath")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  padding: "0 8px",
+                  height: 20,
+                  background: "var(--bg-panel)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 4,
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <MentionIcon />
+                {t("files.mention")}
+              </button>,
+            );
+          }
+          if (editingEnabled && node.isDir) {
+            actions.push(
+              <button
+                key="new-file"
+                onClick={(e) => { e.stopPropagation(); onCreateFile(node.fullPath); }}
+                title={t("files.newFile")}
+                aria-label={t("files.newFile")}
+                style={HOVER_ICON_BUTTON_STYLE}
+              >
+                <NewFileIcon />
+              </button>,
+              <button
+                key="new-folder"
+                onClick={(e) => { e.stopPropagation(); onCreateFolder(node.fullPath); }}
+                title={t("files.newFolder")}
+                aria-label={t("files.newFolder")}
+                style={HOVER_ICON_BUTTON_STYLE}
+              >
+                <NewFolderIcon />
+              </button>,
+            );
+          }
+          if (!node.isDir) {
+            actions.push(
+              <a
+                key="download"
+                href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
+                download
+                onClick={(e) => e.stopPropagation()}
+                title={t("files.download")}
+                style={{ ...HOVER_ICON_BUTTON_STYLE, color: "var(--text-muted)", textDecoration: "none" }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </a>,
+            );
+          }
+          if (editingEnabled) {
+            actions.push(
+              <button
+                key="delete"
+                onClick={(e) => { e.stopPropagation(); onDelete(node.fullPath, node.name, node.isDir); }}
+                title={t("files.delete")}
+                aria-label={t("files.delete")}
+                style={{ ...HOVER_ICON_BUTTON_STYLE, color: "#f87171" }}
+              >
+                <TrashIcon />
+              </button>,
+            );
+          }
+          if (actions.length === 0) return null;
+          return (
+            <div
+              style={{
+                position: "absolute",
+                right: 4,
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+              }}
+            >
+              {actions}
+            </div>
+          );
+        })()}
       </div>
       {node.isDir && open && (
         <div>
@@ -443,6 +587,10 @@ function TreeNode({
               highlightedPaths={highlightedPaths}
               gitStatusByPath={gitStatusByPath}
               changedDirectoryPaths={changedDirectoryPaths}
+              editingEnabled={editingEnabled}
+              onCreateFile={onCreateFile}
+              onCreateFolder={onCreateFolder}
+              onDelete={onDelete}
               t={t}
             />
           ))}
@@ -523,6 +671,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   onUploadBusyChange,
   changesCollapsed,
   onChangesCountChange,
+  onFileCreated,
+  onFileDeleted,
 }, ref) {
   const { t } = useI18n();
   const [roots, setRoots] = useState<FileNode[]>([]);
@@ -538,10 +688,14 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<UploadSummary | null>(null);
   const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const prevCwdRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
   const uploadBusy = uploadPhase !== "idle";
+  // isFileEditingEnabled reads a NEXT_PUBLIC_ env var inlined at build time,
+  // so the same value that gates the server route gates these client buttons.
+  const mutationsEnabled = isFileEditingEnabled();
 
   const gitStatusByPath = useMemo(() => new Map(
     gitFiles.map((status) => [normalizeFilePathSlashes(status.filePath), status]),
@@ -658,11 +812,66 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     void prepareUpload(files);
   }, [prepareUpload]);
 
+  const handleCreateFile = useCallback(async (parentDir: string) => {
+    setMutationError(null);
+    const name = window.prompt(t("files.promptFileName"));
+    if (!name) return;
+    try {
+      await createEntry(parentDir, name, "file");
+      // Use the logical parentDir + name (matching the tree's node.fullPath)
+      // rather than the server-returned path, which is realpath-hardened and
+      // would mismatch when the cwd is a symlink (e.g. a worktree) — causing
+      // the highlight to not light up and a duplicate tab to open when the
+      // file is later clicked from the tree.
+      const logicalPath = joinFilePath(parentDir, name);
+      setHighlightedPaths(new Set([logicalPath]));
+      setTreeRefreshKey((k) => k + 1);
+      onFileCreated?.(logicalPath);
+    } catch (e) {
+      setMutationError(e instanceof Error ? e.message : String(e));
+    }
+  }, [onFileCreated, t]);
+
+  const handleCreateFolder = useCallback(async (parentDir: string) => {
+    setMutationError(null);
+    const name = window.prompt(t("files.promptFolderName"));
+    if (!name) return;
+    try {
+      await createEntry(parentDir, name, "directory");
+      const logicalPath = joinFilePath(parentDir, name);
+      setHighlightedPaths(new Set([logicalPath]));
+      setTreeRefreshKey((k) => k + 1);
+    } catch (e) {
+      setMutationError(e instanceof Error ? e.message : String(e));
+    }
+  }, [t]);
+
+  const handleDelete = useCallback(async (filePath: string, name: string, isDir: boolean) => {
+    setMutationError(null);
+    const message = isDir
+      ? t("files.confirmDeleteDirectory", { name })
+      : t("files.confirmDeleteFile", { name });
+    if (!window.confirm(message)) return;
+    try {
+      await deleteEntry(filePath);
+      setTreeRefreshKey((k) => k + 1);
+      onFileDeleted?.(filePath, isDir);
+    } catch (e) {
+      setMutationError(e instanceof Error ? e.message : String(e));
+    }
+  }, [onFileDeleted, t]);
+
   useImperativeHandle(ref, () => ({
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
-  }), [uploadBusy]);
+    openCreateFilePicker(parentDir?: string) {
+      void handleCreateFile(parentDir ?? cwd);
+    },
+    openCreateFolderPicker(parentDir?: string) {
+      void handleCreateFolder(parentDir ?? cwd);
+    },
+  }), [uploadBusy, cwd, handleCreateFile, handleCreateFolder]);
 
   useEffect(() => {
     onUploadBusyChange?.(uploadBusy);
@@ -847,6 +1056,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         </div>
       )}
 
+      {mutationError && (
+        <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid var(--border)", fontSize: 11, lineHeight: 1.35, color: "#f87171" }}>
+          <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere" }}>{mutationError}</span>
+          <DismissButton onClick={() => setMutationError(null)} title={t("files.dismissError")} />
+        </div>
+      )}
+
       {!changesCollapsed && gitFiles.length > 0 && (
         <div style={{ padding: "0 4px 2px" }}>
           <div
@@ -890,6 +1106,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 highlightedPaths={highlightedPaths}
                 gitStatusByPath={gitStatusByPath}
                 changedDirectoryPaths={changedDirectoryPaths}
+                editingEnabled={mutationsEnabled}
+                onCreateFile={handleCreateFile}
+                onCreateFolder={handleCreateFolder}
+                onDelete={handleDelete}
                 t={t}
               />
             ))

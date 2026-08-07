@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
-export const PI_WEB_AUTH_USERNAME = "pi";
+export const PI_WEB_AUTH_USERNAME = process.env.PI_WEB_USERNAME ?? "pi";
 
 function hashSecret(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();

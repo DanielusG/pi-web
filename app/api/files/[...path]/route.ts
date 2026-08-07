@@ -27,6 +27,7 @@ import {
   validateUploadFileNames,
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
+import { isFileEditingEnabled } from "@/lib/file-editing";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -43,6 +44,9 @@ const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 // Multipart boundaries and headers are not file bytes, but must be bounded too.
 const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
+// Soft cap for edit saves. Route handlers can accept larger bodies than Pages
+// Router, but we still bound it so a runaway client cannot exhaust memory.
+const MAX_EDIT_CONTENT_BYTES = 16 * 1024 * 1024;
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
@@ -102,14 +106,7 @@ async function getUploadDirectory(segments: string[]): Promise<
   // A browsable directory can be a symlink. Resolve both sides before writes
   // so a symlink inside an allowed root cannot redirect uploads outside it.
   const realDirectory = fs.realpathSync(directory);
-  const realRoots = new Set<string>();
-  for (const root of allowedRoots) {
-    try {
-      realRoots.add(fs.realpathSync(root));
-    } catch {
-      // Ignore stale session roots that no longer exist.
-    }
-  }
+  const realRoots = await resolveRealRoots(allowedRoots);
   if (!isFilePathAllowed(realDirectory, realRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
   }
@@ -120,6 +117,107 @@ async function getUploadDirectory(segments: string[]): Promise<
 function parseUploadFileNames(value: unknown): string[] | null {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
   return value;
+}
+
+async function resolveRealRoots(allowedRoots: Set<string>): Promise<Set<string>> {
+  const realRoots = new Set<string>();
+  for (const root of allowedRoots) {
+    try {
+      realRoots.add(fs.realpathSync(root));
+    } catch {
+      // Ignore stale session roots that no longer exist.
+    }
+  }
+  return realRoots;
+}
+
+async function getEditableFileTarget(segments: string[]): Promise<
+  { filePath: string; realPath: string; mode: number } | { response: NextResponse }
+> {
+  const filePath = filePathFromSegments(segments);
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isFilePathAllowed(filePath, allowedRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return { response: NextResponse.json({ error: "File not found" }, { status: 404 }) };
+  }
+  if (!stat.isFile()) {
+    return { response: NextResponse.json({ error: "Not a file" }, { status: 400 }) };
+  }
+
+  // A browsable file may be a symlink. Resolve both sides before writing so a
+  // symlink inside an allowed root cannot redirect edits outside it.
+  const realPath = fs.realpathSync(filePath);
+  const realRoots = await resolveRealRoots(allowedRoots);
+  if (!isFilePathAllowed(realPath, realRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  // Preserve rwx permission bits so edited scripts keep their execute bit.
+  // Setuid/setgid/sticky bits are intentionally dropped for safety.
+  return { filePath, realPath, mode: stat.mode & 0o777 };
+}
+
+/**
+ * Resolve a path targeted for deletion. Accepts both files and directories,
+ * but refuses to authorize an allowed root itself (you cannot delete the cwd
+ * or a project root through this endpoint).
+ *
+ * Returns `rmPath` — the path to actually pass to fs.rmSync. For a regular
+ * file/directory this is the realpath-hardened target; for a symlink it is the
+ * link itself (never the target), so deleting a symlink removes the link
+ * without touching whatever it points at. This also allows cleaning up
+ * dangling symlinks whose target no longer exists.
+ */
+async function getDeletableFileTarget(segments: string[]): Promise<
+  { filePath: string; rmPath: string; isDir: boolean } | { response: NextResponse }
+> {
+  const filePath = filePathFromSegments(segments);
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isFilePathAllowed(filePath, allowedRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  // lstatSync does not follow symlinks, so a dangling symlink still resolves
+  // here (statSync would throw ENOENT on its missing target).
+  let lstat: fs.Stats;
+  try {
+    lstat = fs.lstatSync(filePath);
+  } catch {
+    return { response: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  }
+
+  if (lstat.isSymbolicLink()) {
+    // A symlink is removed by deleting the link itself. We never resolve to
+    // its target, so a symlink inside an allowed root cannot be used to wipe
+    // an arbitrary location outside it. Compare against both the logical and
+    // resolved root sets so a symlinked allowed root is still protected.
+    const realRoots = await resolveRealRoots(allowedRoots);
+    if (allowedRoots.has(filePath) || realRoots.has(filePath)) {
+      return { response: NextResponse.json({ error: "Cannot delete an allowed root" }, { status: 403 }) };
+    }
+    return { filePath, rmPath: filePath, isDir: false };
+  }
+
+  // Regular file or directory: realpath-harden so a renamed/relinked ancestor
+  // cannot redirect the rm outside an allowed root.
+  const realPath = fs.realpathSync(filePath);
+  const realRoots = await resolveRealRoots(allowedRoots);
+  if (!isFilePathAllowed(realPath, realRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+  // Never allow deleting an allowed root itself — that would wipe a cwd,
+  // project root, or worktree top-level. Compare against the resolved roots.
+  if (realRoots.has(realPath)) {
+    return { response: NextResponse.json({ error: "Cannot delete an allowed root" }, { status: 403 }) };
+  }
+
+  return { filePath, rmPath: realPath, isDir: lstat.isDirectory() };
 }
 
 export async function POST(
@@ -136,6 +234,56 @@ export async function POST(
     if ("response" in uploadDirectory) return uploadDirectory.response;
     const { directory } = uploadDirectory;
     const type = request.nextUrl.searchParams.get("type") ?? "upload";
+
+    if (type === "create") {
+      // Create an empty file or directory inside an allowed, realpath-hardened
+      // parent. Gated by the same flag as PATCH so create/edit/mutations
+      // share one trust boundary.
+      if (!isFileEditingEnabled()) {
+        return NextResponse.json({ error: "File editing is disabled" }, { status: 403 });
+      }
+      const body = await request.json().catch(() => null) as {
+        name?: unknown;
+        kind?: unknown;
+        content?: unknown;
+      } | null;
+      if (!body || typeof body.name !== "string" || typeof body.kind !== "string") {
+        return NextResponse.json({ error: "Request body must be { name: string, kind: \"file\"|\"directory\" }" }, { status: 400 });
+      }
+      const kind = body.kind;
+      if (kind !== "file" && kind !== "directory") {
+        return NextResponse.json({ error: "kind must be \"file\" or \"directory\"" }, { status: 400 });
+      }
+      const name = body.name;
+      const validationError = validateUploadFileNames([name]);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
+      }
+      const content = typeof body.content === "string" ? body.content : "";
+      if (Buffer.byteLength(content, "utf8") > MAX_EDIT_CONTENT_BYTES) {
+        return NextResponse.json({ error: "Content exceeds 16MB limit" }, { status: 413 });
+      }
+      const target = path.join(directory, name);
+      // `directory` is already the realpath-hardened parent (getUploadDirectory
+      // resolved both sides), and validateUploadFileNames rejected "/", "\\",
+      // and "..", so `target` is guaranteed to stay inside the allowed root.
+      try {
+        if (kind === "file") {
+          // flag: "wx" fails (EEXIST) if the file already exists, matching
+          // the "create empty file" intent without clobbering anything.
+          fs.writeFileSync(target, content, { flag: "wx" });
+        } else {
+          fs.mkdirSync(target, { recursive: false, mode: 0o755 });
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") {
+          return NextResponse.json({ error: "File or directory already exists" }, { status: 409 });
+        }
+        throw error;
+      }
+      return NextResponse.json({ path: target, kind, size: 0 });
+    }
 
     if (type === "upload-check") {
       const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
@@ -236,6 +384,98 @@ export async function POST(
       { uploaded, skipped, errors },
       { status: errors.length > 0 ? 207 : 200 },
     );
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  if (!isApiRequestAllowed(request)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+
+  if (!isFileEditingEnabled()) {
+    return NextResponse.json({ error: "File editing is disabled" }, { status: 403 });
+  }
+
+  try {
+    const { path: segments } = await params;
+    const target = await getEditableFileTarget(segments);
+    if ("response" in target) return target.response;
+    const { realPath, mode } = target;
+
+    const body = await request.json().catch(() => null) as { content?: unknown } | null;
+    if (!body || typeof body.content !== "string") {
+      return NextResponse.json({ error: "Request body must be { content: string }" }, { status: 400 });
+    }
+    const content = body.content;
+    if (Buffer.byteLength(content, "utf8") > MAX_EDIT_CONTENT_BYTES) {
+      return NextResponse.json({ error: "Edited content exceeds 16MB limit" }, { status: 413 });
+    }
+
+    const bytes = Buffer.from(content, "utf8");
+    // Write to a temp file in the same directory and rename, so a partial
+    // write never leaves the target file truncated. fs.renameSync is atomic
+    // on the same filesystem.
+    const tmpPath = `${realPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tmpPath, bytes);
+      // Restore the original rwx bits so an edited executable script keeps
+      // its execute bit; otherwise rename would replace it with umask default.
+      fs.chmodSync(tmpPath, mode);
+      fs.renameSync(tmpPath, realPath);
+    } catch (error) {
+      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      throw error;
+    }
+
+    const stat = fs.statSync(realPath);
+    return NextResponse.json({ size: stat.size });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  if (!isApiRequestAllowed(request)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+
+  if (!isFileEditingEnabled()) {
+    return NextResponse.json({ error: "File editing is disabled" }, { status: 403 });
+  }
+
+  try {
+    const { path: segments } = await params;
+    const target = await getDeletableFileTarget(segments);
+    if ("response" in target) return target.response;
+    const { filePath, rmPath, isDir } = target;
+
+    // force: false so a missing path (e.g. deleted between stat and rm) raises
+    // ENOENT instead of being silently ignored — the caller should know.
+    // recursive mirrors the entry type so directories are removed recursively.
+    // For symlinks rmPath is the link itself and isDir is false, so the link
+    // is removed without touching its target.
+    try {
+      fs.rmSync(rmPath, { recursive: isDir, force: false });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (code === "ENOTEMPTY") {
+        return NextResponse.json({ error: "Directory is not empty" }, { status: 409 });
+      }
+      throw error;
+    }
+
+    return NextResponse.json({ path: filePath, wasDirectory: isDir });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
