@@ -90,6 +90,7 @@ interface Props {
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
+  onRunningSessionIdsChange?: (ids: Set<string>) => void;
 }
 
 interface WorktreeEntry {
@@ -384,7 +385,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onRunningSessionIdsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -536,6 +537,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    onRunningSessionIdsChange?.(runningSessionIds);
+  }, [onRunningSessionIdsChange, runningSessionIds]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;

@@ -16,6 +16,11 @@ import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-stor
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { userMessageKey } from "@/lib/prompt-recovery";
+import {
+  INITIAL_STREAMING_STATE,
+  streamReducer,
+  type ClientAssistantMessageEvent,
+} from "@/lib/streaming-message";
 
 export interface SessionData {
   sessionId: string;
@@ -29,31 +34,6 @@ export interface SessionData {
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
-}
-
-interface StreamingState {
-  isStreaming: boolean;
-  streamingMessage: Partial<AgentMessage> | null;
-}
-
-type StreamAction =
-  | { type: "start" }
-  | { type: "update"; message: Partial<AgentMessage> }
-  | { type: "end" }
-  | { type: "reset" };
-
-function streamReducer(state: StreamingState, action: StreamAction): StreamingState {
-  switch (action.type) {
-    case "start":
-      return { isStreaming: true, streamingMessage: null };
-    case "update":
-      return { isStreaming: true, streamingMessage: action.message };
-    case "end":
-    case "reset":
-      return { isStreaming: false, streamingMessage: null };
-    default:
-      return state;
-  }
 }
 
 interface AgentEvent {
@@ -144,6 +124,7 @@ export type BuiltinSlashCommandResult =
 
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
+  sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
   onAgentEnd?: () => void;
@@ -298,7 +279,7 @@ type SlashCommandsResponse = {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionCreated, onSessionForked,
+    session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   } = opts;
 
@@ -310,7 +291,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
-  const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
+  const [streamState, dispatch] = useReducer(streamReducer, INITIAL_STREAMING_STATE);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
@@ -692,6 +673,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const timeout = setTimeout(() => settle("timeout"), EVENT_STREAM_CONNECT_TIMEOUT_MS);
 
       es.onmessage = (e) => {
+        if (eventSourceRef.current !== es || sessionIdRef.current !== sid) return;
         try {
           const event = JSON.parse(e.data) as AgentEvent;
           if (event.type === "connected") settle("connected");
@@ -750,6 +732,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     result.source.close();
     throw new EventStreamConnectionError(result.status);
   }, [connectEvents]);
+
+  // A different browser can start this session after it was opened here.
+  // The sidebar's lightweight running-state poll gives us a cheap signal to
+  // attach to the existing SSE stream without adding another synchronization
+  // protocol to the chat.
+  useEffect(() => {
+    if (!session?.id || !sessionRunning) return;
+    void ensureEventsConnected(session.id).catch(() => {});
+  }, [ensureEventsConnected, session?.id, sessionRunning]);
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
@@ -1068,6 +1059,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
+      case "connected": {
+        dispatch({ type: "end" });
+        if (event.isStreaming === true) {
+          cancelEventStreamGrace();
+          sdkAgentActiveRef.current = true;
+          agentRunningRef.current = true;
+          setAgentRunning(true);
+          setAgentPhase({ kind: "waiting_model" });
+        }
+        break;
+      }
       case "agent_start":
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
@@ -1150,14 +1152,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // (e.g. SSE data buffered while the tab was frozen, flushed after
         // reconcile) — they would resurrect a ghost streaming bubble.
         if (!agentRunningRef.current) break;
-        const msg = event.message as Partial<AgentMessage> | undefined;
-        if (msg?.role === "user") {
-          break;
+        if (event.type === "message_start") {
+          const msg = event.message as AgentMessage | undefined;
+          if (msg?.role === "user") break;
+          if (msg?.role === "assistant") {
+            dispatch({ type: "snapshot", message: msg });
+            if (msg.content.length > 0) setAgentPhase(null);
+          } else if (msg) {
+            setAgentPhase(null);
+          }
+        } else {
+          const delta = event.assistantMessageEvent as ClientAssistantMessageEvent | undefined;
+          if (delta) {
+            dispatch({ type: "delta", event: delta });
+            if (delta.type !== "toolcall_start" && delta.type !== "toolcall_delta") {
+              setAgentPhase(null);
+            }
+          }
         }
-        if (msg) {
-          dispatch({ type: "update", message: normalizeToolCalls(msg as AgentMessage) });
-        }
-        setAgentPhase(null);
         // Live-follow the streaming output only when the user is already near
         // the bottom of the message list. If they scrolled up, leave them there.
         if (!pendingScrollToUserRef.current && isNearBottomRef.current && liveFollowFrameRef.current === null) {
@@ -1197,7 +1209,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else if (completed) {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
         }
-        dispatch({ type: "reset" });
+        dispatch({ type: "end" });
         setAgentPhase({ kind: "waiting_model" });
         break;
       }
@@ -1803,7 +1815,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            void connectEvents(session.id);
+            if (!eventSourceRef.current || eventSourceSessionIdRef.current !== session.id) {
+              void connectEvents(session.id);
+            }
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }

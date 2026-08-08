@@ -182,8 +182,53 @@ test("reuses an open event stream and hides an empty agent phase", () => {
   assert.match(ensureSource, /eventSourceSessionIdRef\.current === sid/);
   assert.match(ensureSource, /current\.readyState === EventSource\.OPEN/);
   assert.match(ensureSource, /attempt\?\.source === current && attempt\.pending/);
-  assert.match(chatWindowSource, /agentRunning && !streamState\.streamingMessage && agentPhase/);
+  assert.match(source, /eventSourceRef\.current !== es \|\| sessionIdRef\.current !== sid/);
+  assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
+  assert.match(chatWindowSource, /streamState\.isStreaming && hasStreamingContent && streamState\.streamingMessage/);
+  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && agentPhase/);
   assert.match(chatWindowSource, /return null;/);
+});
+
+test("connects a selected session when another browser reports it running", () => {
+  assert.match(source, /sessionRunning\?: boolean/);
+  assert.match(
+    source,
+    /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?ensureEventsConnected\(session\.id\)/,
+  );
+  assert.match(chatWindowSource, /sessionRunning\?: boolean/);
+  assert.match(chatWindowSource, /session, sessionRunning, newSessionCwd/);
+  assert.match(appShellSource, /runningSessionIds\.has\(selectedSession\.id\)/);
+  assert.match(appShellSource, /onRunningSessionIdsChange=\{handleRunningSessionIdsChange\}/);
+});
+
+test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", () => {
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "agent_start"'),
+  );
+  const streamSource = source.slice(
+    source.indexOf('case "message_start"'),
+    source.indexOf('case "message_end"'),
+  );
+  const messageEndSource = source.slice(
+    source.indexOf('case "message_end"'),
+    source.indexOf('case "tool_execution_start"'),
+  );
+
+  assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
+  assert.doesNotMatch(source, /streamingMessageRef/);
+  assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(connectedSource, /event\.isStreaming === true/);
+  assert.match(connectedSource, /agentRunningRef\.current = true/);
+  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
+  assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
+  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
+  assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
+  assert.doesNotMatch(streamSource, /case "message_delta"/);
+  assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
+  assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
+  assert.match(messageEndSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.doesNotMatch(messageEndSource, /streamState\.streamingMessage/);
 });
 
 test("plays the enabled sound once for each extension dialog", () => {

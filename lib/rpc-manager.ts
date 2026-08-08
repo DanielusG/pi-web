@@ -186,6 +186,14 @@ export class AgentSessionWrapper {
     return this.inner.sessionManager.getCwd();
   }
 
+  get streamingMessage() {
+    return this.inner.agent.state?.streamingMessage;
+  }
+
+  get isStreaming(): boolean {
+    return this.inner.isStreaming;
+  }
+
   isAlive(): boolean {
     return this._alive;
   }

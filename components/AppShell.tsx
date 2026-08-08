@@ -57,6 +57,13 @@ export function AppShell() {
   const isMobile = useIsMobile();
   useViewportHeight();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
+    setRunningSessionIds((previous) => {
+      if (previous.size === ids.size && [...ids].every((id) => previous.has(id))) return previous;
+      return ids;
+    });
+  }, []);
   // The temporary id distinguishes consecutive fresh composers in one cwd.
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
   const [newSessionDraftId, setNewSessionDraftId] = useState("initial");
@@ -692,6 +699,7 @@ export function AppShell() {
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
+        onRunningSessionIdsChange={handleRunningSessionIdsChange}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -1554,6 +1562,7 @@ export function AppShell() {
             <ChatWindow
               key={sessionKey}
               session={selectedSession}
+              sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
               newSessionCwd={effectiveNewSessionCwd}
               newSessionDraftKey={newSessionDraftKey}
               onAgentEnd={handleAgentEnd}

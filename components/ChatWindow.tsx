@@ -27,6 +27,7 @@ import {
 
 interface Props {
   session: SessionInfo | null;
+  sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
   onAgentEnd?: () => void;
@@ -173,7 +174,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -217,7 +218,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionDraftKey, onAgent
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
   } = useAgentSession({
-    session, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
+    session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning;
@@ -334,6 +335,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionDraftKey, onAgent
   }, [messages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const bottomComposerRef = useRef<HTMLDivElement | null>(null);
   const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
@@ -826,11 +828,11 @@ export function ChatWindow({ session, newSessionCwd, newSessionDraftKey, onAgent
                 </>
               );
             })()}
-            {streamState.isStreaming && streamState.streamingMessage && (
+            {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
               <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
             )}
 
-            {agentRunning && !streamState.streamingMessage && agentPhase && (
+            {agentRunning && !hasStreamingContent && agentPhase && (
               <div className="py-2 text-[13px] text-text-muted">
                 <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
               </div>
