@@ -37,18 +37,23 @@ function configuredHostnamesFromEnvironment(): string[] {
   ].filter((value): value is string => Boolean(value?.trim()));
 }
 
-function canonicalOrigin(value: string): string | null {
+function getRequestHostname(request: Request): string | null {
+  const host = request.headers.get("host");
+  return host ? hostnameFromAuthority(host) : null;
+}
+
+/**
+ * Extract the hostname from a browser `Origin` header value. Returns null for
+ * the opaque origin sentinel "null" (sandboxed iframes) or anything that fails
+ * to parse as a URL.
+ */
+function originHostname(value: string): string | null {
+  if (value === "null") return null;
   try {
-    return new URL(value).origin;
+    return normalizeHostname(new URL(value).hostname);
   } catch {
     return null;
   }
-}
-
-function getRequestOrigin(request: Request): string | null {
-  const requestUrl = new URL(request.url);
-  const host = request.headers.get("host");
-  return host ? canonicalOrigin(`${requestUrl.protocol}//${host}`) : null;
 }
 
 function isUserInitiatedSessionExportNavigation(request: Request): boolean {
@@ -94,8 +99,16 @@ export function isApiRequestOriginAllowed(request: Request): boolean {
   if (fetchSite === "cross-site") return false;
   if (!origin) return true;
 
-  const requestOrigin = getRequestOrigin(request);
-  return requestOrigin !== null && canonicalOrigin(origin) === requestOrigin;
+  // Compare hostnames only. Behind an HTTPS-terminating reverse proxy the
+  // backend always observes "http:" and possibly a non-public port, so a
+  // strict origin string comparison (scheme + host + port) yields false 403s.
+  // Hostname-only matching still blocks third-party CSRF (different hostname)
+  // while tolerating scheme/port divergence introduced by the proxy hop.
+  const browserHostname = originHostname(origin);
+  const requestHostname = getRequestHostname(request);
+  return requestHostname !== null
+    && browserHostname !== null
+    && browserHostname === requestHostname;
 }
 
 export function shouldCheckApiRequestOrigin(request: Request): boolean {
