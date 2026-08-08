@@ -14,6 +14,7 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.show": "显示侧边栏",
     "theme.light": "切换到浅色模式",
     "theme.dark": "切换到深色模式",
+    "theme.system": "跟随系统",
     "history.full": "完整历史",
     "history.unsaved": "会话保存后才能查看完整历史",
     "history.label": "完整历史",

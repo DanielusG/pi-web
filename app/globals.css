@@ -19,6 +19,7 @@
 }
 
 :root {
+  color-scheme: light;
   --bg: #ffffff;
   --bg-panel: #f5f5f5;
   --bg-hover: #eeeeee;
@@ -33,9 +34,41 @@
   --assistant-bg: #ffffff;
   --tool-bg: #f9fafb;
   --bg-subtle: rgba(0,0,0,0.03);
+
+  /* Syntax highlighting — light (VS theme palette) */
+  --syntax-text: #393A34;
+  --syntax-comment: #008000;
+  --syntax-string: #A31515;
+  --syntax-number: #36acaa;
+  --syntax-boolean: #36acaa;
+  --syntax-constant: #36acaa;
+  --syntax-keyword: #0000ff;
+  --syntax-control-flow: #0000ff;
+  --syntax-function: #393A34;
+  --syntax-class-name: #2B91AF;
+  --syntax-tag: #800000;
+  --syntax-attr-name: #ff0000;
+  --syntax-attr-value: #0000ff;
+  --syntax-atrule: #0000ff;
+  --syntax-selector: #800000;
+  --syntax-regex: #ff0000;
+  --syntax-entity: #ff0000;
+  --syntax-important: #e90;
+  --syntax-variable: #36acaa;
+  --syntax-operator: #393A34;
+  --syntax-punctuation: #393A34;
+  --syntax-escape: #36acaa;
+  --syntax-cdata: #008000;
+  --syntax-deleted: #9a050f;
+  --syntax-inserted: #36acaa;
+  --syntax-url: #36acaa;
+  --syntax-selection-bg: #C1DEF1;
+  --syntax-inline-code: #db4c69;
+  --syntax-inline-code-bg: #f8f8f8;
 }
 
 html.dark {
+  color-scheme: dark;
   --bg: #1a1a1a;
   --bg-panel: #242424;
   --bg-hover: #2e2e2e;
@@ -50,6 +83,37 @@ html.dark {
   --assistant-bg: #1a1a1a;
   --tool-bg: #1f2937;
   --bg-subtle: rgba(255,255,255,0.04);
+
+  /* Syntax highlighting — dark (VSCode Dark+ palette) */
+  --syntax-text: #d4d4d4;
+  --syntax-comment: #6a9955;
+  --syntax-string: #ce9178;
+  --syntax-number: #b5cea8;
+  --syntax-boolean: #569cd6;
+  --syntax-constant: #9cdcfe;
+  --syntax-keyword: #569CD6;
+  --syntax-control-flow: #c586c0;
+  --syntax-function: #dcdcaa;
+  --syntax-class-name: #4ec9b0;
+  --syntax-tag: #569cd6;
+  --syntax-attr-name: #9cdcfe;
+  --syntax-attr-value: #ce9178;
+  --syntax-atrule: #ce9178;
+  --syntax-selector: #d7ba7d;
+  --syntax-regex: #d16969;
+  --syntax-entity: #569cd6;
+  --syntax-important: #569cd6;
+  --syntax-variable: #9cdcfe;
+  --syntax-operator: #d4d4d4;
+  --syntax-punctuation: #d4d4d4;
+  --syntax-escape: #d7ba7d;
+  --syntax-cdata: #808080;
+  --syntax-deleted: #ce9178;
+  --syntax-inserted: #b5cea8;
+  --syntax-url: #9cdcfe;
+  --syntax-selection-bg: #264F78;
+  --syntax-inline-code: #db4c69;
+  --syntax-inline-code-bg: #1e1e1e;
 }
 
 .catppuccin-file-icon {
@@ -75,19 +139,16 @@ html.dark .catppuccin-file-icon {
   }
 }
 
-/* Theme toggle: circular wipe via View Transitions API.
-   Disable the UA cross-fade; the actual clip-path animation is driven by
-   Element.animate() in hooks/useTheme.ts after transition.ready resolves. */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-::view-transition-old(root) {
-  z-index: 1;
-}
-::view-transition-new(root) {
-  z-index: 2;
+/* 主题切换：短暂启用色彩过渡，避免整页 View Transitions 快照开销。
+   仅在切换瞬间由 useTheme 给 <html> 加 .theme-transition 类，
+   220ms 后移除，不影响其他元素的 width/transform/opacity 等过渡。 */
+html.theme-transition,
+html.theme-transition * {
+  transition: background-color 0.2s ease,
+              border-color 0.2s ease,
+              color 0.2s ease,
+              fill 0.2s ease,
+              stroke 0.2s ease !important;
 }
 
 * {

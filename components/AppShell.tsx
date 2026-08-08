@@ -51,7 +51,7 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
-  const { isDark, toggleTheme } = useTheme();
+  const { mode, cycleMode } = useTheme();
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();
   useViewportHeight();
@@ -932,13 +932,17 @@ export function AppShell() {
             )}
           </button>
           <button
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-            }}
-             title={isDark ? translate("theme.light") : translate("theme.dark")}
-             aria-label={isDark ? translate("theme.light") : translate("theme.dark")}
-            aria-pressed={isDark}
+            onClick={() => cycleMode()}
+            title={
+              mode === "light" ? translate("theme.dark")
+              : mode === "dark" ? translate("theme.system")
+              : translate("theme.light")
+            }
+            aria-label={
+              mode === "light" ? translate("theme.dark")
+              : mode === "dark" ? translate("theme.system")
+              : translate("theme.light")
+            }
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
@@ -948,7 +952,7 @@ export function AppShell() {
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
           >
-            {isDark ? (
+            {mode === "light" ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="5" />
                 <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
@@ -956,9 +960,14 @@ export function AppShell() {
                 <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
                 <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
               </svg>
-            ) : (
+            ) : mode === "dark" ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 3 a9 9 0 0 0 0 18 z" fill="currentColor" stroke="none" />
               </svg>
             )}
            </button>

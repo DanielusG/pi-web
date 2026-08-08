@@ -14,6 +14,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.show": "Show sidebar",
     "theme.light": "Switch to light mode",
     "theme.dark": "Switch to dark mode",
+    "theme.system": "Follow system",
     "history.full": "Full history",
     "history.unsaved": "Full history is available after the session is saved",
     "history.label": "Full history",

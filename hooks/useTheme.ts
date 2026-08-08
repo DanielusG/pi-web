@@ -2,84 +2,181 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
-type Theme = "light" | "dark";
+export type ThemeMode = "light" | "dark" | "system";
+type EffectiveTheme = "light" | "dark";
+
+interface ThemeState {
+  mode: ThemeMode;
+  effective: EffectiveTheme;
+}
+
+const MODE_KEY = "pi-theme-mode";
+const LEGACY_KEY = "pi-theme";
+const SYSTEM_QUERY = "(prefers-color-scheme: dark)";
+
+const SERVER_SNAPSHOT: ThemeState = { mode: "system", effective: "light" };
 
 const listeners = new Set<() => void>();
 
+let cachedState: ThemeState | null = null;
+let systemPreference: EffectiveTheme = "light";
+let systemBound = false;
+
+function isValidMode(value: unknown): value is ThemeMode {
+  return value === "light" || value === "dark" || value === "system";
+}
+
+/** Pure read — never writes to localStorage. Falls back to legacy key. */
+function readStoredMode(): ThemeMode {
+  if (typeof window === "undefined") return "system";
+  try {
+    const raw = localStorage.getItem(MODE_KEY);
+    if (isValidMode(raw)) return raw;
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (isValidMode(legacy) && legacy !== "system") return legacy;
+  } catch {
+    // ignore storage errors (private mode, quota, etc.)
+  }
+  return "system";
+}
+
+function persistMode(mode: ThemeMode) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // ignore storage errors (private mode, quota, etc.)
+  }
+}
+
+function readSystemPreference(): EffectiveTheme {
+  if (typeof window === "undefined" || !window.matchMedia) return "light";
+  return window.matchMedia(SYSTEM_QUERY).matches ? "dark" : "light";
+}
+
+function computeEffective(mode: ThemeMode, system: EffectiveTheme): EffectiveTheme {
+  return mode === "system" ? system : mode;
+}
+
+function applyDom(effective: EffectiveTheme) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (effective === "dark") {
+    root.classList.add("dark");
+  } else {
+    root.classList.remove("dark");
+  }
+}
+
+function withTransition(fn: () => void) {
+  if (typeof window === "undefined") {
+    fn();
+    return;
+  }
+  const root = document.documentElement;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const animate = !reduceMotion;
+  if (animate) root.classList.add("theme-transition");
+  fn();
+  if (animate) window.setTimeout(() => root.classList.remove("theme-transition"), 220);
+}
+
+function emit() {
+  listeners.forEach((cb) => cb());
+}
+
+function ensureSystemBinding() {
+  if (systemBound || typeof window === "undefined" || !window.matchMedia) return;
+  const mql = window.matchMedia(SYSTEM_QUERY);
+  const handler = (e: MediaQueryListEvent) => {
+    systemPreference = e.matches ? "dark" : "light";
+    if (!cachedState || cachedState.mode !== "system") return;
+    const nextEffective = systemPreference;
+    if (nextEffective === cachedState.effective) return;
+    cachedState = { mode: "system", effective: nextEffective };
+    withTransition(() => applyDom(nextEffective));
+    emit();
+  };
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", handler);
+  } else if (typeof mql.addListener === "function") {
+    mql.addListener(handler);
+  }
+  systemBound = true;
+}
+
+/** Initialize module state once on the client. Called at module load so
+ *  getSnapshot stays free of DOM/localStorage side effects. */
+function init() {
+  if (typeof window === "undefined") return;
+  ensureSystemBinding();
+  systemPreference = readSystemPreference();
+  const mode = readStoredMode();
+  const effective = computeEffective(mode, systemPreference);
+  cachedState = { mode, effective };
+  applyDom(effective);
+}
+
+init();
+
+function getSnapshot(): ThemeState {
+  if (typeof window === "undefined") return SERVER_SNAPSHOT;
+  return cachedState ?? SERVER_SNAPSHOT;
+}
+
+function getServerSnapshot(): ThemeState {
+  return SERVER_SNAPSHOT;
+}
+
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);
+  ensureSystemBinding();
   return () => {
     listeners.delete(cb);
   };
 }
 
-function getSnapshot(): Theme {
-  if (typeof document === "undefined") return "light";
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+function setModeInternal(next: ThemeMode) {
+  if (!cachedState) {
+    init();
+    if (!cachedState) return;
+  }
+  if (next === cachedState.mode) return;
+  const nextEffective = computeEffective(next, systemPreference);
+  cachedState = { mode: next, effective: nextEffective };
+  persistMode(next);
+  withTransition(() => applyDom(nextEffective));
+  emit();
 }
-
-function getServerSnapshot(): Theme {
-  return "light";
-}
-
-type ToggleOrigin = { x: number; y: number };
 
 export function useTheme() {
-  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  const toggleTheme = useCallback((origin?: ToggleOrigin) => {
-    const next: Theme = getSnapshot() === "dark" ? "light" : "dark";
-
-    const apply = () => {
-      if (next === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-      try {
-        localStorage.setItem("pi-theme", next);
-      } catch {
-        // ignore storage errors (private mode, quota, etc.)
-      }
-      listeners.forEach((cb) => cb());
-    };
-
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const supportsVT = typeof document.startViewTransition === "function";
-
-    if (!supportsVT || reduceMotion) {
-      apply();
-      return;
-    }
-
-    const x = origin?.x ?? window.innerWidth / 2;
-    const y = origin?.y ?? window.innerHeight / 2;
-    const endRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y),
-    );
-
-    const transition = document.startViewTransition(apply);
-    transition.ready
-      .then(() => {
-        document.documentElement.animate(
-          {
-            clipPath: [
-              `circle(0px at ${x}px ${y}px)`,
-              `circle(${endRadius}px at ${x}px ${y}px)`,
-            ],
-          },
-          {
-            duration: 450,
-            easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
-            pseudoElement: "::view-transition-new(root)",
-          },
-        );
-      })
-      .catch(() => {
-        // transition cancelled — ignore
-      });
+  const setMode = useCallback((next: ThemeMode) => {
+    setModeInternal(next);
   }, []);
 
-  return { theme, toggleTheme, isDark: theme === "dark" };
+  const cycleMode = useCallback(() => {
+    const order: ThemeMode[] = ["light", "dark", "system"];
+    const current = cachedState?.mode ?? "system";
+    const idx = order.indexOf(current);
+    const next = order[(idx + 1) % order.length];
+    setModeInternal(next);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    const current = cachedState?.effective ?? "light";
+    setModeInternal(current === "dark" ? "light" : "dark");
+  }, []);
+
+  return {
+    mode: state.mode,
+    theme: state.effective,
+    effective: state.effective,
+    isDark: state.effective === "dark",
+    setMode,
+    cycleMode,
+    toggleTheme,
+  };
 }
