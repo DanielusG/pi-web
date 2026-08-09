@@ -86,6 +86,29 @@ test("new-session promotion rekeys drafts before publishing the real session", (
   assert.match(chatWindowSource, /draftKey=\{session\?\.id \?\? newSessionDraftKey \?\? undefined\}/);
 });
 
+test("fresh sessions restore the preferred tool preset without overriding existing sessions", () => {
+  const preferenceSource = source.slice(
+    source.indexOf("  const setToolPresetState"),
+    source.indexOf("  const scrollToBottom"),
+  );
+  const loadToolsSource = source.slice(
+    source.indexOf("  const loadTools = useCallback"),
+    source.indexOf("  const promoteNewSession"),
+  );
+  const changeSource = source.slice(
+    source.indexOf("  const handleToolPresetChange = useCallback"),
+    source.indexOf("  const scrollUserMsgToTop"),
+  );
+
+  assert.match(
+    preferenceSource,
+    /useLayoutEffect\(\(\) => \{\s*if \(!isNew \|\| sessionIdRef\.current\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
+  );
+  assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
+  assert.match(changeSource, /sendAgentCommand\(sid, \{ type: "set_tools", toolNames \}\)/);
+  assert.doesNotMatch(loadToolsSource, /setPreferredToolPreset/);
+});
+
 test("submission recovery updates live refs before a possible session rekey", () => {
   const restoreMethod = chatInputSource.slice(
     chatInputSource.indexOf("    restoreSubmission(text:"),
