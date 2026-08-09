@@ -21,8 +21,15 @@ npx @agegr/pi-web@latest
 **Or install globally:**
 
 ```bash
-npm install -g @agegr/pi-web
+# Install or upgrade
+npm install -g @agegr/pi-web@latest
 pi-web
+```
+
+**Uninstall a global installation:**
+
+```bash
+npm uninstall -g @agegr/pi-web
 ```
 
 Then open [http://127.0.0.1:30141](http://127.0.0.1:30141). The CLI will try to open the browser automatically after the server is ready. Pi Web listens on `127.0.0.1` by default.
