@@ -302,9 +302,29 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(userScrollSource, /isNearBottomRef\.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD/);
   assert.match(userScrollSource, /container\.scrollTo\(\{ top: targetTop, behavior: "smooth" \}\)/);
   assert.match(scrollEffectSource, /pendingScrollToUserRef\.current = false;[\s\S]*?scrollUserMsgToTop\(\)/);
-  assert.match(chatWindowSource, /const maxScrollTopWithoutAnchor = Math\.max\([\s\S]*?container\.scrollHeight - promptAnchorSpacerHeightRef\.current - container\.clientHeight/);
-  assert.match(chatWindowSource, /const nextPromptAnchorSpacerHeight = Math\.max\([\s\S]*?Math\.ceil\(targetTop - maxScrollTopWithoutAnchor\)/);
-  assert.match(chatWindowSource, /<div aria-hidden="true" style=\{\{ height: promptAnchorSpacerHeight \}\} \/>/);
+  assert.match(chatWindowSource, /getPromptAnchorSpacerHeight\([\s\S]*?container\.scrollHeight,[\s\S]*?promptAnchorSpacerHeightRef\.current,[\s\S]*?container\.clientHeight/);
+  assert.match(chatWindowSource, /<div ref=\{promptAnchorSpacerRef\} aria-hidden="true" \/>/);
+});
+
+test("keeps prompt anchor measurement outside the React update cycle", () => {
+  const anchorEffectStart = chatWindowSource.indexOf(
+    "useLayoutEffect(() => {\n    const spacer = promptAnchorSpacerRef.current;",
+  );
+  assert.notEqual(anchorEffectStart, -1);
+  const anchorEffectSource = chatWindowSource.slice(
+    anchorEffectStart,
+    chatWindowSource.indexOf("const availableThinkingLevels"),
+  );
+
+  assert.doesNotMatch(anchorEffectSource, /\bset[A-Z][A-Za-z0-9]*\s*\(/);
+  assert.doesNotMatch(anchorEffectSource, /streamState\.streamingMessage/);
+  assert.match(anchorEffectSource, /spacer\.style\.height = nextPromptAnchorSpacerHeight > 0/);
+  assert.match(anchorEffectSource, /new ResizeObserver\(schedulePromptAnchorMeasure\)/);
+  assert.match(anchorEffectSource, /observer\?\.observe\(messageContent\)/);
+  assert.match(anchorEffectSource, /if \(disposed \|\| promptAnchorMeasureFrameRef\.current !== null\) return/);
+  assert.match(anchorEffectSource, /promptAnchorMeasureFrameRef\.current = requestAnimationFrame\(\(\) => \{\s*promptAnchorMeasureFrameRef\.current = null;\s*updatePromptAnchorSpacer\(\)/);
+  assert.match(anchorEffectSource, /disposed = true;[\s\S]*?cancelAnimationFrame\(promptAnchorMeasureFrameRef\.current\)/);
+  assert.match(chatWindowSource, /<div ref=\{messageContentRef\} style=\{\{/);
 });
 
 test("sizes the message tail from the rendered bottom composer", () => {

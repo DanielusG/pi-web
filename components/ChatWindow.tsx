@@ -20,6 +20,7 @@ import type { AppUpdateResponse } from "@/lib/api-types";
 import {
   captureScrollDistance,
   getNextVisibleCount,
+  getPromptAnchorSpacerHeight,
   getVisibleRenderWindow,
   restoreScrollTop,
   VISIBLE_PAGE_SIZE,
@@ -423,9 +424,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
   const bottomComposerHeightRef = useRef(0);
   const bottomComposerScrollFrameRef = useRef<number | null>(null);
-  const [promptAnchorSpacerHeight, setPromptAnchorSpacerHeight] = useState(0);
+  const messageContentRef = useRef<HTMLDivElement | null>(null);
+  const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerHeightRef = useRef(0);
-  const promptAnchorScrollPendingRef = useRef(false);
+  const promptAnchorMeasureFrameRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     const composer = bottomComposerRef.current;
@@ -474,67 +476,81 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [error, isEmptyNew, loading, scrollContainerRef, scrollToBottom]);
 
   useLayoutEffect(() => {
+    const spacer = promptAnchorSpacerRef.current;
     if (!agentRunning || !promptAnchorActive) {
-      promptAnchorScrollPendingRef.current = false;
-      if (promptAnchorSpacerHeightRef.current !== 0) {
-        promptAnchorSpacerHeightRef.current = 0;
-        setPromptAnchorSpacerHeight(0);
-      }
+      promptAnchorSpacerHeightRef.current = 0;
+      if (spacer) spacer.style.height = "";
       return;
     }
 
     const container = scrollContainerRef.current;
+    const messageContent = messageContentRef.current;
     const userMessage = lastUserMsgRef.current;
-    if (!container || !userMessage) return;
+    if (!container || !messageContent || !userMessage || !spacer) return;
 
+    let disposed = false;
     const updatePromptAnchorSpacer = () => {
+      if (
+        disposed
+        || scrollContainerRef.current !== container
+        || messageContentRef.current !== messageContent
+        || lastUserMsgRef.current !== userMessage
+        || promptAnchorSpacerRef.current !== spacer
+      ) return;
+
       const userMessageTop = userMessage.getBoundingClientRect().top
         - container.getBoundingClientRect().top
         + container.scrollTop;
       const targetTop = Math.max(0, userMessageTop - 16);
-      // Exclude the current spacer so each measurement converges instead of
-      // alternating between adding it and removing it.
-      const maxScrollTopWithoutAnchor = Math.max(
-        0,
-        container.scrollHeight - promptAnchorSpacerHeightRef.current - container.clientHeight,
-      );
-      const nextPromptAnchorSpacerHeight = Math.max(
-        0,
-        Math.ceil(targetTop - maxScrollTopWithoutAnchor),
+      const nextPromptAnchorSpacerHeight = getPromptAnchorSpacerHeight(
+        targetTop,
+        container.scrollHeight,
+        promptAnchorSpacerHeightRef.current,
+        container.clientHeight,
       );
 
-      if (nextPromptAnchorSpacerHeight !== promptAnchorSpacerHeightRef.current) {
-        const needsInitialScroll = promptAnchorSpacerHeightRef.current === 0
-          && nextPromptAnchorSpacerHeight > 0;
-        promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-        promptAnchorScrollPendingRef.current ||= needsInitialScroll;
-        setPromptAnchorSpacerHeight(nextPromptAnchorSpacerHeight);
-        return;
-      }
+      if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
 
-      if (promptAnchorScrollPendingRef.current) {
-        promptAnchorScrollPendingRef.current = false;
-        scrollUserMsgToTop();
-      }
+      const needsInitialScroll = promptAnchorSpacerHeightRef.current === 0
+        && nextPromptAnchorSpacerHeight > 0;
+      promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
+      spacer.style.height = nextPromptAnchorSpacerHeight > 0
+        ? `${nextPromptAnchorSpacerHeight}px`
+        : "";
+      if (needsInitialScroll) scrollUserMsgToTop();
+    };
+
+    const schedulePromptAnchorMeasure = () => {
+      if (disposed || promptAnchorMeasureFrameRef.current !== null) return;
+      promptAnchorMeasureFrameRef.current = requestAnimationFrame(() => {
+        promptAnchorMeasureFrameRef.current = null;
+        updatePromptAnchorSpacer();
+      });
     };
 
     updatePromptAnchorSpacer();
     const observer = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(updatePromptAnchorSpacer);
+      : new ResizeObserver(schedulePromptAnchorMeasure);
     observer?.observe(container);
+    observer?.observe(messageContent);
     observer?.observe(userMessage);
-    return () => observer?.disconnect();
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      if (promptAnchorMeasureFrameRef.current !== null) {
+        cancelAnimationFrame(promptAnchorMeasureFrameRef.current);
+        promptAnchorMeasureFrameRef.current = null;
+      }
+    };
   }, [
     agentRunning,
     bottomComposerHeight,
     lastUserMsgRef,
     messages.length,
     promptAnchorActive,
-    promptAnchorSpacerHeight,
     scrollContainerRef,
     scrollUserMsgToTop,
-    streamState.streamingMessage,
   ]);
 
   const availableThinkingLevels = displayModelValue
@@ -718,7 +734,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         </div>
         <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
+            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
               for (let i = messages.length - 1; i >= 0; i--) {
@@ -932,9 +948,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
               />
             )}
 
-            {promptAnchorSpacerHeight > 0 && (
-              <div aria-hidden="true" style={{ height: promptAnchorSpacerHeight }} />
-            )}
+            <div ref={promptAnchorSpacerRef} aria-hidden="true" />
 
             {/* Match the trailing space to the live bottom composer height. */}
             <div aria-hidden="true" style={{ height: bottomComposerHeight }} />

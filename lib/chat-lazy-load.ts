@@ -20,3 +20,16 @@ export function captureScrollDistance(scrollHeight: number, scrollTop: number): 
 export function restoreScrollTop(scrollHeight: number, savedDistance: number): number {
   return Math.max(0, scrollHeight - savedDistance);
 }
+
+export function getPromptAnchorSpacerHeight(
+  targetTop: number,
+  scrollHeight: number,
+  currentSpacerHeight: number,
+  clientHeight: number,
+): number {
+  const maxScrollTopWithoutAnchor = Math.max(
+    0,
+    scrollHeight - currentSpacerHeight - clientHeight,
+  );
+  return Math.max(0, Math.ceil(Math.max(0, targetTop) - maxScrollTopWithoutAnchor));
+}
