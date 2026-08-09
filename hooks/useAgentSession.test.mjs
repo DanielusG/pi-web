@@ -196,28 +196,35 @@ test("post-accept prompt errors do not duplicate the user submission", () => {
   assert.doesNotMatch(promptErrorSource, /restoreSubmission/);
 });
 
-test("reuses an open event stream and hides an empty agent phase", () => {
+test("delegates event stream readiness and hides an empty agent phase", () => {
   const ensureSource = source.slice(
     source.indexOf("const ensureEventsConnected"),
     source.indexOf("const respondToExtensionUi"),
   );
 
-  assert.match(ensureSource, /eventSourceSessionIdRef\.current === sid/);
-  assert.match(ensureSource, /current\.readyState === EventSource\.OPEN/);
-  assert.match(ensureSource, /attempt\?\.source === current && attempt\.pending/);
-  assert.match(source, /eventSourceRef\.current !== es \|\| sessionIdRef\.current !== sid/);
+  assert.match(source, /new AgentEventConnection\(\{/);
+  assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
+  assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
+  assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
   assert.match(chatWindowSource, /streamState\.isStreaming && hasStreamingContent && streamState\.streamingMessage/);
   assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && agentPhase/);
   assert.match(chatWindowSource, /return null;/);
 });
 
+test("uses one absolute agent-readiness deadline instead of a five-second transport deadline", () => {
+  assert.match(source, /EVENT_STREAM_READY_TIMEOUT_MS = 60_000/);
+  assert.doesNotMatch(source, /EVENT_STREAM_OPEN_TIMEOUT_MS/);
+});
+
 test("connects a selected session when another browser reports it running", () => {
   assert.match(source, /sessionRunning\?: boolean/);
   assert.match(
     source,
-    /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?ensureEventsConnected\(session\.id\)/,
+    /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?maintainEventsConnected\(session\.id\)/,
   );
+  assert.match(source, /maintainEventsConnected\(session\.id\)/);
+  assert.doesNotMatch(source, /void connectEvents\(/);
   assert.match(chatWindowSource, /sessionRunning\?: boolean/);
   assert.match(chatWindowSource, /session, sessionRunning, newSessionCwd/);
   assert.match(appShellSource, /runningSessionIds\.has\(selectedSession\.id\)/);

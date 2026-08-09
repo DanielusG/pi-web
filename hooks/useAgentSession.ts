@@ -17,6 +17,7 @@ import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-prese
 import { getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { userMessageKey } from "@/lib/prompt-recovery";
+import { AgentEventConnection } from "@/lib/agent-event-connection";
 import {
   INITIAL_STREAMING_STATE,
   streamReducer,
@@ -153,33 +154,12 @@ const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
-const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
+const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
+const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
-
-type EventStreamConnectionStatus = "connected" | "timeout" | "closed";
-
-type EventStreamConnectionResult = {
-  status: EventStreamConnectionStatus;
-  source: EventSource;
-};
-
-type EventStreamConnectionAttempt = {
-  source: EventSource;
-  promise: Promise<EventStreamConnectionResult>;
-  pending: boolean;
-};
-
-class EventStreamConnectionError extends Error {
-  constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
-    super(status === "timeout"
-      ? "Timed out connecting to the agent event stream. Please try again."
-      : "Failed to connect to the agent event stream. Please try again.");
-    this.name = "EventStreamConnectionError";
-  }
-}
 
 function createNoticeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -328,13 +308,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
 
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const eventSourceSessionIdRef = useRef<string | null>(null);
-  const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
+  const eventConnectionRef = useRef<AgentEventConnection | null>(null);
   const eventStreamGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventStreamGraceGenerationRef = useRef(0);
   const eventStreamGraceActiveRef = useRef(false);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
+  const sessionPropIdRef = useRef<string | null>(session?.id ?? null);
+  const sessionRunningRef = useRef(Boolean(sessionRunning));
   const agentRunningRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
@@ -362,6 +342,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const modelSwitchPendingRef = useRef(false);
   const draftKeyAliasesRef = useRef(new Map<string, string>());
   const sessionHookMountedRef = useRef(true);
+
+  sessionPropIdRef.current = session?.id ?? null;
+  sessionRunningRef.current = Boolean(sessionRunning);
+
+  if (!eventConnectionRef.current) {
+    eventConnectionRef.current = new AgentEventConnection({
+      createSource: (sid) => new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`),
+      onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
+      shouldMaintain: (sid) => (
+        sessionHookMountedRef.current
+        && sessionIdRef.current === sid
+        && (
+          agentRunningRef.current
+          || eventStreamGraceActiveRef.current
+          || (sessionPropIdRef.current === sid && sessionRunningRef.current)
+        )
+      ),
+      readinessTimeoutMs: EVENT_STREAM_READY_TIMEOUT_MS,
+      reconnectDelayMs: EVENT_STREAM_RECONNECT_DELAY_MS,
+      onUnexpectedError: (error) => {
+        console.error("Failed to maintain the agent event stream:", error);
+      },
+    });
+  }
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -653,91 +657,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const closeEvents = useCallback(() => {
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
-    eventSourceSessionIdRef.current = null;
-    eventConnectionAttemptRef.current = null;
+    eventConnectionRef.current?.close();
   }, []);
 
-  const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
-    closeEvents();
-    const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`);
-    eventSourceRef.current = es;
-    eventSourceSessionIdRef.current = sid;
+  const ensureEventsConnected = useCallback((sid: string) => (
+    eventConnectionRef.current!.ensureConnected(sid)
+  ), []);
 
-    const promise = new Promise<EventStreamConnectionResult>((resolve) => {
-      let settled = false;
-      const settle = (status: EventStreamConnectionStatus) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        if (eventConnectionAttemptRef.current?.source === es) {
-          eventConnectionAttemptRef.current.pending = false;
-        }
-        resolve({ status, source: es });
-      };
-      const timeout = setTimeout(() => settle("timeout"), EVENT_STREAM_CONNECT_TIMEOUT_MS);
-
-      es.onmessage = (e) => {
-        if (eventSourceRef.current !== es || sessionIdRef.current !== sid) return;
-        try {
-          const event = JSON.parse(e.data) as AgentEvent;
-          if (event.type === "connected") settle("connected");
-          handleAgentEventRef.current?.(event);
-        } catch {
-          // ignore
-        }
-      };
-      es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) {
-          // Fatal error (404/500/content-type mismatch): browser won't
-          // auto-reconnect. Settle the Promise and manually reconnect for
-          // already-running sessions or an active idle grace window.
-          settle("closed");
-          if (eventSourceRef.current === es && (agentRunningRef.current || eventStreamGraceActiveRef.current)) {
-            eventSourceRef.current = null;
-            eventSourceSessionIdRef.current = null;
-            eventConnectionAttemptRef.current = null;
-            const reconnectGeneration = eventStreamGraceGenerationRef.current;
-            setTimeout(() => {
-              if (
-                reconnectGeneration === eventStreamGraceGenerationRef.current
-                && !eventSourceRef.current
-                && (agentRunningRef.current || eventStreamGraceActiveRef.current)
-              ) {
-                void connectEvents(sid);
-              }
-            }, 1000);
-          }
-        }
-        // Recoverable errors (CONNECTING): let EventSource auto-reconnect.
-        // The timeout above resolves only to let callers decide whether this
-        // connection must be ready before they continue.
-      };
-    });
-    eventConnectionAttemptRef.current = { source: es, promise, pending: true };
-    return promise;
-  }, [closeEvents]);
-
-  const ensureEventsConnected = useCallback(async (sid: string) => {
-    const current = eventSourceRef.current;
-    if (current && eventSourceSessionIdRef.current === sid) {
-      if (current.readyState === EventSource.OPEN) return;
-      const attempt = eventConnectionAttemptRef.current;
-      if (attempt?.source === current && attempt.pending) {
-        await attempt.promise;
-        if (eventSourceRef.current === current && current.readyState === EventSource.OPEN) return;
-      }
-    }
-
-    const result = await connectEvents(sid);
-    if (result.status === "connected" || result.source.readyState === EventSource.OPEN) return;
-    if (eventSourceRef.current === result.source) eventSourceRef.current = null;
-    if (eventSourceSessionIdRef.current === sid) eventSourceSessionIdRef.current = null;
-    if (eventConnectionAttemptRef.current?.source === result.source) eventConnectionAttemptRef.current = null;
-    result.source.close();
-    throw new EventStreamConnectionError(result.status);
-  }, [connectEvents]);
+  const maintainEventsConnected = useCallback((sid: string) => {
+    eventConnectionRef.current!.maintain(sid);
+  }, []);
 
   // A different browser can start this session after it was opened here.
   // The sidebar's lightweight running-state poll gives us a cheap signal to
@@ -745,8 +674,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // protocol to the chat.
   useEffect(() => {
     if (!session?.id || !sessionRunning) return;
-    void ensureEventsConnected(session.id).catch(() => {});
-  }, [ensureEventsConnected, session?.id, sessionRunning]);
+    maintainEventsConnected(session.id);
+    return () => {
+      if (
+        sessionIdRef.current === session.id
+        && !agentRunningRef.current
+        && !eventStreamGraceActiveRef.current
+        && (sessionPropIdRef.current !== session.id || !sessionRunningRef.current)
+      ) {
+        eventConnectionRef.current?.close();
+      }
+    };
+  }, [maintainEventsConnected, session?.id, sessionRunning]);
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
@@ -1822,9 +1761,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            if (!eventSourceRef.current || eventSourceSessionIdRef.current !== session.id) {
-              void connectEvents(session.id);
-            }
+            void maintainEventsConnected(session.id);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
@@ -1966,7 +1903,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     promptAnchorActive,
     // Refs
-    sessionIdRef, eventSourceRef, messagesEndRef, scrollContainerRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
