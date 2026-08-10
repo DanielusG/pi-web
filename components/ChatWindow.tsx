@@ -287,7 +287,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -420,65 +420,19 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
-  const bottomComposerRef = useRef<HTMLDivElement | null>(null);
-  const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
-  const bottomComposerHeightRef = useRef(0);
-  const bottomComposerScrollFrameRef = useRef<number | null>(null);
   const messageContentRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerHeightRef = useRef(0);
   const promptAnchorMeasureFrameRef = useRef<number | null>(null);
-
-  useLayoutEffect(() => {
-    const composer = bottomComposerRef.current;
-    if (!composer) {
-      bottomComposerHeightRef.current = 0;
-      setBottomComposerHeight(0);
-      return;
-    }
-
-    const updateBottomComposerHeight = () => {
-      const nextHeight = Math.ceil(composer.getBoundingClientRect().height);
-      if (bottomComposerHeightRef.current === nextHeight) return;
-
-      const previousHeight = bottomComposerHeightRef.current;
-      bottomComposerHeightRef.current = nextHeight;
-      setBottomComposerHeight(nextHeight);
-
-      if (bottomComposerScrollFrameRef.current !== null) {
-        cancelAnimationFrame(bottomComposerScrollFrameRef.current);
-      }
-      bottomComposerScrollFrameRef.current = requestAnimationFrame(() => {
-        bottomComposerScrollFrameRef.current = null;
-        const currentContainer = scrollContainerRef.current;
-        const distanceFromBottom = currentContainer
-          ? currentContainer.scrollHeight - currentContainer.clientHeight - currentContainer.scrollTop
-          : Number.POSITIVE_INFINITY;
-        // Preserve a tail-pinned view while avoiding a jump for history readers.
-        if (distanceFromBottom <= Math.abs(nextHeight - previousHeight) + 1) {
-          scrollToBottom("auto");
-        }
-      });
-    };
-    updateBottomComposerHeight();
-
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(updateBottomComposerHeight);
-    observer?.observe(composer);
-    return () => {
-      observer?.disconnect();
-      if (bottomComposerScrollFrameRef.current !== null) {
-        cancelAnimationFrame(bottomComposerScrollFrameRef.current);
-        bottomComposerScrollFrameRef.current = null;
-      }
-    };
-  }, [error, isEmptyNew, loading, scrollContainerRef, scrollToBottom]);
+  const promptAnchorAdjustmentDoneRef = useRef(false);
+  const promptAnchorUpdateRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     const spacer = promptAnchorSpacerRef.current;
     if (!agentRunning || !promptAnchorActive) {
+      promptAnchorUpdateRef.current = null;
       promptAnchorSpacerHeightRef.current = 0;
+      promptAnchorAdjustmentDoneRef.current = false;
       if (spacer) spacer.style.height = "";
       return;
     }
@@ -498,28 +452,34 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         || promptAnchorSpacerRef.current !== spacer
       ) return;
 
+      const containerTop = container.getBoundingClientRect().top;
       const userMessageTop = userMessage.getBoundingClientRect().top
-        - container.getBoundingClientRect().top
+        - containerTop
         + container.scrollTop;
       const targetTop = Math.max(0, userMessageTop - 16);
+      const contentEnd = spacer.getBoundingClientRect().top
+        - containerTop
+        + container.scrollTop;
       const nextPromptAnchorSpacerHeight = getPromptAnchorSpacerHeight(
         targetTop,
-        container.scrollHeight,
-        promptAnchorSpacerHeightRef.current,
+        contentEnd,
         container.clientHeight,
       );
 
+      const isInitialMeasurement = !promptAnchorAdjustmentDoneRef.current;
+      const needsInitialAdjustment = isInitialMeasurement
+        && nextPromptAnchorSpacerHeight > 0;
+      if (isInitialMeasurement) promptAnchorAdjustmentDoneRef.current = true;
       if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
 
-      const needsInitialScroll = promptAnchorSpacerHeightRef.current === 0
-        && nextPromptAnchorSpacerHeight > 0;
       promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
       spacer.style.height = nextPromptAnchorSpacerHeight > 0
         ? `${nextPromptAnchorSpacerHeight}px`
         : "";
-      if (needsInitialScroll) scrollUserMsgToTop();
+      if (needsInitialAdjustment) scrollUserMsgToTop();
     };
 
+    promptAnchorUpdateRef.current = updatePromptAnchorSpacer;
     const schedulePromptAnchorMeasure = () => {
       if (disposed || promptAnchorMeasureFrameRef.current !== null) return;
       promptAnchorMeasureFrameRef.current = requestAnimationFrame(() => {
@@ -537,6 +497,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     observer?.observe(userMessage);
     return () => {
       disposed = true;
+      if (promptAnchorUpdateRef.current === updatePromptAnchorSpacer) {
+        promptAnchorUpdateRef.current = null;
+      }
       observer?.disconnect();
       if (promptAnchorMeasureFrameRef.current !== null) {
         cancelAnimationFrame(promptAnchorMeasureFrameRef.current);
@@ -545,13 +508,16 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     };
   }, [
     agentRunning,
-    bottomComposerHeight,
     lastUserMsgRef,
     messages.length,
     promptAnchorActive,
     scrollContainerRef,
     scrollUserMsgToTop,
   ]);
+
+  useLayoutEffect(() => {
+    promptAnchorUpdateRef.current?.();
+  }, [streamState.streamingMessage]);
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -950,9 +916,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
             <div ref={promptAnchorSpacerRef} aria-hidden="true" />
 
-            {/* Match the trailing space to the live bottom composer height. */}
-            <div aria-hidden="true" style={{ height: bottomComposerHeight }} />
-
             <div ref={messagesEndRef} />
             </div>
           </div>
@@ -968,7 +931,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         )}
       </div>
 
-      <div ref={bottomComposerRef} className="relative">
+      <div className="relative">
         <div
           style={{
             padding: `0 ${CHAT_COLUMN_PADDING}px`,
