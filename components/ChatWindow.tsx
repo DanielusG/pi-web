@@ -204,8 +204,8 @@ function withAssistantBlocks(
   return next;
 }
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
-  const [expanded, setExpanded] = useState(false);
+function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
 
@@ -837,8 +837,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
                   const processGroup = (
                     <ProcessDetailsGroup
-                       messageCount={processCount}
-                       t={t}
+                      messageCount={processCount}
+                      defaultExpanded={!finalAnswerMessage}
+                      t={t}
                       toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
                     >
                       {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
