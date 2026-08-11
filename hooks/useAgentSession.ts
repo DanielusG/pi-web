@@ -568,6 +568,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       modified: new Date().toISOString(),
       messageCount,
       firstMessage,
+      transient: true,
     }, provisionalDraftKey);
   }, [isNew, newSessionCwd, newSessionDraftKey, onSessionCreated, opts.chatInputRef]);
 

@@ -522,12 +522,16 @@ export function AppShell() {
   // handleCwdChange relies on. Hydrate it from the session list so switching
   // worktrees right after creating a session doesn't close the chat.
   const hydrateSelectedSession = useCallback((sessionId: string) => {
-    void fetch("/api/sessions")
+    void fetch("/api/sessions", { cache: "no-store" })
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
       .then((d) => {
         const full = d?.sessions.find((s) => s.id === sessionId);
         if (!full) return;
-        setSelectedSession((prev) => (prev && prev.id === sessionId && !prev.projectRoot ? full : prev));
+        setSelectedSession((prev) => (
+          prev?.id === sessionId
+            ? { ...prev, ...full, transient: full.transient ?? false }
+            : prev
+        ));
       })
       .catch(() => {});
   }, []);
@@ -581,6 +585,7 @@ export function AppShell() {
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
+    if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
     if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
@@ -589,7 +594,7 @@ export function AppShell() {
       title: targetSession?.name ?? translate("i18n.sessionComplete"),
       body: translate("i18n.taskFinished"),
     });
-  }, [deliverSessionNotification, selectedSession, translate]);
+  }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
     if (!shouldShowBrowserNotification()) return;
@@ -654,6 +659,7 @@ export function AppShell() {
     setSelectedSession((prev) => ({
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
+      transient: false,
     }));
     hydrateSelectedSession(newSessionId);
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
@@ -1224,7 +1230,7 @@ export function AppShell() {
                   selectedSession
                   && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
                 );
-                const disabled = !selectedSession || !hasMessages || autoNameStatus.kind === "naming";
+                const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
                 const isSuccess = autoNameStatus.kind === "success";
                 const isError = autoNameStatus.kind === "error";
                 const label = autoNameStatus.kind === "naming"
@@ -1234,7 +1240,7 @@ export function AppShell() {
                     : isError
                       ? translate("title.failed")
                       : translate("title.generate");
-                const title = !selectedSession
+                const title = !selectedSession || selectedSession.transient
                    ? translate("title.unsaved")
                    : !hasMessages
                      ? translate("title.noMessages")
