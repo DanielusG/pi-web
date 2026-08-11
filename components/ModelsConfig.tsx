@@ -5,6 +5,12 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
+import {
+  serializeHeaderRows,
+  setCompatBool,
+  updateHeaderRow,
+  type HeaderRow,
+} from "./models-config-helpers";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -127,6 +133,7 @@ interface ModelEntry {
   contextWindow?: number;
   maxTokens?: number;
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  headers?: Record<string, string>;
   compat?: Record<string, unknown>;
 }
 
@@ -437,6 +444,16 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
         <Select value={provider.api ?? "openai-completions"} onChange={(v) => set("api", v)} options={API_OPTIONS} required />
       </Field>
 
+      <Field label="Headers">
+        <HeaderListEditor
+          headers={provider.headers}
+          onChange={(headers) => set("headers", headers)}
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          Added to every request from this provider (e.g. User-Agent). Useful for gateways with bot detection.
+        </span>
+      </Field>
+
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
         {discoveryState.phase !== "success" && (
           <button
@@ -702,6 +719,67 @@ function setDeepseekCompat(model: ModelEntry, enabled: boolean): ModelEntry {
   delete rest.thinkingFormat;
   delete rest.requiresReasoningContentOnAssistantMessages;
   return { ...model, compat: Object.keys(rest).length ? rest : undefined };
+}
+
+// Compat can be configured at the provider or model level; provider-composer
+// merges them (model wins) at runtime. The UI reads the effective value so
+// hand-edited models.json settings are reflected correctly, while toggles
+// write to the model entry so a per-model override is explicit.
+function effectiveCompat(provider: ProviderEntry, model: ModelEntry): Record<string, unknown> {
+  return { ...(provider.compat ?? {}), ...(model.compat ?? {}) };
+}
+
+// Editable key/value request-header list for a provider or model. Rows stay
+// local so a blank draft is never persisted as an invalid HTTP header name.
+function HeaderListEditor({ headers, onChange }: {
+  headers: Record<string, string> | undefined;
+  onChange: (h: Record<string, string> | undefined) => void;
+}) {
+  const [rows, setRows] = useState<HeaderRow[]>(() => Object.entries(headers ?? {}).map(
+    ([name, value], id) => ({ id, name, value }),
+  ));
+  const nextRowIdRef = useRef(rows.length);
+
+  const applyRows = (next: HeaderRow[]): void => {
+    setRows(next);
+    onChange(serializeHeaderRows(next));
+  };
+  const setEntry = (id: number, changes: Partial<Pick<HeaderRow, "name" | "value">>): void => {
+    applyRows(updateHeaderRow(rows, id, changes));
+  };
+  const removeEntry = (id: number): void => {
+    applyRows(rows.filter((row) => row.id !== id));
+  };
+  const rowBtnStyle = {
+    padding: "6px 9px",
+    background: "none",
+    border: "1px solid rgba(239,68,68,0.3)",
+    borderRadius: 4,
+    color: "#ef4444",
+    cursor: "pointer",
+    fontSize: 11,
+    lineHeight: 1,
+  } satisfies React.CSSProperties;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {rows.map((row) => (
+        <div key={row.id} style={{ display: "flex", gap: 6 }}>
+          <input value={row.name} onChange={(e) => setEntry(row.id, { name: e.target.value })}
+            placeholder="Header-Name" style={{ ...inputStyle, fontFamily: "var(--font-mono)", flex: 1 }} />
+          <input value={row.value} onChange={(e) => setEntry(row.id, { value: e.target.value })}
+            placeholder="value" style={{ ...inputStyle, fontFamily: "var(--font-mono)", flex: 1 }} />
+          <button onClick={() => removeEntry(row.id)} style={rowBtnStyle}>✕</button>
+        </div>
+      ))}
+      <button onClick={() => setRows((current) => [
+        ...current,
+        { id: nextRowIdRef.current++, name: "", value: "" },
+      ])}
+        style={{ padding: "5px 9px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, alignSelf: "flex-start" }}>
+        + Add header
+      </button>
+    </div>
+  );
 }
 
 function fillEmptyModelFields(
@@ -1019,6 +1097,16 @@ function ModelDetail({
         <Select value={model.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
       </Field>
 
+      <Field label="Headers">
+        <HeaderListEditor
+          headers={model.headers}
+          onChange={(headers) => set("headers", headers)}
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          Added to this model&apos;s requests; overrides the provider headers for this model.
+        </span>
+      </Field>
+
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
         <Check label="Reasoning / thinking" checked={model.reasoning ?? false} onChange={(v) => set("reasoning", v || undefined)} />
         <Check label="Image input" checked={model.input?.includes("image") ?? false}
@@ -1031,6 +1119,11 @@ function ModelDetail({
             label="DeepSeek thinking compat"
             checked={hasDeepseekCompat(model)}
             onChange={(v) => onChange(setDeepseekCompat(model, v))}
+          />
+          <Check
+            label="Use 'developer' role for the system prompt (disable if server rejects it)"
+            checked={effectiveCompat(provider, model)["supportsDeveloperRole"] !== false}
+            onChange={(v) => onChange(setCompatBool(model, "supportsDeveloperRole", v))}
           />
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
