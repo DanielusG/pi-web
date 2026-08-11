@@ -34,6 +34,12 @@ pi-web --port 8080              # custom port
 pi-web --hostname 0.0.0.0       # expose on a trusted network
 pi-web -p 8080 -H 0.0.0.0       # combine options
 pi-web --no-open                # do not open the browser automatically
+pi-web --detach                 # run in background (writes PID + log to ~/.pi-web/)
+pi-web --stop                   # stop the background instance
+pi-web --status                 # show running state, port usage, and auto-start status
+pi-web --install                # macOS: install launchd auto-start (login + crash restart)
+pi-web --uninstall              # macOS: remove launchd auto-start
+pi-web --pm2                    # run via pm2 (requires: npm i -g pm2)
 
 PORT=8080 pi-web                # environment variable is also supported
 PI_WEB_HOSTNAME=0.0.0.0 pi-web  # explicit network exposure
@@ -41,6 +47,46 @@ PI_WEB_ALLOWED_HOSTS=pi-web.internal pi-web  # allow an exact proxy/custom hostn
 PI_WEB_PASSWORD='a-long-random-password' pi-web  # require Basic Auth (username: pi)
 PI_WEB_NO_OPEN=1 pi-web         # useful when running as a background service
 ```
+
+## Background Service
+
+Pi Web runs as a foreground web server by default. Use these flags to run it in the background, check status, or set up automatic startup.
+
+**Run in background (one-time):**
+
+```bash
+pi-web --detach                 # start in background, log at ~/.pi-web/pi-web.log
+pi-web --status                 # check if running
+pi-web --stop                   # stop the background instance
+```
+
+**Auto-start on login with crash restart (macOS launchd):**
+
+```bash
+pi-web --install                # install: starts now + on every login, restarts on crash
+pi-web --uninstall              # stop and remove auto-start
+```
+
+The launchd plist captures your current environment variables (`PI_WEB_PASSWORD`, `PI_WEB_HOSTNAME`, proxy settings, etc.). Re-run `pi-web --install` after changing any of these. If you use nvm, the plist references the current Node.js path — re-run `--install` after switching Node.js versions.
+
+**Alternative: pm2 (cross-platform):**
+
+```bash
+npm install -g pm2
+pi-web --pm2                    # start via pm2
+pm2 logs pi-web                 # view logs
+pm2 stop pi-web                 # stop
+pm2 save && pm2 startup         # enable auto-start on boot
+```
+
+**How to stop / disable:**
+
+| Scenario | Command |
+|---|---|
+| Stop `--detach` instance | `pi-web --stop` |
+| Remove launchd auto-start | `pi-web --uninstall` |
+| Stop pm2 instance | `pm2 stop pi-web` |
+| Remove pm2 auto-start | `pm2 delete pi-web && pm2 save && pm2 unstartup` |
 
 Set `PI_WEB_PASSWORD` to protect the web interface and every API endpoint with HTTP Basic Auth. The username is always `pi`. Leaving the variable unset or empty disables authentication.
 
