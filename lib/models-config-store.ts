@@ -43,6 +43,20 @@ export function normalizeModelsConfigCosts(
   return normalized;
 }
 
+function sanitizeModelsConfig(data: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(data.providers)) return data;
+
+  const providers = Object.fromEntries(Object.entries(data.providers).map(([providerId, provider]) => {
+    if (!isRecord(provider) || !Array.isArray(provider.models)) return [providerId, provider];
+    const models = provider.models.filter((model) => (
+      !isRecord(model) || typeof model.id !== "string" || model.id.trim().length > 0
+    ));
+    return [providerId, { ...provider, models }];
+  }));
+
+  return { ...data, providers };
+}
+
 export function getModelsConfigPath(): string {
   return join(getAgentDir(), "models.json");
 }
@@ -64,6 +78,7 @@ export function writeModelsConfig(
 ): void {
   const dir = dirname(modelsPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writePrivateFileAtomicSync(modelsPath, JSON.stringify(normalizeModelsConfigCosts(data), null, 2));
+  const normalized = normalizeModelsConfigCosts(sanitizeModelsConfig(data));
+  writePrivateFileAtomicSync(modelsPath, JSON.stringify(normalized, null, 2));
   invalidateModelsCache();
 }
