@@ -1,78 +1,64 @@
 # Release Checklist
 
-This repo publishes two artifacts for each release:
+This repo publishes two artifacts for each release, both produced by GitHub Actions on tag push:
 
-- npm package: `@agegr/pi-web`
-- GitHub Release: `agegr/pi-web`
+- npm package: `@axello/pi-web`
+- GitHub Release: `AxelWT/pi-web`
 
-Use this checklist from a clean `main` checkout.
+**Never run `npm publish` or `npm run build` locally.** The CI workflow (`.github/workflows/release.yml`) is the only publishing path. Local work is limited to bumping the version, tagging, and pushing.
+
+## Prerequisites (one-time)
+
+- `NPM_TOKEN` is set as a repository secret in `AxelWT/pi-web` (Settings → Secrets and variables → Actions). The token needs publish permission for `@axello/pi-web`.
+- The workflow file `.github/workflows/release.yml` exists on `main`.
 
 ## 1. Preflight
 
+Run from a clean `main` checkout.
+
 ```bash
-git status --short --branch
+git status --short --branch          # clean, on main, up to date with origin
 git log --oneline --decorate -5
 gh auth status
-npm whoami
 node -e "const p=require('./package.json'); console.log(p.version)"
 ```
 
-Expected:
-
-- `git status` is clean, or only contains changes you intentionally plan to release.
-- GitHub is authenticated as an account that can push and create releases.
-- npm is authenticated as an account that can publish `@agegr/pi-web`.
-
-## 2. Publish to npm
+Confirm the next version number is not already published:
 
 ```bash
-npm run release
+npm view @axello/pi-web versions --json --registry https://registry.npmjs.org/
 ```
 
-The release script runs:
-
-```bash
-npm version patch --no-git-tag-version && npm run build && npm publish --access public
-```
-
-Notes:
-
-- This bumps `package.json` and `package-lock.json`.
-- It intentionally runs a production build. Do not run `next build` during normal development; release work is the exception.
-- If `npm view @agegr/pi-web version` briefly shows the previous version, check the exact version instead:
-
-```bash
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
-npm view @agegr/pi-web versions --json --registry https://registry.npmjs.org/
-```
-
-## 3. Commit the Version Bump
-
-Replace `<version>` with the new package version, for example `0.7.5`.
-
-```bash
-git diff -- package.json package-lock.json
-git add package.json package-lock.json
-git commit -m "Release v<version>"
-```
-
-## 4. Tag and Push
-
-```bash
-git tag -a v<version> -m "v<version>"
-git push origin main --tags
-```
-
-Confirm the tag does not already exist before creating it when unsure:
+Confirm the tag does not already exist:
 
 ```bash
 git ls-remote --tags origin v<version>
-gh release view v<version> --repo agegr/pi-web
+gh release view v<version> --repo AxelWT/pi-web
 ```
 
-## 5. Generate Release Notes from Commits
+## 2. Bump Version, Commit, and Tag
 
-Use the previous release tag as the base.
+`npm version` updates `package.json` and `package-lock.json`, creates a commit, and creates a tag in one step. Do not pass `--no-git-tag-version` here — the tag is what triggers CI.
+
+```bash
+npm version patch -m "Release v%s"          # or: minor, major, or a specific version like 0.9.1
+git push origin main --tags
+```
+
+That is the entire local side. Pushing the `v*` tag triggers `.github/workflows/release.yml`, which runs `npm ci`, `npm run build`, `npm publish --access public`, and `gh release create` with auto-generated notes.
+
+## 3. Watch the Workflow
+
+```bash
+gh run watch
+gh release view v<version> --repo AxelWT/pi-web
+```
+
+If the workflow fails, fix the issue and re-run the failed job from the Actions UI. Do not delete and re-push the same tag unless you also unpublish the failed npm version first (npm does not allow republishing the same version).
+
+## 4. Generate or Edit Release Notes
+
+The workflow creates the GitHub Release with `--generate-notes`. To replace the auto-generated notes with a hand-written bilingual summary, write them from the commits since the previous tag:
 
 ```bash
 git log --oneline --decorate v<previous>..v<version>
@@ -80,11 +66,10 @@ git log --format='%h%x09%s%n%b' v<previous>..v<version>
 git diff --stat v<previous>..v<version>
 ```
 
-Write the release notes from those commits, not from memory. Include both Chinese and English sections. Keep commit hashes next to each item when useful.
+Then edit the release:
 
-Suggested structure:
-
-```markdown
+```bash
+gh release edit v<version> --repo AxelWT/pi-web --notes-file - <<'EOF'
 ## 中文
 
 基于 `v<previous>..v<version>` 的提交整理。
@@ -103,7 +88,7 @@ Suggested structure:
 
 ### 内部调整
 
-- 发布 npm 包 `@agegr/pi-web@<version>`。
+- 发布 npm 包 `@axello/pi-web@<version>`。
 
 ## English
 
@@ -123,55 +108,22 @@ Prepared from commits in `v<previous>..v<version>`.
 
 ### Internal
 
-- Published npm package `@agegr/pi-web@<version>`.
-```
-
-## 6. Create or Update the GitHub Release
-
-Create a new release:
-
-```bash
-gh release create v<version> \
-  --repo agegr/pi-web \
-  --verify-tag \
-  --title "v<version>" \
-  --notes-file release-notes.md
-```
-
-If the release already exists and only the notes need updating:
-
-```bash
-gh release edit v<version> \
-  --repo agegr/pi-web \
-  --notes-file release-notes.md
-```
-
-You can avoid a temporary file by passing notes through stdin:
-
-```bash
-gh release edit v<version> --repo agegr/pi-web --notes-file - <<'EOF'
-## 中文
-
-...
-
-## English
-
-...
+- Published npm package `@axello/pi-web@<version>`.
 EOF
 ```
 
-## 7. Final Verification
+## 5. Final Verification
 
 ```bash
-gh release view v<version> --repo agegr/pi-web
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
+gh release view v<version> --repo AxelWT/pi-web
+npm view @axello/pi-web@<version> version --registry https://registry.npmjs.org/
 git status --short --branch
 git log --oneline --decorate -3
 ```
 
 Expected:
 
-- GitHub Release exists and is not a draft unless intentionally published as one.
+- GitHub Release exists and is not a draft.
 - npm exact version resolves.
 - `main` is aligned with `origin/main`.
-- `HEAD` points at the release commit and `v<version>` tag.
+- `HEAD` points at the release commit and the `v<version>` tag.

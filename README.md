@@ -4,7 +4,7 @@
 
 Local web UI for the [pi coding agent](https://github.com/badlogic/pi-mono). Pi Web reads your local pi session files and gives you a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
 
-![Pi Web shows the same pi session with structured Markdown, tool calls, and project navigation beside the CLI](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![Pi Web shows the same pi session with structured Markdown, tool calls, and project navigation beside the CLI](https://raw.githubusercontent.com/AxelWT/pi-web/main/docs/screenshot2.png)
 
 The same pi session in CLI and Pi Web: structured tool calls, readable Markdown, session browsing, and cleaner results.
 
@@ -15,13 +15,13 @@ Pi Web requires Node.js 22.19.0 or newer. Check your version with `node --versio
 **Run without installing:**
 
 ```bash
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 **Or install globally:**
 
 ```bash
-npm install -g @agegr/pi-web
+npm install -g @axello/pi-web
 pi-web
 ```
 
@@ -57,7 +57,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 On Windows PowerShell:
@@ -66,7 +66,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 ## Features

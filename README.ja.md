@@ -4,7 +4,7 @@
 
 [pi コーディングエージェント](https://github.com/badlogic/pi-mono) のローカル Web UI です。Pi Web はローカルの pi セッションファイルを読み込み、セッションの閲覧、リアルタイムチャット、モデル設定、スキル管理、プロジェクトファイルのプレビューを行えるブラウザワークスペースを提供します。
 
-![Pi Web では、CLI と同じ pi セッションを、構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに表示できます](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![Pi Web では、CLI と同じ pi セッションを、構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに表示できます](https://raw.githubusercontent.com/AxelWT/pi-web/main/docs/screenshot2.png)
 
 CLI と Pi Web で同じ pi セッションを利用できます。構造化されたツール呼び出し、読みやすい Markdown、セッション閲覧、整理された結果表示を備えています。
 
@@ -15,13 +15,13 @@ Pi Web には Node.js 22.19.0 以降が必要です。現在のバージョン�
 **インストールせずに実行：**
 
 ```bash
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 **またはグローバルにインストール：**
 
 ```bash
-npm install -g @agegr/pi-web
+npm install -g @axello/pi-web
 pi-web
 ```
 
@@ -57,7 +57,7 @@ macOS または Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 Windows PowerShell：
@@ -66,7 +66,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 ## 機能

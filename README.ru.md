@@ -4,7 +4,7 @@
 
 Локальный веб-интерфейс для [pi coding agent](https://github.com/badlogic/pi-mono). Pi Web читает локальные файлы сессий pi и предоставляет рабочее пространство в браузере для просмотра сессий, общения с агентом в реальном времени, настройки моделей, управления навыками и предварительного просмотра файлов проекта.
 
-![Pi Web показывает одну и ту же сессию pi рядом с CLI: структурированный Markdown, вызовы инструментов и навигация по проекту](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![Pi Web показывает одну и ту же сессию pi рядом с CLI: структурированный Markdown, вызовы инструментов и навигация по проекту](https://raw.githubusercontent.com/AxelWT/pi-web/main/docs/screenshot2.png)
 
 Одна и та же сессия pi в CLI и Pi Web: структурированные вызовы инструментов, удобочитаемый Markdown, просмотр сессий и наглядные результаты.
 
@@ -15,13 +15,13 @@
 **Запуск без установки:**
 
 ```bash
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 **Или глобальная установка:**
 
 ```bash
-npm install -g @agegr/pi-web
+npm install -g @axello/pi-web
 pi-web
 ```
 
@@ -57,7 +57,7 @@ API-запросы принимаются для loopback-имён, IP-адре�
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 В Windows PowerShell:
@@ -66,7 +66,7 @@ npx @agegr/pi-web@latest
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @axello/pi-web@latest
 ```
 
 ## Возможности

@@ -1,14 +1,14 @@
 {
-  "name": "@agegr/pi-web",
-  "version": "0.8.7",
+  "name": "@axello/pi-web",
+  "version": "0.9.1",
   "description": "Web UI for the pi coding agent",
-  "homepage": "https://github.com/agegr/pi-web#readme",
+  "homepage": "https://github.com/AxelWT/pi-web#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agegr/pi-web.git"
+    "url": "git+https://github.com/AxelWT/pi-web.git"
   },
   "bugs": {
-    "url": "https://github.com/agegr/pi-web/issues"
+    "url": "https://github.com/AxelWT/pi-web/issues"
   },
   "license": "MIT",
   "engines": {
@@ -34,8 +34,7 @@
     "start": "next start -H 127.0.0.1 -p 30141",
     "start:lan": "next start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test lib/markdown.test.mjs",
-    "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
+    "test": "node --experimental-strip-types --test lib/markdown.test.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.0",
