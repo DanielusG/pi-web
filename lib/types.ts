@@ -188,6 +188,11 @@ export type ExtensionUiRequest =
       closed?: boolean;
     };
 
+export type BlockingExtensionUiRequest = Extract<
+  ExtensionUiRequest,
+  { method: "select" | "confirm" | "input" | "editor" | "custom" }
+>;
+
 export type ExtensionUiResponse =
   | { type: "extension_ui_response"; id: string; value: string }
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
