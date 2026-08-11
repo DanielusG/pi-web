@@ -21,7 +21,16 @@ npx @agegr/pi-web@latest
 **Или глобальная установка:**
 
 ```bash
-# Первая установка или обновление
+# Установка
+npm install -g @agegr/pi-web@latest
+pi-web
+```
+
+**Обновление глобальной установки:**
+
+Перед обновлением остановите запущенный Pi Web (`Ctrl+C`), затем выполните:
+
+```bash
 npm install -g @agegr/pi-web@latest
 pi-web
 ```

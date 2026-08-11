@@ -21,7 +21,16 @@ npx @agegr/pi-web@latest
 **Or install globally:**
 
 ```bash
-# Install or upgrade
+# Install
+npm install -g @agegr/pi-web@latest
+pi-web
+```
+
+**Update a global installation:**
+
+Stop the running Pi Web process (`Ctrl+C`) before updating, then run:
+
+```bash
 npm install -g @agegr/pi-web@latest
 pi-web
 ```

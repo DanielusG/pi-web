@@ -19,7 +19,16 @@ npx @agegr/pi-web@latest
 **或全局安装后使用：**
 
 ```bash
-# 首次安装或升级
+# 安装
+npm install -g @agegr/pi-web@latest
+pi-web
+```
+
+**更新全局安装：**
+
+更新前请先用 `Ctrl+C` 停止正在运行的 Pi Web，然后执行：
+
+```bash
 npm install -g @agegr/pi-web@latest
 pi-web
 ```

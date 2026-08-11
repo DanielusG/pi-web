@@ -21,7 +21,16 @@ npx @agegr/pi-web@latest
 **またはグローバルにインストール：**
 
 ```bash
-# 初回インストールまたはアップグレード
+# インストール
+npm install -g @agegr/pi-web@latest
+pi-web
+```
+
+**グローバルインストールを更新：**
+
+更新する前に、実行中の Pi Web を `Ctrl+C` で停止してから、次を実行します：
+
+```bash
 npm install -g @agegr/pi-web@latest
 pi-web
 ```
