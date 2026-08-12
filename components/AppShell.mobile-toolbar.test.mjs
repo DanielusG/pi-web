@@ -43,7 +43,7 @@ test("keeps the mobile action layer open after using an expanded action", () => 
   }
 
   assert.match(source, /toggleTopPanel\("branches", true\)/);
-  assert.match(source, /toggleTopPanel\("system", mobile\)/);
+  assert.match(source, /handleSystemPromptToggle\(mobile\)/);
   assert.match(source, /toggleTopPanel\("language", mobile\)/);
   assert.match(source, /onClick=\{\(\) => toggleTopPanel\("session"\)\}/);
 });
