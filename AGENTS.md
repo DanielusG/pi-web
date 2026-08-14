@@ -66,7 +66,14 @@ app/api/
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
   skills/search/route.ts          GET/POST skills.sh search
+  terminal/route.ts               GET terminal availability
+  terminal/[id]/route.ts          POST spawn pty-server | DELETE kill
   worktrees/route.ts              GET/POST/DELETE git worktrees
+
+bin/
+  pty-server.js         HTTP + socket.io server: node-pty shell (xterm.js UI lives in the React app)
+
+server.mjs              Custom server entry used by bin/pi-web.js instead of `next start`; mounts the same-origin socket.io proxy at /api/terminal/socket.io and bridges it to the local pty-server subprocess
 
 lib/
   agent-client.ts      typed fetch helper for /api/agent commands
@@ -82,6 +89,7 @@ lib/
   types.ts            shared TypeScript types
   normalize.ts        normalizeToolCalls() — field name mismatch between file format and our types
   worktree.ts         project/worktree resolution and git worktree operations
+  wetty-manager.ts    node-pty availability detection + pty-server subprocess registry + spawn/kill
 
 components/
   AppShell.tsx        layout + URL state + tab management
@@ -98,7 +106,8 @@ components/
   FileExplorer.tsx    file tree inside sidebar
   FileIcons.tsx       file icon helpers
   FileViewer.tsx      file content in a tab
-  TabBar.tsx          tab bar (Chat + open file tabs)
+  TerminalView.tsx    xterm.js terminal (socket.io-client) + spawn/kill lifecycle
+  TabBar.tsx          tab bar (Chat + open file/terminal tabs)
 
 hooks/
   useAgentSession.ts  messages + streaming + SSE + fork/navigate/reconciliation logic
@@ -163,6 +172,27 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 ### File access allow-list
 - `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
 - `/api/cwd/validate`, `/api/default-cwd`, and `/api/worktrees` call `allowFileRoot()` when they make a new location browsable.
+- Allowed roots are stored slash-normalized, but that is a Set-key convention, not a correctness requirement: `isPathWithinRoots()` (`lib/path-security.ts`, the single implementation behind `isFilePathAllowed()`) re-resolves and case-folds both sides, so either path form authorizes correctly. Keep that one implementation — it is the security boundary.
+- `/api/terminal/[id]` reuses the same `isFilePathAllowed` + `isExistingFilePathAllowed` gate before spawning the pty-server subprocess, so terminal cwd can never escape the browsable roots.
+
+### Terminal integration (pty-server + xterm.js)
+- pi-web bundles `node-pty`, `socket.io`, `socket.io-client`, `@xterm/xterm`, and `@xterm/addon-fit` as direct dependencies — `npm install -g @axello/pi-web` makes the terminal work with zero extra steps on macOS and Windows. On Linux without a C toolchain, `node-pty`'s source build fails; the terminal degrades gracefully (button hidden, other features unaffected) and `terminal.notInstalled` points users at `build-essential python3`.
+- `lib/wetty-manager.ts` is imported by the terminal API routes, so it must not `require("node-pty")` itself — that would pull a native module into the Next.js server bundle. Instead, `checkPtyAvailable()` uses `require.resolve("node-pty/package.json", { paths: [process.cwd()] })` + `existsSync` on `prebuilds/<plat>-<arch>/` (or `build/Release/` for from-source builds) to detect whether the prebuilt binary is present. The real `require("node-pty")` happens only inside `bin/pty-server.js`, a separate Node.js subprocess where native modules are safe.
+- `bin/pty-server.js` is a minimal HTTP + socket.io server that uses `node-pty` to spawn a local shell directly (`pty.spawn($SHELL, [], { cwd })` — no SSH, no password). Its HTTP handler is a stub returning 200; the xterm.js UI lives in the React app. The file name `wetty-manager.ts` is kept for compatibility — the API routes import it by that path.
+- npm tarballs drop the executable bit on `node-pty`'s prebuilt `spawn-helper` binary, which then fails with `posix_spawnp`. `pty-server.js` calls `fixSpawnHelperPermission()` before `require("node-pty")` to restore `0o755` on `prebuilds/<plat>-<arch>/spawn-helper` and `build/Release/spawn-helper` when the exec bit is missing. Errors are swallowed so a read-only filesystem degrades to the spawn error.
+- `serverExternalPackages` in `next.config.ts` lists `node-pty` and `socket.io` so Next.js does not try to bundle them. (`socket.io-client` is a browser lib and stays in the client bundle.)
+- Each terminal tab is one `pty-server.js` subprocess bound to `127.0.0.1:<port>`. One subprocess per tab — no shared server — so each terminal has its own cwd, shell, and lifecycle.
+- Multiple terminals: `handleOpenTerminal(cwd)` in `AppShell.tsx` generates a unique tab id per click (`terminal:<timestamp>-<random>`), so clicking the sidebar button repeatedly opens independent terminals. Labels are 1-indexed (`<name> — 1`, `<name> — 2`, …). The previous design keyed tabs by cwd (`terminal:<cwd>`) which collapsed repeats into a single tab.
+- Port allocation walks `PI_WEB_TERMINAL_PORT_BASE` (default `30142`) forward, skipping ports already in the registry (`globalThis.__piWettyRegistry`). The registry stores `{ id, cwd, port, authToken, process, lastError }` keyed by the client-supplied tab id, so `DELETE /api/terminal/[id]` kills the same subprocess without an id remapping step.
+- `PI_WEB_TERMINAL=0` disables the feature entirely (`checkPtyAvailable` returns false).
+- **Two connection modes** (`TerminalView.tsx` branches on the `mode` field of the spawn response):
+  - `proxy` (default for `bin/pi-web.js`): browser connects to the same-origin socket.io path `/api/terminal/socket.io` served by `server.mjs`, which forwards events to the local pty-server subprocess. Works behind reverse proxies (frp, nginx, Caddy) and HTTPS front-ends — the browser never needs to reach the pty-server port directly.
+  - `direct` (fallback for `next dev` / plain `next start` without the custom server): browser connects directly to `http://127.0.0.1:<port>`. Only works when the browser is on the same machine as pi-web.
+- `server.mjs` is the custom server entry point used by `bin/pi-web.js` instead of `next start`. It mounts the socket.io proxy on the same `http.Server` as Next.js's request handler, so socket.io requests bypass `proxy.ts` middleware (which only runs inside Next's handler). The proxy validates the per-tab `authToken` via `io.use()` middleware before bridging any traffic — this is the security boundary for the WS endpoint, NOT Basic Auth (browsers do not reliably send cached Basic credentials on WS upgrade).
+- `lib/wetty-manager.ts` generates a per-tab `authToken` (UUID) on each spawn and passes it to `bin/pty-server.js` via the `PTY_AUTH_TOKEN` env var. `pty-server.js`'s `io.use()` middleware rejects any socket.io connection that does not present the matching token in `handshake.auth.token`. This is defense-in-depth: pty-server still binds to 127.0.0.1, so the token only matters if someone misconfigures `PTY_HOST` to `0.0.0.0` — but without it, that misconfiguration would expose an unauthenticated shell to the network.
+- `server.mjs` accesses the wetty registry via `globalThis.__piWettyRegistry` directly (not by importing `@/lib/wetty-manager`) because it runs as a plain ESM entry point outside the Next.js build. The `WettyEntry` shape is duplicated in `server.mjs` and MUST stay in sync with `lib/wetty-manager.ts`. Both code paths share the same `globalThis` because `server.mjs` IS the Next.js server (Next's handler runs inside `server.mjs`'s `http.Server`).
+- The terminal is a right-panel tab kind: `Tab.kind === "terminal"` with `cwd`. `TerminalView.tsx` POSTs to spawn on mount and DELETEs on unmount, so closing the tab kills the pty-server subprocess. `AppShell.tsx` loads `TerminalView` via `next/dynamic({ ssr: false })` so `socket.io-client` does not touch `window` during SSR.
+- Theme sync: `TerminalView.tsx` applies pi-web's resolved theme to the xterm `Terminal` at creation, then updates `term.options.theme` in a separate effect when the resolved theme changes. Re-toggling the theme retints the terminal live without reconnecting.
 
 ### Plugins and skills
 - `/api/plugins` uses pi's `SettingsManager` + `DefaultPackageManager` for global/project package install, remove, update, enable, and disable. Disabling writes empty `extensions/skills/prompts/themes` arrays for that package entry.

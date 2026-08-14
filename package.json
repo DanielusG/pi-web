@@ -1,6 +1,6 @@
 {
   "name": "@axello/pi-web",
-  "version": "0.10.3",
+  "version": "0.10.5",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/AxelWT/pi-web#readme",
   "repository": {
@@ -19,6 +19,7 @@
   },
   "files": [
     "bin",
+    "server.mjs",
     ".next",
     "!.next/cache",
     "!.next/dev",
@@ -41,10 +42,15 @@
     "@earendil-works/pi-ai": "0.84.0",
     "@earendil-works/pi-coding-agent": "0.84.0",
     "@earendil-works/pi-tui": "0.84.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "next": "16.2.12",
+    "node-pty": "1.1.0",
     "proper-lockfile": "4.1.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
     "undici": "8.5.0"
   },
   "devDependencies": {

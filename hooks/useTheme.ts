@@ -3,7 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 export type ThemeMode = "light" | "dark" | "system";
-type EffectiveTheme = "light" | "dark";
+export type EffectiveTheme = "light" | "dark";
 
 interface ThemeState {
   mode: ThemeMode;

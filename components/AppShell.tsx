@@ -2,10 +2,18 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
+
+// TerminalView pulls in socket.io-client + xterm.js which reference browser
+// globals; load it client-side only so SSR does not touch window.
+const TerminalView = dynamic(
+  () => import("./TerminalView").then((m) => m.TerminalView),
+  { ssr: false },
+);
 import { TabBar, type Tab } from "./TabBar";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
@@ -531,8 +539,31 @@ export function AppShell() {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
   }, [handleOpenFile, selectedSession?.id]);
 
+  const handleOpenTerminal = useCallback((cwd: string) => {
+    if (!cwd) return;
+    // Each click opens a new terminal tab (unique id) so users can run
+    // several shells side-by-side. Label includes a 1-based index scoped to
+    // the cwd so two terminals in /foo are "foo — 1" and "foo — 2", while a
+    // first terminal in /bar is "bar — 1" regardless of other tabs.
+    const sameCwdTerminals = fileTabs.filter((t) => t.kind === "terminal" && t.cwd === cwd);
+    const label = `${getFileName(cwd) || cwd} — ${sameCwdTerminals.length + 1}`;
+    const tabId = `terminal:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setFileTabs((prev) => [...prev, {
+      id: tabId,
+      label,
+      filePath: cwd,
+      kind: "terminal",
+      cwd,
+    }]);
+    setActiveFileTabId(tabId);
+    setRightPanelOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [fileTabs, isMobile]);
+
   const handleCloseFileTab = useCallback((tabId: string) => {
     setFileTabs((prev) => {
+      // Closing a terminal tab relies on TerminalView's cleanup effect to
+      // DELETE the wetty subprocess. Nothing extra to do here.
       const next = prev.filter((t) => t.id !== tabId);
       if (next.length === 0) setRightPanelOpen(false);
       return next;
@@ -712,6 +743,7 @@ export function AppShell() {
         onFileCreated={handleFileCreated}
         onFileDeleted={handleFileDeleted}
         onFilesReverted={handleFilesReverted}
+        onOpenTerminal={handleOpenTerminal}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -1676,9 +1708,34 @@ export function AppShell() {
 
         </div>
 
-        {/* File content */}
-        <div style={{ flex: 1, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
+        {/* File / terminal content.
+            Terminal tabs are all kept mounted and toggled with display:none
+            so switching tabs does not unmount TerminalView — unmounting would
+            fire the cleanup effect that DELETEs the pty-server subprocess,
+            killing the shell and losing history on every tab change. */}
+        <div style={{ flex: 1, overflow: "hidden", position: "relative", paddingBottom: "env(safe-area-inset-bottom)" }}>
+          {fileTabs
+            .filter((t): t is Tab & { kind: "terminal"; cwd: string } =>
+              t.kind === "terminal" && Boolean(t.cwd))
+            .map((tab) => {
+              const isActive = activeFileTabId === tab.id;
+              return (
+                <div
+                  key={tab.id}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: isActive ? "block" : "none",
+                  }}
+                >
+                  <TerminalView
+                    terminalId={tab.id}
+                    cwd={tab.cwd}
+                  />
+                </div>
+              );
+            })}
+          {activeFileTab?.kind !== "terminal" && activeFileTab?.filePath ? (
             <FileViewer
               filePath={activeFileTab.filePath}
               cwd={activeCwd ?? undefined}
@@ -1695,11 +1752,11 @@ export function AppShell() {
               onFileReverted={handleFileReverted}
               contentRefreshKey={contentRefreshKey}
             />
-          ) : (
+          ) : !activeFileTab ? (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
                {translate("files.noneOpen")}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

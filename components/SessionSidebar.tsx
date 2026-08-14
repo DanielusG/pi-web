@@ -93,6 +93,8 @@ interface Props {
   onFileCreated?: (filePath: string) => void;
   onFileDeleted?: (filePath: string, isDir: boolean) => void;
   onFilesReverted?: (deletedPaths: string[]) => void;
+  /** Open a terminal tab in the right panel rooted at the given cwd. */
+  onOpenTerminal?: (cwd: string) => void;
 }
 
 interface WorktreeEntry {
@@ -387,7 +389,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onFileCreated, onFileDeleted, onFilesReverted }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onFileCreated, onFileDeleted, onFilesReverted, onOpenTerminal }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,6 +422,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [changesCollapsed, setChangesCollapsed] = useState(true);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
+  const [terminalEnabled, setTerminalEnabled] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -468,6 +471,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
+
+  // Check whether the wetty binary is available so the "Open Terminal Here"
+  // toolbar button can be shown or hidden.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/terminal")
+      .then((r) => r.json() as Promise<{ enabled: boolean; reason?: string | null }>)
+      .then((info) => {
+        if (!cancelled) setTerminalEnabled(Boolean(info.enabled));
+      })
+      .catch(() => {
+        if (!cancelled) setTerminalEnabled(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
@@ -1672,6 +1690,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 </svg>
               )}
             </ToolbarIconButton>
+            {terminalEnabled && onOpenTerminal && (selectedCwdProp || selectedCwd) && (
+              <ToolbarIconButton
+                onClick={() => {
+                  const cwd = selectedCwd ?? selectedCwdProp;
+                  if (cwd) onOpenTerminal(cwd);
+                }}
+                title={t("terminal.openHere")}
+                color="var(--text-dim)"
+                marginRight={6}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              </ToolbarIconButton>
+            )}
           </div>
           {explorerOpen && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>

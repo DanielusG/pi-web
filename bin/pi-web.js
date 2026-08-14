@@ -31,21 +31,6 @@ const LOG_FILE = path.join(DATA_DIR, "pi-web.log");
 const LABEL = "com.axello.pi-web";
 const PLIST_PATH = path.join(os.homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
 
-// Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
-// may not exist when installed via npx).
-let nextBin;
-try {
-  nextBin = require.resolve("next/dist/bin/next", { paths: [pkgDir] });
-} catch {
-  // Fallback: locate next package root and derive the bin path manually.
-  try {
-    const nextPkg = require.resolve("next/package.json", { paths: [pkgDir] });
-    nextBin = path.join(path.dirname(nextPkg), "dist", "bin", "next");
-  } catch {
-    nextBin = path.join(pkgDir, "node_modules", "next", "dist", "bin", "next");
-  }
-}
-
 const options = parseLaunchOptions();
 
 if (options.help) {
@@ -105,7 +90,7 @@ if (!fs.existsSync(nextDir)) {
 if (!loopbackHostnames.has(hostname)) {
   if (passwordEnabled) {
     console.warn(
-      `Warning: pi-web is listening on ${hostname} with Basic Auth over HTTP. Use HTTPS or a trusted VPN to protect the password in transit.`,
+      `Warning: pi-web is listening on ${hostname} with Basic Auth over HTTP. Use HTTPS or a trusted VPN to protect the password in transport.`,
     );
   } else {
     console.warn(
@@ -114,18 +99,28 @@ if (!loopbackHostnames.has(hostname)) {
   }
 }
 
-const nextArgs = ["start", "-p", port];
-nextArgs.push("-H", hostname);
+// Use the custom server (server.mjs) instead of `next start`. The custom
+// server mounts a same-origin socket.io proxy at /api/terminal/socket.io
+// so the terminal integration works behind reverse proxies (frp, nginx,
+// …). `next start` would still work for everything else but would leave
+// the terminal browser client trying to reach 127.0.0.1:<port> directly,
+// which breaks the moment pi-web is not on the browser's own machine.
+const serverEntry = path.join(pkgDir, "server.mjs");
 
-// Always run next's JS entry with node directly — avoids .bin symlink issues
-// and path-with-spaces problems on Windows when shell: true is used.
-const child = spawn(process.execPath, [nextBin, ...nextArgs], {
+const child = spawn(process.execPath, [serverEntry], {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],
-  env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+  env: {
+    ...process.env,
+    PI_WEB_HOSTNAME: hostname,
+    PORT: port,
+    // server.mjs reads NODE_ENV to pick dev vs production code paths.
+    // For `pi-web` (the published binary) this is always production.
+    NODE_ENV: process.env.NODE_ENV || "production",
+  },
 });
 
-// Forward SIGTERM/SIGINT to the next start child so that `pi-web --stop`
+// Forward SIGTERM/SIGINT to the server.mjs child so that `pi-web --stop`
 // and Ctrl-C in detach mode shut down the server gracefully.
 const shutdown = (signal) => {
   try {

@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import { getFileIcon } from "./FileIcons";
+import { TerminalIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 
 export interface Tab {
   id: string;
   label: string;
   filePath: string;
+  kind?: "file" | "terminal";
+  cwd?: string;
   sourceSessionId?: string | null;
   initialDisplayMode?: "source" | "preview" | "diff";
 }
@@ -70,7 +73,9 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
-              {getFileIcon(tab.label, 13)}
+              {tab.kind === "terminal"
+                ? <TerminalIcon size={13} />
+                : getFileIcon(tab.label, 13)}
             </span>
             <span
               style={{
