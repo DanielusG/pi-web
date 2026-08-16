@@ -1,0 +1,493 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useI18n } from "@/hooks/useI18n";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import type { SubagentProfilesResponse } from "@/lib/api-types";
+import type { ModelsData } from "@/lib/models-cache";
+import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
+
+const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+type EditableProfile = Omit<SubagentProfile, "scope" | "filePath">;
+type EditorMode = "view" | "edit" | "create" | "override";
+
+const EMPTY_PROFILE: EditableProfile = {
+  name: "custom-agent",
+  displayName: "Custom agent",
+  description: "",
+  systemPrompt: "",
+  tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+  inheritContext: false,
+  runInBackground: false,
+  enabled: true,
+};
+
+const inputStyle: CSSProperties = {
+  width: "100%",
+  minWidth: 0,
+  height: 34,
+  padding: "0 9px",
+  border: "1px solid var(--border)",
+  borderRadius: 5,
+  background: "var(--bg)",
+  color: "var(--text)",
+  fontSize: 12,
+  outline: "none",
+};
+
+function editableProfile(profile: SubagentProfile): EditableProfile {
+  return {
+    name: profile.name,
+    displayName: profile.displayName,
+    description: profile.description,
+    systemPrompt: profile.systemPrompt,
+    tools: [...profile.tools],
+    ...(profile.model ? { model: profile.model } : {}),
+    ...(profile.thinking ? { thinking: profile.thinking } : {}),
+    ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
+    inheritContext: profile.inheritContext,
+    runInBackground: profile.runInBackground,
+    enabled: profile.enabled,
+  };
+}
+
+function profileKey(profile: Pick<SubagentProfile, "scope" | "name">): string {
+  return `${profile.scope}:${profile.name}`;
+}
+
+function isWritableScope(scope: SubagentScope): scope is SubagentWritableScope {
+  return scope === "global" || scope === "project";
+}
+
+function shortenPath(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+/, "~");
+}
+
+function displayProfilePath(profile: SubagentProfile, cwd: string): string | null {
+  if (!profile.filePath) return null;
+  if ((profile.scope === "project" || profile.scope === "workspace") && profile.filePath.startsWith(cwd)) {
+    const relative = profile.filePath.slice(cwd.length).replace(/^[/\\]/, "");
+    return `./${relative}`;
+  }
+  return shortenPath(profile.filePath);
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+      <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (checked: boolean) => void }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 7, color: disabled ? "var(--text-dim)" : "var(--text-muted)", fontSize: 12, cursor: disabled ? "default" : "pointer" }}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function EnabledToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  const { t } = useI18n();
+  const label = checked ? t("agents.disable") : t("agents.enable");
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        position: "relative",
+        width: 40,
+        height: 22,
+        padding: 0,
+        border: "none",
+        borderRadius: 11,
+        background: checked ? "var(--accent)" : "var(--border)",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        flexShrink: 0,
+        transition: "background 0.18s",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 3,
+          left: checked ? 21 : 3,
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          background: "var(--bg)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
+          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
+        }}
+      />
+    </button>
+  );
+}
+
+export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => void }) {
+  const isMobile = useIsMobile();
+  const { t } = useI18n();
+  const [profiles, setProfiles] = useState<SubagentProfile[]>([]);
+  const [modelOptions, setModelOptions] = useState<ModelsData["modelList"]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditableProfile>(EMPTY_PROFILE);
+  const [mode, setMode] = useState<EditorMode>("view");
+  const [targetScope, setTargetScope] = useState<SubagentWritableScope>("global");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selected = useMemo(
+    () => profiles.find((profile) => profileKey(profile) === selectedKey) ?? null,
+    [profiles, selectedKey],
+  );
+  const modelsByProvider = useMemo(() => {
+    const groups = new Map<string, ModelsData["modelList"]>();
+    for (const model of modelOptions) {
+      const group = groups.get(model.provider);
+      if (group) group.push(model);
+      else groups.set(model.provider, [model]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [modelOptions]);
+
+  const loadProfiles = useCallback(async (preferredKey?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/subagents/profiles?cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
+      const data = await response.json() as Partial<SubagentProfilesResponse> & { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const next = data.profiles ?? [];
+      setProfiles(next);
+      const chosen = next.find((profile) => profileKey(profile) === preferredKey)
+        ?? next.find((profile) => profile.scope === "project")
+        ?? next.find((profile) => profile.scope === "global")
+        ?? next[0]
+        ?? null;
+      setSelectedKey(chosen ? profileKey(chosen) : null);
+      if (chosen) {
+        setDraft(editableProfile(chosen));
+        setMode(isWritableScope(chosen.scope) ? "edit" : "view");
+        if (isWritableScope(chosen.scope)) setTargetScope(chosen.scope);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, [cwd]);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setModelsLoading(true);
+    setModelsError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/models?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal });
+        const data = await response.json() as Partial<ModelsData> & { error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        setModelOptions(data.modelList ?? []);
+        setModelsError(data.modelError ?? null);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        setModelsError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (!controller.signal.aborted) setModelsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [cwd]);
+
+  const selectProfile = (profile: SubagentProfile) => {
+    setSelectedKey(profileKey(profile));
+    setDraft(editableProfile(profile));
+    setMode(isWritableScope(profile.scope) ? "edit" : "view");
+    if (isWritableScope(profile.scope)) setTargetScope(profile.scope);
+    setError(null);
+  };
+
+  const beginCreate = () => {
+    let name = "custom-agent";
+    let suffix = 2;
+    while (profiles.some((profile) => profile.name === name)) name = `custom-agent-${suffix++}`;
+    setSelectedKey(null);
+    setDraft({ ...EMPTY_PROFILE, name, displayName: name });
+    setMode("create");
+    setTargetScope("global");
+    setError(null);
+  };
+
+  const beginOverride = (scope: SubagentWritableScope) => {
+    if (!selected) return;
+    const existing = profiles.find((profile) =>
+      profile.scope === scope && profile.name.toLowerCase() === selected.name.toLowerCase()
+    );
+    if (existing) {
+      selectProfile(existing);
+      return;
+    }
+    setDraft(editableProfile(selected));
+    setMode("override");
+    setTargetScope(scope);
+    setError(null);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/subagents/profiles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, scope: targetScope, profile: draft }),
+      });
+      const data = await response.json() as { profile?: SubagentProfile; error?: string };
+      if (!response.ok || data.error || !data.profile) throw new Error(data.error ?? `HTTP ${response.status}`);
+      await loadProfiles(profileKey(data.profile));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!selected || !isWritableScope(selected.scope)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/subagents/profiles", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      await loadProfiles();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const editing = mode !== "view";
+  const creating = mode === "create";
+  const disabled = !editing || saving || toggling;
+  const displayedScope = mode === "create" || mode === "override" ? targetScope : selected?.scope;
+  const displayedPath = mode === "create" || mode === "override"
+    ? targetScope === "global"
+      ? `~/.pi/agent/agents/${draft.name || "..."}.md`
+      : `./.pi/agents/${draft.name || "..."}.md`
+    : selected
+      ? displayProfilePath(selected, cwd) ?? t("agents.builtinPath")
+      : "";
+  const fullPath = mode === "create" || mode === "override" ? displayedPath : selected?.filePath ?? displayedPath;
+  const selectedModelAvailable = !draft.model || modelOptions.some((model) => `${model.provider}/${model.id}` === draft.model);
+  const update = <K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const toggleEnabled = async (enabled: boolean) => {
+    if (mode === "create" || mode === "override") {
+      update("enabled", enabled);
+      return;
+    }
+    if (!selected || !isWritableScope(selected.scope)) return;
+    setToggling(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/subagents/profiles", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name, enabled }),
+      });
+      const data = await response.json() as { profile?: SubagentProfile; error?: string };
+      if (!response.ok || data.error || !data.profile) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const saved = data.profile;
+      setProfiles((current) => current.map((profile) => profileKey(profile) === profileKey(saved) ? saved : profile));
+      setDraft((current) => ({ ...current, enabled: saved.enabled }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("common.agents")}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}
+    >
+      <div style={{ width: isMobile ? "calc(100vw - 16px)" : 900, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 16px)" : "78vh", maxHeight: "calc(100dvh - 16px)", display: "flex", flexDirection: "column", overflow: "hidden", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <div style={{ height: 49, padding: "0 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <strong style={{ fontSize: 15, color: "var(--text)" }}>{t("common.agents")}</strong>
+          <code style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontSize: 11 }}>{cwd}</code>
+          <button onClick={onClose} title={t("agents.close")} aria-label={t("agents.close")} style={{ marginLeft: "auto", width: 28, height: 28, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 20 }}>×</button>
+        </div>
+
+        <div style={{ minHeight: 0, flex: 1, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "230px minmax(0, 1fr)", gridTemplateRows: isMobile ? "180px minmax(0, 1fr)" : "1fr" }}>
+          <div style={{ minHeight: 0, display: "flex", flexDirection: "column", borderRight: isMobile ? "none" : "1px solid var(--border)", borderBottom: isMobile ? "1px solid var(--border)" : "none" }}>
+            <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: 6 }}>
+              {loading ? (
+                <div style={{ padding: 10, color: "var(--text-dim)", fontSize: 12 }}>{t("agents.loading")}</div>
+              ) : (["project", "global", "workspace", "builtin"] as const).map((scope) => {
+                const scopedProfiles = profiles.filter((profile) => profile.scope === scope);
+                if (scopedProfiles.length === 0) return null;
+                return (
+                  <div key={scope} style={{ marginBottom: 6 }}>
+                    <div style={{ padding: "5px 9px 3px", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>{t(`agents.scope.${scope}`)}</div>
+                    {scopedProfiles.map((profile) => (
+                      <button
+                        key={profileKey(profile)}
+                        type="button"
+                        onClick={() => selectProfile(profile)}
+                        style={{ width: "100%", minWidth: 0, padding: "8px 9px", display: "flex", alignItems: "center", gap: 8, border: "none", borderRadius: 5, background: selectedKey === profileKey(profile) && !creating ? "var(--bg-selected)" : "transparent", color: "var(--text)", cursor: "pointer", textAlign: "left" }}
+                      >
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: profile.enabled ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} />
+                        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>{profile.displayName}</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <button type="button" onClick={beginCreate} style={{ margin: 7, height: 32, border: "1px solid var(--border)", borderRadius: 5, background: creating ? "var(--bg-selected)" : "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 12 }}>+ {t("agents.new")}</button>
+          </div>
+
+          <div style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: isMobile ? 14 : 18 }}>
+              {!selected && !creating ? (
+                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("agents.empty")}</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div style={{ minHeight: 22, display: "flex", alignItems: "center", gap: 7 }}>
+                    {displayedScope && (
+                      <span style={{ padding: "1px 5px", borderRadius: 3, background: displayedScope === "project" ? "rgba(99,102,241,0.12)" : "rgba(120,120,120,0.12)", color: displayedScope === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>
+                        {t(`agents.scope.${displayedScope}`)}
+                      </span>
+                    )}
+                    <span title={fullPath} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                      {displayedPath}
+                    </span>
+                    <EnabledToggle checked={draft.enabled} disabled={disabled} onChange={(checked) => void toggleEnabled(checked)} />
+                  </div>
+
+                  {!editing && selected && (
+                    <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text-muted)", fontSize: 12 }}>
+                      <span style={{ flex: 1 }}>{t("agents.readOnly")}</span>
+                      <button type="button" onClick={() => beginOverride("global")} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 11 }}>{t("agents.overrideGlobal")}</button>
+                      <button type="button" onClick={() => beginOverride("project")} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 11 }}>{t("agents.overrideProject")}</button>
+                    </div>
+                  )}
+
+                  {(mode === "create" || mode === "override") && (
+                    <Field label={t("agents.saveScope")}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, padding: 3, border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)" }}>
+                        {(["global", "project"] as const).map((scope) => (
+                          <button
+                            key={scope}
+                            type="button"
+                            onClick={() => setTargetScope(scope)}
+                            disabled={saving}
+                            style={{ height: 28, border: "none", borderRadius: 4, background: targetScope === scope ? "var(--bg-selected)" : "transparent", color: targetScope === scope ? "var(--text)" : "var(--text-muted)", cursor: saving ? "default" : "pointer", fontSize: 11, fontWeight: targetScope === scope ? 600 : 400 }}
+                          >
+                            {t(`agents.scope.${scope}`)}
+                          </button>
+                        ))}
+                      </div>
+                    </Field>
+                  )}
+
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
+                    <Field label={t("agents.name")}><input aria-label={t("agents.name")} value={draft.name} disabled={disabled || !creating} onChange={(event) => update("name", event.target.value)} style={inputStyle} /></Field>
+                    <Field label={t("agents.displayName")}><input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={inputStyle} /></Field>
+                  </div>
+                  <Field label={t("agents.description")}><input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={inputStyle} /></Field>
+                  <Field label={t("agents.prompt")}><textarea aria-label={t("agents.prompt")} value={draft.systemPrompt} disabled={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 150, padding: 9, resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
+
+                  <Field label={t("agents.tools")}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "9px 10px", border: "1px solid var(--border)", borderRadius: 5 }}>
+                      {TOOL_OPTIONS.map((tool) => (
+                        <Toggle key={tool} label={tool} disabled={disabled} checked={draft.tools.includes(tool)} onChange={(checked) => update("tools", checked ? [...draft.tools, tool] : draft.tools.filter((item) => item !== tool))} />
+                      ))}
+                    </div>
+                  </Field>
+
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.5fr) minmax(120px, 0.75fr) minmax(100px, 0.5fr)", gap: 12 }}>
+                    <Field label={t("agents.model")}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <select
+                          aria-label={t("agents.model")}
+                          value={draft.model ?? ""}
+                          disabled={disabled || modelsLoading || (modelOptions.length === 0 && !draft.model)}
+                          onChange={(event) => update("model", event.target.value || undefined)}
+                          style={inputStyle}
+                        >
+                          <option value="">{modelsLoading ? t("agents.modelsLoading") : t("agents.inherit")}</option>
+                          {draft.model && !selectedModelAvailable && (
+                            <option value={draft.model}>{t("agents.modelUnavailable", { model: draft.model })}</option>
+                          )}
+                          {modelsByProvider.map(([provider, models]) => (
+                            <optgroup key={provider} label={provider}>
+                              {models.map((model) => (
+                                <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
+                                  {model.name === model.id ? model.id : `${model.name} (${model.id})`}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                        {modelsError && <span style={{ color: "#ef4444", fontSize: 10 }}>{modelsError}</span>}
+                      </div>
+                    </Field>
+                    <Field label={t("agents.thinking")}>
+                      <select aria-label={t("agents.thinking")} value={draft.thinking ?? ""} disabled={disabled} onChange={(event) => update("thinking", (event.target.value || undefined) as EditableProfile["thinking"])} style={inputStyle}>
+                        {THINKING_OPTIONS.map((value) => <option key={value || "default"} value={value}>{value || t("agents.inherit")}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={t("agents.maxTurns")}><input aria-label={t("agents.maxTurns")} type="number" min={1} value={draft.maxTurns ?? ""} disabled={disabled} onChange={(event) => update("maxTurns", event.target.value ? Number(event.target.value) : undefined)} style={inputStyle} /></Field>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 20px" }}>
+                    <Toggle label={t("agents.inheritContext")} disabled={disabled} checked={draft.inheritContext} onChange={(checked) => update("inheritContext", checked)} />
+                    <Toggle label={t("agents.background")} disabled={disabled} checked={draft.runInBackground} onChange={(checked) => update("runInBackground", checked)} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ minHeight: 52, padding: "9px 14px", display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+              {error && <span role="alert" style={{ minWidth: 0, flex: 1, color: "#ef4444", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{error}</span>}
+              {!error && <span style={{ flex: 1 }} />}
+              {selected && isWritableScope(selected.scope) && mode === "edit" && <button type="button" onClick={() => void remove()} disabled={saving || toggling} style={{ height: 32, padding: "0 12px", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 5, background: "transparent", color: "#ef4444", cursor: saving || toggling ? "default" : "pointer", fontSize: 12 }}>{t("agents.delete")}</button>}
+              {editing && <button type="button" onClick={() => void save()} disabled={saving || toggling || !draft.name.trim()} style={{ height: 32, padding: "0 14px", border: "none", borderRadius: 5, background: "var(--accent)", color: "#fff", cursor: saving || toggling ? "default" : "pointer", fontSize: 12 }}>{saving ? t("agents.saving") : t("agents.save")}</button>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -74,3 +74,7 @@ test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
 });
+
+test("nests only marked subagent sessions and keeps forks at project root", () => {
+  assert.match(source, /import \{ buildSessionTree, type SessionTreeNode \} from "@\/lib\/session-tree"/);
+});

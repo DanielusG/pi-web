@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
+import { buildSessionTree, type SessionTreeNode } from "@/lib/session-tree";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
@@ -260,55 +261,6 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 }
 
 
-
-interface SessionTreeNode {
-  session: SessionInfo;
-  children: SessionTreeNode[];
-}
-
-function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
-  const byId = new Map<string, SessionTreeNode>();
-  for (const s of sessions) {
-    byId.set(s.id, { session: s, children: [] });
-  }
-
-  // Build a map of parentSessionId chains so we can resolve missing ancestors
-  const parentOf = new Map<string, string>();
-  for (const s of sessions) {
-    if (s.parentSessionId) parentOf.set(s.id, s.parentSessionId);
-  }
-
-  // Walk up the parentSessionId chain to find the nearest ancestor that exists in byId
-  function resolveAncestor(id: string): string | null {
-    let cur = parentOf.get(id);
-    const visited = new Set<string>();
-    while (cur) {
-      if (visited.has(cur)) return null; // cycle guard
-      visited.add(cur);
-      if (byId.has(cur)) return cur;
-      cur = parentOf.get(cur);
-    }
-    return null;
-  }
-
-  const roots: SessionTreeNode[] = [];
-  for (const node of byId.values()) {
-    const ancestor = resolveAncestor(node.session.id);
-    if (ancestor) {
-      byId.get(ancestor)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  // Sort each level by modified desc
-  const sort = (nodes: SessionTreeNode[]) => {
-    nodes.sort((a, b) => b.session.modified.localeCompare(a.session.modified));
-    nodes.forEach((n) => sort(n.children));
-  };
-  sort(roots);
-  return roots;
-}
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
@@ -2193,13 +2145,11 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
-          {/* Fork indicator for child sessions */}
+          {/* Subagent indicator for child sessions */}
           {depth > 0 && (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <rect x="5" y="7" width="14" height="11" rx="2" />
+              <path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
             </svg>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -2250,7 +2200,7 @@ function SessionItem({
           {hasChildren && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-              title={collapsed ? "Expand forks" : "Collapse forks"}
+              title={t(collapsed ? "sidebar.expandSubagents" : "sidebar.collapseSubagents")}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 20, height: 20, padding: 0, flexShrink: 0,

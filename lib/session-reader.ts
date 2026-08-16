@@ -13,6 +13,7 @@ import { projectIdentityKey } from "./project-identity";
 import { sessionPathKey } from "./session-path";
 import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images";
 import { resolveProject, type ProjectInfo } from "./worktree";
+import { readSubagentRun } from "./subagents";
 
 export { getAgentDir };
 
@@ -53,6 +54,14 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
 
   const sessions = piSessions.map((s) => {
     cacheSessionPath(s.id, s.path);
+    const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
+    let subagent = null;
+    if (s.parentSessionPath) {
+      try {
+        const manager = SessionManager.open(s.path);
+        subagent = readSubagentRun(manager.getEntries() as unknown as SessionEntry[], s.id, s.path);
+      } catch { /* malformed or concurrently removed session */ }
+    }
     return {
       path: s.path,
       id: s.id,
@@ -62,7 +71,12 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || "(no messages)",
-      parentSessionId: s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined,
+      parentSessionId: originSessionId,
+      ...(subagent
+        ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description } }
+        : s.parentSessionPath
+          ? { relation: { kind: "fork" as const, ...(originSessionId ? { originSessionId } : {}) } }
+          : {}),
       transient: false,
     };
   });
