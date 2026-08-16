@@ -2070,7 +2070,6 @@ export async function startRpcSession(
   const subagentResources = sessionFile
     ? readSubagentSessionResources(
         sessionManager.getEntries() as unknown as SessionEntry[],
-        sessionCwd,
       )
     : null;
   const finishStartingSession = trackStartingSession(sessionCwd);

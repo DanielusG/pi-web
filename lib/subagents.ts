@@ -40,7 +40,7 @@ export interface SubagentMetadata {
   task: string;
   runInBackground: boolean;
   createdAt: string;
-  resourceSnapshot?: SubagentResourceSnapshot;
+  resourceSnapshot: SubagentResourceSnapshot;
 }
 
 export interface SubagentResourceSnapshot {
@@ -50,7 +50,6 @@ export interface SubagentResourceSnapshot {
 }
 
 export interface SubagentSessionResources {
-  profile: string;
   appendSystemPrompt: string[];
   tools: string[];
 }
@@ -306,11 +305,9 @@ function subagentMetadataData(entries: readonly SessionEntry[]): ValidSubagentMe
 /** Restore the isolated prompt and tool scope used by a persisted subagent session. */
 export function readSubagentSessionResources(
   entries: readonly SessionEntry[],
-  cwd: string,
 ): SubagentSessionResources | null {
   const data = subagentMetadataData(entries);
   if (!data) return null;
-  const profileName = typeof data.profile === "string" ? data.profile : "general-purpose";
   const snapshot = data.resourceSnapshot;
   if (
     isRecord(snapshot)
@@ -321,31 +318,11 @@ export function readSubagentSessionResources(
     && snapshot.tools.every((item) => typeof item === "string" && BUILTIN_TOOLS.has(item))
   ) {
     return {
-      profile: profileName,
       appendSystemPrompt: [...snapshot.appendSystemPrompt],
       tools: [...new Set(snapshot.tools)],
     };
   }
-
-  // Sessions created before resource snapshots were added can still recover
-  // their effective profile. Disabled profiles remain valid for replay.
-  const profile = listSubagentProfiles(cwd).find((item) =>
-    item.name.toLowerCase() === profileName.toLowerCase()
-  );
-  if (profile) {
-    return {
-      profile: profile.name,
-      appendSystemPrompt: [profile.systemPrompt],
-      tools: [...profile.tools],
-    };
-  }
-  return {
-    profile: profileName,
-    appendSystemPrompt: [
-      `Continue the persisted subagent session for profile "${profileName}". Follow the existing conversation and delegated task.`,
-    ],
-    tools: [],
-  };
+  return null;
 }
 
 export function readSubagentRun(entries: readonly SessionEntry[], sessionId: string, sessionPath: string): SubagentRunInfo | null {
