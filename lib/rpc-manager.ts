@@ -38,6 +38,7 @@ import {
 import {
   listSubagentProfiles,
   readSubagentRun,
+  readSubagentSessionResources,
   resolveSubagentProfile,
   SUBAGENT_META_TYPE,
   SUBAGENT_RESULT_TYPE,
@@ -1700,6 +1701,11 @@ async function startSubagent(request: StartSubagentRequest): Promise<SubagentExe
       task: request.task,
       runInBackground,
       createdAt,
+      resourceSnapshot: {
+        version: 1,
+        appendSystemPrompt: [...appendSystemPrompt],
+        tools: [...profile.tools],
+      },
     };
     sessionManager.appendCustomEntry(SUBAGENT_META_TYPE, metadata);
     sessionManager.appendSessionInfo(metadata.description);
@@ -2061,6 +2067,12 @@ export async function startRpcSession(
     sessionManager = SessionManager.create(cwd, undefined);
   }
   const sessionCwd = sessionManager.getCwd();
+  const subagentResources = sessionFile
+    ? readSubagentSessionResources(
+        sessionManager.getEntries() as unknown as SessionEntry[],
+        sessionCwd,
+      )
+    : null;
   const finishStartingSession = trackStartingSession(sessionCwd);
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
@@ -2069,8 +2081,8 @@ export async function startRpcSession(
 
     // Determine which tools to pass based on requested toolNames.
     // Since v0.68.0, session creation expects string[] tool names instead of Tool[] instances.
-    let toolsOption: string[] | undefined;
-    if (toolNames !== undefined) {
+    let toolsOption: string[] | undefined = subagentResources?.tools;
+    if (!subagentResources && toolNames !== undefined) {
       // toolNames === [] -> "all off" (an empty allow-list disables every tool).
       // Otherwise DO NOT pass a builtin-only allow-list: passing CODING_TOOL_NAMES
       // set allowedToolNames to coding builtins only, which filtered every
@@ -2085,22 +2097,33 @@ export async function startRpcSession(
     // before the SDK restores the saved model from the session file.
     // Gate untrusted project extensions so opening a repository does not run
     // its .pi/extensions code automatically (see lib/project-trust.ts, #236).
-    const trustReloadOptions = projectTrustReloadOptions(sessionCwd, agentDir);
+    const trustReloadOptions = subagentResources
+      ? undefined
+      : projectTrustReloadOptions(sessionCwd, agentDir);
     const settingsManager = SettingsManager.create(sessionCwd, agentDir);
     const services = await createAgentSessionServices({
       cwd: sessionCwd,
       agentDir,
       settingsManager,
-      resourceLoaderOptions: {
-        extensionFactories: [
-          createProjectCommandBashExtension({
-            cwd: sessionCwd,
-            settings: settingsManager,
-          }),
-          createSubagentExtension(SUBAGENT_EXTENSION_RUNTIME, () => listSubagentProfiles(sessionCwd)),
-        ],
-        extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
-      },
+      resourceLoaderOptions: subagentResources
+        ? {
+            noExtensions: true,
+            noSkills: true,
+            noPromptTemplates: true,
+            noThemes: true,
+            noContextFiles: true,
+            appendSystemPrompt: subagentResources.appendSystemPrompt,
+          }
+        : {
+            extensionFactories: [
+              createProjectCommandBashExtension({
+                cwd: sessionCwd,
+                settings: settingsManager,
+              }),
+              createSubagentExtension(SUBAGENT_EXTENSION_RUNTIME, () => listSubagentProfiles(sessionCwd)),
+            ],
+            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
+          },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
     const scope = await resolveVisibleModels(
@@ -2147,7 +2170,7 @@ export async function startRpcSession(
     // If specific tool names were requested (non-empty), set the active tools to the
     // requested builtin coding tools PLUS all extension/package tools, so installed
     // extensions stay usable in Pi Web just like in the `pi` CLI.
-    if (toolNames && toolNames.length > 0) {
+    if (!subagentResources && toolNames && toolNames.length > 0) {
       inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
     }
 

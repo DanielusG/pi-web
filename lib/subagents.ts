@@ -40,6 +40,19 @@ export interface SubagentMetadata {
   task: string;
   runInBackground: boolean;
   createdAt: string;
+  resourceSnapshot?: SubagentResourceSnapshot;
+}
+
+export interface SubagentResourceSnapshot {
+  version: 1;
+  appendSystemPrompt: string[];
+  tools: string[];
+}
+
+export interface SubagentSessionResources {
+  profile: string;
+  appendSystemPrompt: string[];
+  tools: string[];
 }
 
 export interface SubagentResultMetadata {
@@ -276,11 +289,68 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readSubagentRun(entries: readonly SessionEntry[], sessionId: string, sessionPath: string): SubagentRunInfo | null {
+type ValidSubagentMetadataData = Record<string, unknown> & {
+  version: 1;
+  parentSessionId: string;
+  parentSessionPath: string;
+};
+
+function subagentMetadataData(entries: readonly SessionEntry[]): ValidSubagentMetadataData | null {
   const metaEntry = entries.find((entry) => entry.type === "custom" && entry.customType === SUBAGENT_META_TYPE);
   if (!metaEntry || metaEntry.type !== "custom" || !isRecord(metaEntry.data)) return null;
   const data = metaEntry.data;
   if (data.version !== 1 || typeof data.parentSessionId !== "string" || typeof data.parentSessionPath !== "string") return null;
+  return data as ValidSubagentMetadataData;
+}
+
+/** Restore the isolated prompt and tool scope used by a persisted subagent session. */
+export function readSubagentSessionResources(
+  entries: readonly SessionEntry[],
+  cwd: string,
+): SubagentSessionResources | null {
+  const data = subagentMetadataData(entries);
+  if (!data) return null;
+  const profileName = typeof data.profile === "string" ? data.profile : "general-purpose";
+  const snapshot = data.resourceSnapshot;
+  if (
+    isRecord(snapshot)
+    && snapshot.version === 1
+    && Array.isArray(snapshot.appendSystemPrompt)
+    && snapshot.appendSystemPrompt.every((item) => typeof item === "string")
+    && Array.isArray(snapshot.tools)
+    && snapshot.tools.every((item) => typeof item === "string" && BUILTIN_TOOLS.has(item))
+  ) {
+    return {
+      profile: profileName,
+      appendSystemPrompt: [...snapshot.appendSystemPrompt],
+      tools: [...new Set(snapshot.tools)],
+    };
+  }
+
+  // Sessions created before resource snapshots were added can still recover
+  // their effective profile. Disabled profiles remain valid for replay.
+  const profile = listSubagentProfiles(cwd).find((item) =>
+    item.name.toLowerCase() === profileName.toLowerCase()
+  );
+  if (profile) {
+    return {
+      profile: profile.name,
+      appendSystemPrompt: [profile.systemPrompt],
+      tools: [...profile.tools],
+    };
+  }
+  return {
+    profile: profileName,
+    appendSystemPrompt: [
+      `Continue the persisted subagent session for profile "${profileName}". Follow the existing conversation and delegated task.`,
+    ],
+    tools: [],
+  };
+}
+
+export function readSubagentRun(entries: readonly SessionEntry[], sessionId: string, sessionPath: string): SubagentRunInfo | null {
+  const data = subagentMetadataData(entries);
+  if (!data) return null;
   const resultEntry = [...entries].reverse().find((entry) => entry.type === "custom" && entry.customType === SUBAGENT_RESULT_TYPE);
   const result = resultEntry?.type === "custom" && isRecord(resultEntry.data) ? resultEntry.data : undefined;
   const persistedStatus = result && (result.status === "completed" || result.status === "failed" || result.status === "aborted")
