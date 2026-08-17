@@ -88,6 +88,11 @@ test("skills and sub-agents share interactive sidebar rows", () => {
   assert.doesNotMatch(sources.SkillsConfig, /onMouseEnter[\s\S]*?var\(--bg-hover\)/);
 });
 
+test("all shared config sidebar items use a fixed 30px height", () => {
+  assert.match(cssSource, /\.config-sidebar-item \{[\s\S]*?height: 30px[\s\S]*?padding: 0 8px/);
+  assert.match(cssSource, /\.config-list-action-button \{[\s\S]*?height: 30px[\s\S]*?min-height: 30px/);
+});
+
 test("plugin sidebar rows omit detail metadata", () => {
   const pluginSource = Object.fromEntries(configSources).PluginsConfig;
   const sidebarSource = pluginSource.match(/<ConfigSidebarList>[\s\S]*?<\/ConfigSidebarList>/)?.[0] ?? "";

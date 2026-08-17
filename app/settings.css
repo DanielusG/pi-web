@@ -139,7 +139,8 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 8px;
+  height: 30px;
+  padding: 0 8px;
   border: 0;
   border-radius: 5px;
   outline: none;
@@ -171,6 +172,19 @@
 .config-sidebar-item:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.models-sidebar-indented-item {
+  padding-left: 26px;
+}
+
+.models-sidebar-add-item {
+  color: var(--text-dim);
+}
+
+.models-sidebar-add-item:not(:disabled):hover,
+.models-sidebar-add-item:not(:disabled):focus-visible {
+  color: var(--accent);
 }
 
 .config-sidebar-text {
@@ -610,7 +624,8 @@
   justify-content: flex-start;
   gap: 6px;
   width: 100%;
-  min-height: 32px;
+  height: 30px;
+  min-height: 30px;
   padding: 0 8px;
   border: 0;
   border-radius: 5px;

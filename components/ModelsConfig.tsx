@@ -30,6 +30,7 @@ import {
   ConfigPanelShell,
   ConfigSectionTitle,
   ConfigSidebar,
+  ConfigSidebarItem,
   ConfigSidebarList,
   ConfigSidebarText,
   ConfigSplitView,
@@ -2171,16 +2172,14 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
               {activeOAuth.map((p) => {
                 const isSelected = selection?.type === "oauth" && selection.providerId === p.id;
                 return (
-                  <div
+                  <ConfigSidebarItem
                     key={p.id}
+                    active={isSelected}
                     onClick={() => setSelection({ type: "oauth", providerId: p.id })}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 8px", borderRadius: 5, cursor: "pointer", background: isSelected ? "var(--bg-selected)" : "none" }}
-                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                    onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "none"; }}
                   >
                     <ProviderIcon id={p.id} size={16} />
                     <ConfigSidebarText className="is-grow">{p.name}</ConfigSidebarText>
-                  </div>
+                  </ConfigSidebarItem>
                 );
               })}
 
@@ -2188,16 +2187,14 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
               {activeApiKey.map((p) => {
                 const isSelected = selection?.type === "apikey" && selection.providerId === p.id;
                 return (
-                  <div
+                  <ConfigSidebarItem
                     key={p.id}
+                    active={isSelected}
                     onClick={() => setSelection({ type: "apikey", providerId: p.id })}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 8px", borderRadius: 5, cursor: "pointer", background: isSelected ? "var(--bg-selected)" : "none" }}
-                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                    onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "none"; }}
                   >
                     <ProviderIcon id={p.id} size={16} />
                     <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
-                  </div>
+                  </ConfigSidebarItem>
                 );
               })}
 
@@ -2215,11 +2212,9 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                 return (
                   <div key={pName} style={{ marginBottom: 2 }}>
                     {/* Provider row */}
-                    <div
+                    <ConfigSidebarItem
                       onClick={() => setSelection({ type: "provider", name: pName })}
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 8px", borderRadius: 5, cursor: "pointer", background: isProviderSelected ? "var(--bg-selected)" : "none" }}
-                      onMouseEnter={(e) => { if (!isProviderSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                      onMouseLeave={(e) => { if (!isProviderSelected) e.currentTarget.style.background = "none"; }}
+                      active={isProviderSelected}
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
                         <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" />
@@ -2228,21 +2223,20 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                         <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
                         <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
                       </svg>
-                      <ConfigSidebarText className="is-grow" style={{ fontWeight: isProviderSelected ? 600 : 400 }}>
+                      <ConfigSidebarText className="is-grow">
                         {pName}
                       </ConfigSidebarText>
-                    </div>
+                    </ConfigSidebarItem>
 
                     {/* Model rows */}
                     {models.map((m, i) => {
                       const isModelSelected = selection?.type === "model" && selection.providerName === pName && selection.index === i;
                       return (
-                        <div
+                        <ConfigSidebarItem
                           key={i}
+                          active={isModelSelected}
+                          className="models-sidebar-indented-item"
                           onClick={() => setSelection({ type: "model", providerName: pName, index: i })}
-                          style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px 5px 26px", borderRadius: 5, cursor: "pointer", background: isModelSelected ? "var(--bg-selected)" : "none" }}
-                          onMouseEnter={(e) => { if (!isModelSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                          onMouseLeave={(e) => { if (!isModelSelected) e.currentTarget.style.background = "none"; }}
                         >
                           <ConfigSidebarText className="is-grow" style={{ color: m.id ? "var(--text-muted)" : "var(--text-dim)" }}>
                              {m.id || t("i18n.newModel")}
@@ -2250,19 +2244,17 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                           {m.reasoning && (
                             <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}
-                        </div>
+                        </ConfigSidebarItem>
                       );
                     })}
 
                     {/* Add model button */}
-                    <div
+                    <ConfigSidebarItem
+                      className="models-sidebar-indented-item models-sidebar-add-item"
                       onClick={(e) => { e.stopPropagation(); addModel(pName); }}
-                      style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px 4px 26px", borderRadius: 5, cursor: "pointer", color: "var(--text-dim)" }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
                     >
                        <ConfigSidebarText>+ {t("i18n.model")}</ConfigSidebarText>
-                    </div>
+                    </ConfigSidebarItem>
                   </div>
                 );
               })}
