@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "path";
 import { parseFrontmatter } from "./frontmatter";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import { isExistingPathWithinRoots } from "./path-security";
+import { PRESET_READ_ONLY } from "./tool-presets";
 import type { SessionEntry } from "./types";
 
 export const SUBAGENT_META_TYPE = "pi-web:subagent";
@@ -80,7 +81,6 @@ export interface SubagentRunInfo {
 }
 
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"];
 const BUILTIN_TOOLS = new Set(DEFAULT_TOOLS);
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -101,7 +101,7 @@ const BUILTIN_PROFILES: SubagentProfile[] = [
     displayName: "Explore",
     description: "Quickly inspect a codebase without modifying it",
     systemPrompt: "Explore the codebase to answer the delegated question. Do not modify files. Report concrete findings with file paths and relevant symbols.",
-    tools: READ_ONLY_TOOLS,
+    tools: [...PRESET_READ_ONLY],
     inheritContext: false,
     runInBackground: false,
     enabled: true,
@@ -112,7 +112,7 @@ const BUILTIN_PROFILES: SubagentProfile[] = [
     displayName: "Plan",
     description: "Design an implementation plan without modifying files",
     systemPrompt: "Produce an implementation-ready plan for the delegated task. Inspect the repository as needed, do not modify files, and call out dependencies, risks, and verification steps.",
-    tools: READ_ONLY_TOOLS,
+    tools: [...PRESET_READ_ONLY],
     inheritContext: false,
     runInBackground: false,
     enabled: true,
