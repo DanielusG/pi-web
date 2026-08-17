@@ -35,10 +35,13 @@ function sourceLabel(skill: Skill): string {
   return "path";
 }
 
-function skillGroupLabel(skill: Skill): string {
-  const source = sourceLabel(skill);
-  if (source === "path") return source;
-  return skill.install?.skillsShUrl ? `${source} / skills.sh` : source;
+export function orderSkillsByDormancy<
+  T extends Pick<Skill, "disableModelInvocation">,
+>(skills: T[]): T[] {
+  return [
+    ...skills.filter((skill) => !skill.disableModelInvocation),
+    ...skills.filter((skill) => skill.disableModelInvocation),
+  ];
 }
 
 function updateKey(skill: Skill): string | null {
@@ -654,7 +657,6 @@ export function SkillsConfig({
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [projectResourcesLoaded, setProjectResourcesLoaded] = useState(true);
-  const [dormantGroupsOpen, setDormantGroupsOpen] = useState<Record<string, boolean>>({});
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -669,12 +671,6 @@ export function SkillsConfig({
       if (list.length > 0 && !selected) {
         const initialSkill = list.find((skill) => !skill.disableModelInvocation) ?? list[0];
         setSelected(initialSkill.filePath);
-        if (initialSkill.disableModelInvocation) {
-          setDormantGroupsOpen((current) => ({
-            ...current,
-            [skillGroupLabel(initialSkill)]: true,
-          }));
-        }
       }
       return list;
     } catch (e) {
@@ -804,12 +800,6 @@ export function SkillsConfig({
             : s,
         ),
       );
-      if (next) {
-        setDormantGroupsOpen((current) => ({
-          ...current,
-          [skillGroupLabel(skill)]: true,
-        }));
-      }
     } catch (e) {
       setSaveError(String(e));
     } finally {
@@ -986,13 +976,6 @@ export function SkillsConfig({
                   };
                   return groups.map(
                     ({ label: grpLabel, skills: grpSkills }) => {
-                      const activeSkills = grpSkills.filter(
-                        (skill) => !skill.disableModelInvocation,
-                      );
-                      const dormantSkills = grpSkills.filter(
-                        (skill) => skill.disableModelInvocation,
-                      );
-                      const dormantOpen = dormantGroupsOpen[grpLabel] ?? false;
                       return (
                         <div key={grpLabel} style={{ marginBottom: 6 }}>
                           <div
@@ -1007,38 +990,7 @@ export function SkillsConfig({
                           >
                             {grpLabel}
                           </div>
-                          {activeSkills.map(renderSkillRow)}
-                          {dormantSkills.length > 0 && (
-                            <>
-                              <div
-                                onClick={() =>
-                                  setDormantGroupsOpen((current) => ({
-                                    ...current,
-                                    [grpLabel]: !dormantOpen,
-                                  }))
-                                }
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 5,
-                                  padding: "4px 8px 3px",
-                                  fontSize: 10,
-                                  fontWeight: 600,
-                                  color: "var(--text-dim)",
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.06em",
-                                  cursor: "pointer",
-                                  userSelect: "none",
-                                }}
-                              >
-                                <span style={{ fontSize: 8 }}>
-                                  {dormantOpen ? "▾" : "▸"}
-                                </span>
-                                {t("i18n.dormant")} ({dormantSkills.length})
-                              </div>
-                              {dormantOpen && dormantSkills.map(renderSkillRow)}
-                            </>
-                          )}
+                          {orderSkillsByDormancy(grpSkills).map(renderSkillRow)}
                         </div>
                       );
                     },
