@@ -2,9 +2,10 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { dump as stringifyYaml } from "js-yaml";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "fs";
-import { basename, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { parseFrontmatter } from "./frontmatter";
 import { writePrivateFileAtomicSync } from "./atomic-file";
+import { isExistingPathWithinRoots } from "./path-security";
 import type { SessionEntry } from "./types";
 
 export const SUBAGENT_META_TYPE = "pi-web:subagent";
@@ -169,8 +170,13 @@ function parseProfileFile(filePath: string, scope: SubagentScope): SubagentProfi
   }
 }
 
-function readProfileDirectory(dir: string, scope: SubagentScope): SubagentProfile[] {
+function isProjectProfilePathAllowed(cwd: string, target: string): boolean {
+  return isExistingPathWithinRoots(target, new Set([cwd]));
+}
+
+function readProfileDirectory(dir: string, scope: SubagentScope, cwd: string): SubagentProfile[] {
   if (!existsSync(dir)) return [];
+  if (scope !== "global" && !isProjectProfilePathAllowed(cwd, dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
     .map((entry) => parseProfileFile(join(dir, entry.name), scope))
@@ -189,7 +195,7 @@ function profileDirectories(cwd: string): Array<[string, Exclude<SubagentScope, 
 export function listSubagentProfileSources(cwd: string): SubagentProfile[] {
   const profiles = BUILTIN_PROFILES.map((profile) => ({ ...profile, tools: [...profile.tools] }));
   for (const [dir, scope] of profileDirectories(cwd)) {
-    profiles.push(...readProfileDirectory(dir, scope));
+    profiles.push(...readProfileDirectory(dir, scope, cwd));
   }
   return profiles.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -197,7 +203,7 @@ export function listSubagentProfileSources(cwd: string): SubagentProfile[] {
 export function listSubagentProfiles(cwd: string): SubagentProfile[] {
   const byName = new Map(BUILTIN_PROFILES.map((profile) => [profile.name.toLowerCase(), { ...profile, tools: [...profile.tools] }]));
   for (const [dir, scope] of profileDirectories(cwd)) {
-    for (const profile of readProfileDirectory(dir, scope)) byName.set(profile.name.toLowerCase(), profile);
+    for (const profile of readProfileDirectory(dir, scope, cwd)) byName.set(profile.name.toLowerCase(), profile);
   }
   return [...byName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -220,6 +226,22 @@ function writableProfileDirectory(cwd: string, scope: SubagentWritableScope): st
   throw new Error("Agent scope must be global or project");
 }
 
+function assertWritableProfileDirectory(cwd: string, scope: SubagentWritableScope): string {
+  const dir = writableProfileDirectory(cwd, scope);
+  if (scope === "global") return dir;
+
+  let existingAncestor = dir;
+  while (!existsSync(existingAncestor)) {
+    const parent = dirname(existingAncestor);
+    if (parent === existingAncestor) throw new Error("Agent profile directory is outside the project root");
+    existingAncestor = parent;
+  }
+  if (!isProjectProfilePathAllowed(cwd, existingAncestor)) {
+    throw new Error("Agent profile directory is outside the project root");
+  }
+  return dir;
+}
+
 export function saveSubagentProfile(
   cwd: string,
   scope: SubagentWritableScope,
@@ -240,8 +262,11 @@ export function saveSubagentProfile(
   const description = profile.description.trim() || name;
   const systemPrompt = profile.systemPrompt.trim();
   const model = profile.model?.trim() || undefined;
-  const dir = writableProfileDirectory(cwd, scope);
+  const dir = assertWritableProfileDirectory(cwd, scope);
   mkdirSync(dir, { recursive: true });
+  if (scope === "project" && !isProjectProfilePathAllowed(cwd, dir)) {
+    throw new Error("Agent profile directory is outside the project root");
+  }
   const filePath = join(dir, `${name}.md`);
   const frontmatter: Record<string, unknown> = {
     description,
@@ -272,7 +297,7 @@ export function saveSubagentProfile(
 
 export function deleteSubagentProfile(cwd: string, scope: SubagentWritableScope, name: string): void {
   const safeName = assertProfileName(name);
-  const filePath = join(writableProfileDirectory(cwd, scope), `${safeName}.md`);
+  const filePath = join(assertWritableProfileDirectory(cwd, scope), `${safeName}.md`);
   if (existsSync(filePath)) unlinkSync(filePath);
 }
 
