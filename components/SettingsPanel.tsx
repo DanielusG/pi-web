@@ -148,6 +148,9 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(() => getLastSettingsSection(cwd));
+  const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
+    () => new Set([section]),
+  );
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
@@ -158,7 +161,7 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       onClose();
     };
@@ -169,16 +172,25 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
   useEffect(() => {
     if (cwd || (section !== "skills" && section !== "agents" && section !== "plugins")) return;
     setSection("general");
+    setMountedSections((current) => new Set(current).add("general"));
     setLastSettingsSection("general");
   }, [cwd, section]);
 
-  let content: ReactNode;
-  if (section === "general") content = <GeneralSettings />;
-  else if (section === "models") content = <ModelsConfig embedded onClose={onClose} />;
-  else if (!cwd) content = null;
-  else if (section === "skills") content = <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />;
-  else if (section === "agents") content = <AgentsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />;
-  else content = <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />;
+  const activateSection = (nextSection: SettingsSection) => {
+    setMountedSections((current) => new Set(current).add(nextSection));
+    setSection(nextSection);
+    setLastSettingsSection(nextSection);
+  };
+
+  const sectionHost = (id: SettingsSection, content: ReactNode) => mountedSections.has(id) ? (
+    <div
+      key={id}
+      hidden={section !== id}
+      style={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, flex: 1 }}
+    >
+      {content}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -206,10 +218,7 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
                   disabled={disabled}
                   title={disabled ? t("settings.projectRequired") : item.label}
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => {
-                    setSection(item.id);
-                    setLastSettingsSection(item.id);
-                  }}
+                  onClick={() => activateSection(item.id)}
                   style={{ minWidth: isMobile ? 92 : 0, width: isMobile ? "auto" : "100%", height: 36, padding: "0 10px", display: "flex", alignItems: "center", gap: 9, border: "none", borderRadius: 5, background: selected ? "var(--bg-selected)" : "transparent", color: selected ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.38 : 1, fontSize: 12, fontWeight: selected ? 600 : 400, textAlign: "left", flexShrink: 0 }}
                 >
                   <SectionIcon section={item.id} />
@@ -220,7 +229,11 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
           </nav>
 
           <main style={{ minWidth: 0, minHeight: 0, flex: 1, display: "flex", overflow: "hidden" }}>
-            {content}
+            {sectionHost("general", <GeneralSettings />)}
+            {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
+            {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
+            {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
+            {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />)}
           </main>
         </div>
       </div>

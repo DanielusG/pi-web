@@ -25,13 +25,21 @@ test("keeps every requested configuration surface inside the settings panel", ()
 
 test("restores the settings section and each list detail selection", async () => {
   assert.match(panelSource, /getLastSettingsSection\(cwd\)/);
-  assert.match(panelSource, /setLastSettingsSection\(item\.id\)/);
+  assert.match(panelSource, /setLastSettingsSection\(nextSection\)/);
   for (const name of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig"]) {
     assert.match(
       await readFile(new URL(`./${name}.tsx`, import.meta.url), "utf8"),
       /getLastSettingsSelection/,
     );
   }
+});
+
+test("keeps visited settings sections mounted and contains nested Escape handling", async () => {
+  const modelsSource = await readFile(new URL("./ModelsConfig.tsx", import.meta.url), "utf8");
+  assert.match(panelSource, /mountedSections\.has\(id\)/);
+  assert.match(panelSource, /hidden=\{section !== id\}/);
+  assert.match(panelSource, /event\.defaultPrevented/);
+  assert.match(modelsSource, /e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*onClose\(\);/);
 });
 
 test("offers direct light, dark, and system theme selection", () => {
