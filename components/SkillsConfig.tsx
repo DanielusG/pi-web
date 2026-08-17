@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import type {
   SkillInfo as Skill,
@@ -10,6 +9,18 @@ import type {
   SkillsResponse,
   SkillUpdateResult,
 } from "@/lib/api-types";
+import {
+  ConfigButton,
+  ConfigDetail,
+  ConfigFooter,
+  ConfigListAction,
+  ConfigPanelShell,
+  ConfigSidebar,
+  ConfigSidebarList,
+  ConfigSplitView,
+  ConfigStatusDot,
+  ConfigSwitch,
+} from "./SettingsUi";
 
 function shortenPath(p: string): string {
   // Match common home dir patterns: /Users/xxx, /home/xxx
@@ -38,56 +49,6 @@ function updateKey(skill: Skill): string | null {
 
 function shortVersion(version?: string): string {
   return version ? version.slice(0, 8) : "unknown";
-}
-
-function Toggle({
-  enabled,
-  loading,
-  onToggle,
-}: {
-  enabled: boolean;
-  loading: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <button
-      onClick={onToggle}
-      disabled={loading}
-      title={
-        enabled
-          ? t("i18n.visibleInPrompt")
-          : t("i18n.hiddenFromPrompt")
-      }
-      style={{
-        flexShrink: 0,
-        width: 40,
-        height: 22,
-        borderRadius: 11,
-        border: "none",
-        padding: 0,
-        cursor: loading ? "wait" : "pointer",
-        background: enabled ? "var(--accent)" : "var(--border)",
-        position: "relative",
-        transition: "background 0.18s",
-        outline: "none",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 3,
-          left: enabled ? 21 : 3,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
-        }}
-      />
-    </button>
-  );
 }
 
 function SkillDetail({
@@ -161,10 +122,11 @@ function SkillDetail({
           >
             {displayPath(skill.filePath)}
           </span>
-          <Toggle
-            enabled={enabled}
+          <ConfigSwitch
+            checked={enabled}
             loading={toggling}
-            onToggle={() => onToggle(skill)}
+            label={enabled ? t("i18n.visibleInPrompt") : t("i18n.hiddenFromPrompt")}
+            onChange={() => onToggle(skill)}
           />
         </div>
         <div
@@ -253,22 +215,13 @@ function SkillDetail({
               {shortVersion(updateStatus?.currentVersion ?? skill.install.versionHash)}
             </span>
             {skill.install.canCheckForUpdates && (
-              <button
+              <ConfigButton
+                size="small"
                 onClick={onCheckUpdate}
                 disabled={checkingUpdate || updating}
-                style={{
-                  padding: "4px 9px",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  background: "none",
-                  color: "var(--text-muted)",
-                  cursor: checkingUpdate || updating ? "not-allowed" : "pointer",
-                  opacity: checkingUpdate || updating ? 0.5 : 1,
-                  fontSize: 11,
-                }}
               >
                  {t("i18n.check")}
-              </button>
+              </ConfigButton>
             )}
             {updateStatus?.state === "update-available" && (
               <span
@@ -305,23 +258,14 @@ function SkillDetail({
               </span>
             )}
             {updateStatus?.state === "update-available" && (
-              <button
+              <ConfigButton
+                variant="primary"
+                size="small"
                 onClick={onUpdate}
                 disabled={updating || checkingUpdate}
-                style={{
-                  padding: "4px 10px",
-                  border: "none",
-                  borderRadius: 5,
-                  background: "var(--accent)",
-                  color: "#fff",
-                  cursor: updating || checkingUpdate ? "not-allowed" : "pointer",
-                  opacity: updating || checkingUpdate ? 0.5 : 1,
-                  fontSize: 11,
-                  fontWeight: 600,
-                }}
               >
                  {updating ? t("i18n.updating") : t("i18n.update")}
-              </button>
+              </ConfigButton>
             )}
           </div>
           {updateError && (
@@ -488,23 +432,13 @@ function AddSkillPanel({
               outline: "none",
             }}
           />
-          <button
+          <ConfigButton
+            variant="primary"
             onClick={() => search(query)}
             disabled={searching || !query.trim()}
-            style={{
-              padding: "7px 16px",
-              fontSize: 13,
-              borderRadius: 6,
-              border: "none",
-              background: "var(--accent)",
-              color: "#fff",
-              cursor: searching || !query.trim() ? "not-allowed" : "pointer",
-              opacity: searching || !query.trim() ? 0.5 : 1,
-              flexShrink: 0,
-            }}
           >
              {searching ? t("i18n.searching") : t("i18n.search")}
-          </button>
+          </ConfigButton>
         </div>
 
         {/* Scope + install path row */}
@@ -648,29 +582,20 @@ function AddSkillPanel({
                     )}
                   </div>
                 </div>
-                <button
+                <ConfigButton
+                  size="small"
                   onClick={() =>
                     !isInstalled && !isInstalling && install(r.package)
                   }
                   disabled={isInstalled || isInstalling || installing !== null}
                   style={{
                     flexShrink: 0,
-                    padding: "5px 14px",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    borderRadius: 5,
-                    border: "1px solid var(--border)",
-                    cursor:
-                      isInstalled || isInstalling || installing !== null
-                        ? "not-allowed"
-                        : "pointer",
                     background: isInstalled ? "rgba(34,197,94,0.1)" : "none",
                     color: isInstalled
                       ? "#16a34a"
                       : isInstalling
                         ? "var(--accent)"
                         : "var(--text-muted)",
-                    transition: "color 0.12s",
                   }}
                 >
                   {isInstalled
@@ -678,7 +603,7 @@ function AddSkillPanel({
                     : isInstalling
                        ? t("i18n.installing")
                        : t("i18n.install")}
-                </button>
+                </ConfigButton>
               </div>
             );
           })}
@@ -709,11 +634,12 @@ function AddSkillPanel({
 export function SkillsConfig({
   cwd,
   onClose,
+  embedded = false,
 }: {
   cwd: string;
   onClose: () => void;
+  embedded?: boolean;
 }) {
-  const isMobile = useIsMobile();
   const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -898,81 +824,7 @@ export function SkillsConfig({
   const selectedSkill = skills.find((s) => s.filePath === selected) ?? null;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        style={{
-          width: isMobile ? "calc(100vw - 16px)" : 860,
-          maxWidth: "calc(100vw - 16px)",
-          height: isMobile ? "calc(100dvh - 16px)" : "78vh",
-          maxHeight: "calc(100dvh - 16px)",
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 10,
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-          overflow: "hidden",
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 18px",
-            borderBottom: "1px solid var(--border)",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span
-              style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}
-            >
-               {t("common.skills")}
-            </span>
-            <code
-              style={{
-                fontSize: 11,
-                color: "var(--text-muted)",
-                fontFamily: "var(--font-mono)",
-                maxWidth: 320,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {shortenPath(cwd)}
-            </code>
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 20,
-              lineHeight: 1,
-              padding: "2px 6px",
-            }}
-          >
-            ×
-          </button>
-        </div>
+    <ConfigPanelShell embedded={embedded} title={t("common.skills")} subtitle={shortenPath(cwd)} closeLabel={t("i18n.close")} onClose={onClose}>
 
         {!projectResourcesLoaded && (
           <div
@@ -990,21 +842,10 @@ export function SkillsConfig({
         )}
 
         {/* Body */}
-        <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
+        <ConfigSplitView>
           {/* Left: skill list */}
-          <div
-            style={{
-              width: isMobile ? "100%" : 210,
-              maxHeight: isMobile ? "40vh" : undefined,
-              borderRight: isMobile ? "none" : "1px solid var(--border)",
-              borderBottom: isMobile ? "1px solid var(--border)" : "none",
-              display: "flex",
-              flexDirection: "column",
-              flexShrink: 0,
-              background: "var(--bg-panel)",
-            }}
-          >
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
+          <ConfigSidebar>
+            <ConfigSidebarList>
               {loading ? (
                 <div
                   style={{
@@ -1105,22 +946,7 @@ export function SkillsConfig({
                             e.currentTarget.style.background = "none";
                         }}
                       >
-                        <span
-                          style={{
-                            flexShrink: 0,
-                            width: 7,
-                            height: 7,
-                            borderRadius: "50%",
-                            background: disabled
-                              ? "var(--border)"
-                              : "var(--accent)",
-                            boxShadow: disabled
-                              ? "none"
-                              : "0 0 4px var(--accent)",
-                            transition:
-                              "background 0.15s, box-shadow 0.15s",
-                          }}
-                        />
+                        <ConfigStatusDot active={!disabled} />
                         <span
                           style={{
                             fontSize: 12,
@@ -1219,56 +1045,18 @@ export function SkillsConfig({
                   );
                 })()
               )}
-            </div>
+            </ConfigSidebarList>
             {/* Add skill button */}
-            <div
-              style={{
-                padding: "8px 6px",
-                borderTop: "1px solid var(--border)",
-                flexShrink: 0,
-              }}
-            >
-              <div
+            <ConfigListAction
                 onClick={() => setAddMode(true)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 8px",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                  background: addMode ? "var(--bg-selected)" : "none",
-                  color: addMode ? "var(--accent)" : "var(--text-dim)",
-                  fontSize: 12,
-                }}
-                onMouseEnter={(e) => {
-                  if (!addMode)
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!addMode) e.currentTarget.style.background = "none";
-                }}
+                active={addMode}
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
                  {t("i18n.addSkill")}
-              </div>
-            </div>
-          </div>
+            </ConfigListAction>
+          </ConfigSidebar>
 
           {/* Right: detail or add panel */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+          <ConfigDetail>
             {addMode ? (
               <AddSkillPanel
                 cwd={cwd}
@@ -1326,43 +1114,12 @@ export function SkillsConfig({
                  {t("i18n.selectSkill")}
               </div>
             )}
-          </div>
-        </div>
+          </ConfigDetail>
+        </ConfigSplitView>
 
         {/* Footer */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "10px 18px",
-            borderTop: "1px solid var(--border)",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {skills.some((skill) => Boolean(skill.install)) && (
-              <button
-                onClick={() => void checkForUpdates()}
-                disabled={checkingAll || updatingSkill !== null}
-                style={{
-                  padding: "6px 12px",
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  color: "var(--text-muted)",
-                  cursor:
-                    checkingAll || updatingSkill !== null
-                      ? "not-allowed"
-                      : "pointer",
-                  opacity: checkingAll || updatingSkill !== null ? 0.5 : 1,
-                  fontSize: 12,
-                }}
-              >
-                 {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
-              </button>
-            )}
-            {Object.values(updateStatuses).filter(
+        <ConfigFooter status={
+            Object.values(updateStatuses).filter(
               (status) => status.state === "update-available",
             ).length > 0 && (
               <span style={{ fontSize: 12, color: "#d97706" }}>
@@ -1378,23 +1135,14 @@ export function SkillsConfig({
                    : t("i18n.updates")}
               </span>
             )}
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              padding: "6px 14px",
-              background: "none",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 13,
-            }}
-          >
-             {t("i18n.close")}
-          </button>
-        </div>
-      </div>
-    </div>
+        >
+          {skills.some((skill) => Boolean(skill.install)) && (
+            <ConfigButton onClick={() => void checkForUpdates()} disabled={checkingAll || updatingSkill !== null}>
+              {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
+            </ConfigButton>
+          )}
+          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
+        </ConfigFooter>
+    </ConfigPanelShell>
   );
 }

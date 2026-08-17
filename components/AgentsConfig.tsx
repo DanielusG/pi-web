@@ -6,6 +6,18 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SubagentProfilesResponse } from "@/lib/api-types";
 import type { ModelsData } from "@/lib/models-cache";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
+import {
+  ConfigButton,
+  ConfigDetail,
+  ConfigFooter,
+  ConfigListAction,
+  ConfigPanelShell,
+  ConfigSidebar,
+  ConfigSidebarList,
+  ConfigSplitView,
+  ConfigStatusDot,
+  ConfigSwitch,
+} from "./SettingsUi";
 
 const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -101,50 +113,7 @@ function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disa
   );
 }
 
-function EnabledToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
-  const { t } = useI18n();
-  const label = checked ? t("agents.disable") : t("agents.enable");
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      style={{
-        position: "relative",
-        width: 40,
-        height: 22,
-        padding: 0,
-        border: "none",
-        borderRadius: 11,
-        background: checked ? "var(--accent)" : "var(--border)",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-        flexShrink: 0,
-        transition: "background 0.18s",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 3,
-          left: checked ? 21 : 3,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
-        }}
-      />
-    </button>
-  );
-}
-
-export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => void }) {
+export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; onClose: () => void; embedded?: boolean }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [profiles, setProfiles] = useState<SubagentProfile[]>([]);
@@ -343,23 +312,10 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("common.agents")}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-      style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}
-    >
-      <div style={{ width: isMobile ? "calc(100vw - 16px)" : 900, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 16px)" : "78vh", maxHeight: "calc(100dvh - 16px)", display: "flex", flexDirection: "column", overflow: "hidden", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
-        <div style={{ height: 49, padding: "0 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          <strong style={{ fontSize: 15, color: "var(--text)" }}>{t("common.agents")}</strong>
-          <code style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontSize: 11 }}>{cwd}</code>
-          <button onClick={onClose} title={t("agents.close")} aria-label={t("agents.close")} style={{ marginLeft: "auto", width: 28, height: 28, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 20 }}>×</button>
-        </div>
-
-        <div style={{ minHeight: 0, flex: 1, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "230px minmax(0, 1fr)", gridTemplateRows: isMobile ? "180px minmax(0, 1fr)" : "1fr" }}>
-          <div style={{ minHeight: 0, display: "flex", flexDirection: "column", borderRight: isMobile ? "none" : "1px solid var(--border)", borderBottom: isMobile ? "1px solid var(--border)" : "none" }}>
-            <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: 6 }}>
+    <ConfigPanelShell embedded={embedded} title={t("common.agents")} subtitle={shortenPath(cwd)} closeLabel={t("agents.close")} onClose={onClose}>
+      <ConfigSplitView>
+        <ConfigSidebar>
+          <ConfigSidebarList>
               {loading ? (
                 <div style={{ padding: 10, color: "var(--text-dim)", fontSize: 12 }}>{t("agents.loading")}</div>
               ) : (["project", "global", "workspace", "builtin"] as const).map((scope) => {
@@ -375,49 +331,23 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                         onClick={() => selectProfile(profile)}
                         style={{ width: "100%", minWidth: 0, padding: "8px 9px", display: "flex", alignItems: "center", gap: 8, border: "none", borderRadius: 5, background: selectedKey === profileKey(profile) && !creating ? "var(--bg-selected)" : "transparent", color: "var(--text)", cursor: "pointer", textAlign: "left" }}
                       >
-                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: profile.enabled ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} />
-                        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>{profile.displayName}</span>
+                        <ConfigStatusDot active={profile.enabled} />
+                        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: profile.enabled ? "var(--text)" : "var(--text-dim)" }}>{profile.displayName}</span>
                       </button>
                     ))}
                   </div>
                 );
               })}
-            </div>
-            <div style={{ padding: "8px 6px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
-              <button
-                type="button"
+          </ConfigSidebarList>
+          <ConfigListAction
+                active={creating}
                 onClick={beginCreate}
-                onMouseEnter={(event) => {
-                  if (!creating) event.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(event) => {
-                  if (!creating) event.currentTarget.style.background = "transparent";
-                }}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 8px",
-                  border: "none",
-                  borderRadius: 5,
-                  background: creating ? "var(--bg-selected)" : "transparent",
-                  color: creating ? "var(--accent)" : "var(--text-dim)",
-                  cursor: "pointer",
-                  fontSize: 12,
-                }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
                 {t("agents.new")}
-              </button>
-            </div>
-          </div>
+          </ConfigListAction>
+        </ConfigSidebar>
 
-          <div style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ minHeight: 0, flex: 1, overflowY: "auto", padding: isMobile ? 14 : 18 }}>
+        <ConfigDetail>
               {!selected && !creating ? (
                 <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("agents.empty")}</div>
               ) : (
@@ -431,9 +361,9 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                     <span title={fullPath} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
                       {displayedPath}
                     </span>
-                    {selected && (mode === "view" || mode === "edit") && <button type="button" onClick={beginDuplicate} disabled={saving || toggling} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: saving || toggling ? "default" : "pointer", fontSize: 11, flexShrink: 0 }}>{t("agents.duplicate")}</button>}
-                    {selected && isWritableScope(selected.scope) && mode === "edit" && <button type="button" onClick={() => void remove()} disabled={saving || toggling} style={{ height: 28, padding: "0 10px", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 5, background: "transparent", color: "#ef4444", cursor: saving || toggling ? "default" : "pointer", fontSize: 11, flexShrink: 0 }}>{t("agents.delete")}</button>}
-                    <EnabledToggle checked={draft.enabled} disabled={disabled} onChange={(checked) => void toggleEnabled(checked)} />
+                    {selected && (mode === "view" || mode === "edit") && <ConfigButton size="small" onClick={beginDuplicate} disabled={saving || toggling}>{t("agents.duplicate")}</ConfigButton>}
+                    {selected && isWritableScope(selected.scope) && mode === "edit" && <ConfigButton variant="danger" size="small" onClick={() => void remove()} disabled={saving || toggling}>{t("agents.delete")}</ConfigButton>}
+                    <ConfigSwitch checked={draft.enabled} disabled={disabled} label={draft.enabled ? t("agents.disable") : t("agents.enable")} onChange={(checked) => void toggleEnabled(checked)} />
                   </div>
 
                   {creating && (
@@ -518,16 +448,11 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                   </div>
                 </div>
               )}
-            </div>
-
-            <div style={{ minHeight: 52, padding: "9px 14px", display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
-              {error && <span role="alert" style={{ minWidth: 0, flex: 1, color: "#ef4444", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{error}</span>}
-              {!error && <span style={{ flex: 1 }} />}
-              {editing && <button type="button" onClick={() => void save()} disabled={saving || toggling || !draft.name.trim()} style={{ height: 32, padding: "0 14px", border: "none", borderRadius: 5, background: "var(--accent)", color: "#fff", cursor: saving || toggling ? "default" : "pointer", fontSize: 12 }}>{saving ? t("agents.saving") : t("agents.save")}</button>}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        </ConfigDetail>
+      </ConfigSplitView>
+      <ConfigFooter status={error && <span role="alert" style={{ color: "#ef4444" }}>{error}</span>}>
+        {editing && <ConfigButton variant="primary" onClick={() => void save()} disabled={saving || toggling || !draft.name.trim()}>{saving ? t("agents.saving") : t("agents.save")}</ConfigButton>}
+      </ConfigFooter>
+    </ConfigPanelShell>
   );
 }

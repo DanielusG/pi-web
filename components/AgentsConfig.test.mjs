@@ -10,9 +10,9 @@ test("keeps same-name profiles selectable by scope and groups writable sources f
   assert.match(source, /profile\.scope === scope/);
 });
 
-test("uses the Plugins-style accent status dot", () => {
-  assert.match(source, /background: profile\.enabled \? "var\(--accent\)" : "var\(--text-dim\)"/);
-  assert.doesNotMatch(source, /profile\.enabled \? "#16a34a"/);
+test("uses the shared enabled status treatment", () => {
+  assert.match(source, /<ConfigStatusDot active=\{profile\.enabled\}/);
+  assert.match(source, /color: profile\.enabled \? "var\(--text\)" : "var\(--text-dim\)"/);
 });
 
 test("treats global and project profiles as directly editable", () => {
@@ -27,10 +27,9 @@ test("offers both writable scopes when creating a profile", () => {
   assert.doesNotMatch(source, /beginOverride|mode === "override"|agents\.readOnly|agents\.override/);
 });
 
-test("matches the Add skill sidebar action styling", () => {
-  assert.match(source, /padding: "8px 6px", borderTop: "1px solid var\(--border\)"/);
-  assert.match(source, /onClick=\{beginCreate\}[\s\S]*?padding: "7px 8px"[\s\S]*?background: creating \? "var\(--bg-selected\)" : "transparent"/);
-  assert.match(source, /<svg width="13" height="13"[\s\S]*?t\("agents\.new"\)/);
+test("uses the shared sidebar action for new profiles", () => {
+  assert.match(source, /<ConfigListAction[\s\S]*?active=\{creating\}[\s\S]*?onClick=\{beginCreate\}/);
+  assert.match(source, /t\("agents\.new"\)[\s\S]*?<\/ConfigListAction>/);
 });
 
 test("sends the selected scope for saves and the source scope for deletes", () => {
@@ -42,9 +41,7 @@ test("shows a Skills-style path row and enabled switch at the top of the editor"
   assert.match(source, /function displayProfilePath\(profile: SubagentProfile, cwd: string\)/);
   assert.match(source, /profile\.scope === "project" \|\| profile\.scope === "workspace"/);
   assert.match(source, /`~\/\.pi\/agent\/agents\/\$\{draft\.name \|\| "\.\.\."\}\.md`/);
-  assert.match(source, /role="switch"/);
-  assert.match(source, /aria-checked=\{checked\}/);
-  assert.match(source, /<EnabledToggle checked=\{draft\.enabled\}/);
+  assert.match(source, /<ConfigSwitch checked=\{draft\.enabled\}/);
   assert.doesNotMatch(source, /<Toggle label=\{t\("agents\.enabled"\)\}/);
 });
 
@@ -88,7 +85,7 @@ test("duplicates any selected profile through the existing create flow", () => {
 });
 
 test("places duplicate and delete immediately before the enabled switch", () => {
-  assert.match(source, /onClick=\{beginDuplicate\}[\s\S]*?onClick=\{\(\) => void remove\(\)\}[\s\S]*?<EnabledToggle checked=\{draft\.enabled\}/);
+  assert.match(source, /onClick=\{beginDuplicate\}[\s\S]*?onClick=\{\(\) => void remove\(\)\}[\s\S]*?<ConfigSwitch checked=\{draft\.enabled\}/);
 });
 
 test("confirms deletion and limits it to writable profiles", () => {
