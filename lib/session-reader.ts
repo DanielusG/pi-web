@@ -17,6 +17,62 @@ import { readSubagentRun } from "./subagents";
 
 export { getAgentDir };
 
+const SESSION_HEADER_MAX_BYTES = 64 * 1024;
+const SESSION_RELATION_MAX_BYTES = 256 * 1024;
+const SESSION_RELATION_MAX_LINES = 2;
+
+function readBoundedLines(filePath: string, maxBytes: number, maxLines: number): string[] {
+  const fd = openSync(filePath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let position = 0;
+    let newlineCount = 0;
+    let reachedEof = false;
+
+    while (position < maxBytes && newlineCount < maxLines) {
+      const buffer = Buffer.allocUnsafe(Math.min(4096, maxBytes - position));
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
+      if (bytesRead === 0) {
+        reachedEof = true;
+        break;
+      }
+      position += bytesRead;
+      const data = buffer.subarray(0, bytesRead);
+      let end = data.length;
+      for (let index = 0; index < data.length; index += 1) {
+        if (data[index] !== 0x0a) continue;
+        newlineCount += 1;
+        if (newlineCount === maxLines) {
+          end = index + 1;
+          break;
+        }
+      }
+      chunks.push(data.subarray(0, end));
+    }
+
+    const source = Buffer.concat(chunks).toString("utf8");
+    const lines = source.split("\n");
+    if (!reachedEof && !source.endsWith("\n")) lines.pop();
+    if (lines.at(-1) === "") lines.pop();
+    return lines.map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readSessionRelationEntries(filePath: string): SessionEntry[] {
+  return readBoundedLines(filePath, SESSION_RELATION_MAX_BYTES, SESSION_RELATION_MAX_LINES)
+    .slice(1)
+    .flatMap((line) => {
+      try {
+        const entry = JSON.parse(line) as SessionEntry;
+        return [entry];
+      } catch {
+        return [];
+      }
+    });
+}
+
 export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
   const uniqueCwds = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))];
   const projectByCwd = new Map<string, ProjectInfo>();
@@ -58,8 +114,7 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
     let subagent = null;
     if (s.parentSessionPath) {
       try {
-        const manager = SessionManager.open(s.path);
-        subagent = readSubagentRun(manager.getEntries() as unknown as SessionEntry[], s.id, s.path);
+        subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
       } catch { /* malformed or concurrently removed session */ }
     }
     return {
@@ -299,35 +354,13 @@ export function invalidateSessionPathCache(sessionId: string): void {
 }
 
 export function readSessionHeader(filePath: string): SessionHeader | null {
-  const fd = openSync(filePath, "r");
+  const firstLine = readBoundedLines(filePath, SESSION_HEADER_MAX_BYTES, 1)[0]?.trimEnd();
+  if (!firstLine) return null;
   try {
-    const chunks: Buffer[] = [];
-    const maxHeaderBytes = 64 * 1024;
-    let position = 0;
-    let foundNewline = false;
-
-    while (position < maxHeaderBytes && !foundNewline) {
-      const buffer = Buffer.allocUnsafe(Math.min(4096, maxHeaderBytes - position));
-      const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
-      if (bytesRead === 0) break;
-      const data = buffer.subarray(0, bytesRead);
-      const newlineIndex = data.indexOf(0x0a);
-      chunks.push(newlineIndex === -1 ? data : data.subarray(0, newlineIndex));
-      position += bytesRead;
-      foundNewline = newlineIndex !== -1;
-    }
-
-    if (!foundNewline && position >= maxHeaderBytes) return null;
-    const firstLine = Buffer.concat(chunks).toString("utf8").trimEnd();
-    if (!firstLine) return null;
-    try {
-      const header = JSON.parse(firstLine) as SessionHeader;
-      return header.type === "session" ? header : null;
-    } catch {
-      return null;
-    }
-  } finally {
-    closeSync(fd);
+    const header = JSON.parse(firstLine) as SessionHeader;
+    return header.type === "session" ? header : null;
+  } catch {
+    return null;
   }
 }
 
