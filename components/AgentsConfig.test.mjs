@@ -21,11 +21,16 @@ test("treats global and project profiles as directly editable", () => {
   assert.match(source, /selected && isWritableScope\(selected\.scope\) && mode === "edit"/);
 });
 
-test("offers both writable scopes when creating or overriding a read-only profile", () => {
-  assert.match(source, /beginOverride\("global"\)/);
-  assert.match(source, /beginOverride\("project"\)/);
-  assert.match(source, /mode === "create" \|\| mode === "override"/);
+test("offers both writable scopes when creating a profile", () => {
+  assert.match(source, /\{creating && \(/);
   assert.match(source, /\["global", "project"\] as const/);
+  assert.doesNotMatch(source, /beginOverride|mode === "override"|agents\.readOnly|agents\.override/);
+});
+
+test("matches the Add skill sidebar action styling", () => {
+  assert.match(source, /padding: "8px 6px", borderTop: "1px solid var\(--border\)"/);
+  assert.match(source, /onClick=\{beginCreate\}[\s\S]*?padding: "7px 8px"[\s\S]*?background: creating \? "var\(--bg-selected\)" : "transparent"/);
+  assert.match(source, /<svg width="13" height="13"[\s\S]*?t\("agents\.new"\)/);
 });
 
 test("sends the selected scope for saves and the source scope for deletes", () => {
@@ -59,4 +64,35 @@ test("loads scoped models into a provider-grouped selector without manual entry"
   assert.match(source, /value=\{`\$\{model\.provider\}\/\$\{model\.id\}`\}/);
   assert.match(source, /agents\.modelUnavailable/);
   assert.doesNotMatch(source, /placeholder="provider\/modelId"/);
+});
+
+test("renders the stable agent id as text outside create mode", () => {
+  assert.match(source, /creating \? \(\s*<input aria-label=\{t\("agents\.name"\)\}/);
+  assert.match(source, /<code style=\{\{ minHeight: 34,[\s\S]*?\{draft\.name\}[\s\S]*?<\/code>/);
+  assert.doesNotMatch(source, /disabled=\{disabled \|\| !creating\}/);
+});
+
+test("keeps system instructions vertically resizable even when read-only", () => {
+  assert.match(source, /<textarea aria-label=\{t\("agents\.prompt"\)\}[\s\S]*?readOnly=\{disabled\}/);
+  assert.match(source, /maxHeight: "60vh"[\s\S]*?resize: "vertical"/);
+});
+
+test("duplicates any selected profile through the existing create flow", () => {
+  assert.match(source, /function duplicateProfileName\(name: string, profiles: readonly SubagentProfile\[\]\)/);
+  assert.match(source, /while \(existing\.has\(candidate\.toLowerCase\(\)\)\) candidate = `\$\{base\}-\$\{suffix\+\+\}`/);
+  assert.match(source, /const beginDuplicate = \(\) =>/);
+  assert.match(source, /\.\.\.editableProfile\(selected\),[\s\S]*?name,[\s\S]*?displayName: t\("agents\.copyName"/);
+  assert.match(source, /setMode\("create"\)/);
+  assert.match(source, /setTargetScope\(isWritableScope\(selected\.scope\) \? selected\.scope : "global"\)/);
+  assert.match(source, /onClick=\{beginDuplicate\}[^>]*>[\s\S]*?t\("agents\.duplicate"\)/);
+});
+
+test("places duplicate and delete immediately before the enabled switch", () => {
+  assert.match(source, /onClick=\{beginDuplicate\}[\s\S]*?onClick=\{\(\) => void remove\(\)\}[\s\S]*?<EnabledToggle checked=\{draft\.enabled\}/);
+});
+
+test("confirms deletion and limits it to writable profiles", () => {
+  assert.match(source, /window\.confirm\(t\("agents\.deleteConfirm", \{ name: selected\.displayName \}\)\)/);
+  assert.match(source, /selected && isWritableScope\(selected\.scope\) && mode === "edit"/);
+  assert.match(source, /method: "DELETE"/);
 });

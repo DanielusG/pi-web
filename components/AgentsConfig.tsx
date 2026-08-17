@@ -11,7 +11,7 @@ const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 type EditableProfile = Omit<SubagentProfile, "scope" | "filePath">;
-type EditorMode = "view" | "edit" | "create" | "override";
+type EditorMode = "view" | "edit" | "create";
 
 const EMPTY_PROFILE: EditableProfile = {
   name: "custom-agent",
@@ -55,6 +55,15 @@ function editableProfile(profile: SubagentProfile): EditableProfile {
 
 function profileKey(profile: Pick<SubagentProfile, "scope" | "name">): string {
   return `${profile.scope}:${profile.name}`;
+}
+
+function duplicateProfileName(name: string, profiles: readonly SubagentProfile[]): string {
+  const existing = new Set(profiles.map((profile) => profile.name.toLowerCase()));
+  const base = `${name}-copy`;
+  let candidate = base;
+  let suffix = 2;
+  while (existing.has(candidate.toLowerCase())) candidate = `${base}-${suffix++}`;
+  return candidate;
 }
 
 function isWritableScope(scope: SubagentScope): scope is SubagentWritableScope {
@@ -236,18 +245,17 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
     setError(null);
   };
 
-  const beginOverride = (scope: SubagentWritableScope) => {
+  const beginDuplicate = () => {
     if (!selected) return;
-    const existing = profiles.find((profile) =>
-      profile.scope === scope && profile.name.toLowerCase() === selected.name.toLowerCase()
-    );
-    if (existing) {
-      selectProfile(existing);
-      return;
-    }
-    setDraft(editableProfile(selected));
-    setMode("override");
-    setTargetScope(scope);
+    const name = duplicateProfileName(selected.name, profiles);
+    setSelectedKey(null);
+    setDraft({
+      ...editableProfile(selected),
+      name,
+      displayName: t("agents.copyName", { name: selected.displayName }),
+    });
+    setMode("create");
+    setTargetScope(isWritableScope(selected.scope) ? selected.scope : "global");
     setError(null);
   };
 
@@ -272,6 +280,7 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
 
   const remove = async () => {
     if (!selected || !isWritableScope(selected.scope)) return;
+    if (!window.confirm(t("agents.deleteConfirm", { name: selected.displayName }))) return;
     setSaving(true);
     setError(null);
     try {
@@ -293,22 +302,22 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
   const editing = mode !== "view";
   const creating = mode === "create";
   const disabled = !editing || saving || toggling;
-  const displayedScope = mode === "create" || mode === "override" ? targetScope : selected?.scope;
-  const displayedPath = mode === "create" || mode === "override"
+  const displayedScope = creating ? targetScope : selected?.scope;
+  const displayedPath = creating
     ? targetScope === "global"
       ? `~/.pi/agent/agents/${draft.name || "..."}.md`
       : `./.pi/agents/${draft.name || "..."}.md`
     : selected
       ? displayProfilePath(selected, cwd) ?? t("agents.builtinPath")
       : "";
-  const fullPath = mode === "create" || mode === "override" ? displayedPath : selected?.filePath ?? displayedPath;
+  const fullPath = creating ? displayedPath : selected?.filePath ?? displayedPath;
   const selectedModelAvailable = !draft.model || modelOptions.some((model) => `${model.provider}/${model.id}` === draft.model);
   const update = <K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
   const toggleEnabled = async (enabled: boolean) => {
-    if (mode === "create" || mode === "override") {
+    if (creating) {
       update("enabled", enabled);
       return;
     }
@@ -374,7 +383,37 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                 );
               })}
             </div>
-            <button type="button" onClick={beginCreate} style={{ margin: 7, height: 32, border: "1px solid var(--border)", borderRadius: 5, background: creating ? "var(--bg-selected)" : "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 12 }}>+ {t("agents.new")}</button>
+            <div style={{ padding: "8px 6px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={beginCreate}
+                onMouseEnter={(event) => {
+                  if (!creating) event.currentTarget.style.background = "var(--bg-hover)";
+                }}
+                onMouseLeave={(event) => {
+                  if (!creating) event.currentTarget.style.background = "transparent";
+                }}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 8px",
+                  border: "none",
+                  borderRadius: 5,
+                  background: creating ? "var(--bg-selected)" : "transparent",
+                  color: creating ? "var(--accent)" : "var(--text-dim)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                {t("agents.new")}
+              </button>
+            </div>
           </div>
 
           <div style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -392,18 +431,12 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                     <span title={fullPath} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
                       {displayedPath}
                     </span>
+                    {selected && (mode === "view" || mode === "edit") && <button type="button" onClick={beginDuplicate} disabled={saving || toggling} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: saving || toggling ? "default" : "pointer", fontSize: 11, flexShrink: 0 }}>{t("agents.duplicate")}</button>}
+                    {selected && isWritableScope(selected.scope) && mode === "edit" && <button type="button" onClick={() => void remove()} disabled={saving || toggling} style={{ height: 28, padding: "0 10px", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 5, background: "transparent", color: "#ef4444", cursor: saving || toggling ? "default" : "pointer", fontSize: 11, flexShrink: 0 }}>{t("agents.delete")}</button>}
                     <EnabledToggle checked={draft.enabled} disabled={disabled} onChange={(checked) => void toggleEnabled(checked)} />
                   </div>
 
-                  {!editing && selected && (
-                    <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text-muted)", fontSize: 12 }}>
-                      <span style={{ flex: 1 }}>{t("agents.readOnly")}</span>
-                      <button type="button" onClick={() => beginOverride("global")} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 11 }}>{t("agents.overrideGlobal")}</button>
-                      <button type="button" onClick={() => beginOverride("project")} style={{ height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 11 }}>{t("agents.overrideProject")}</button>
-                    </div>
-                  )}
-
-                  {(mode === "create" || mode === "override") && (
+                  {creating && (
                     <Field label={t("agents.saveScope")}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, padding: 3, border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)" }}>
                         {(["global", "project"] as const).map((scope) => (
@@ -422,11 +455,19 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
                   )}
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
-                    <Field label={t("agents.name")}><input aria-label={t("agents.name")} value={draft.name} disabled={disabled || !creating} onChange={(event) => update("name", event.target.value)} style={inputStyle} /></Field>
+                    <Field label={t("agents.name")}>
+                      {creating ? (
+                        <input aria-label={t("agents.name")} value={draft.name} disabled={disabled} onChange={(event) => update("name", event.target.value)} style={inputStyle} />
+                      ) : (
+                        <code style={{ minHeight: 34, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", fontSize: 12 }}>
+                          {draft.name}
+                        </code>
+                      )}
+                    </Field>
                     <Field label={t("agents.displayName")}><input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={inputStyle} /></Field>
                   </div>
                   <Field label={t("agents.description")}><input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={inputStyle} /></Field>
-                  <Field label={t("agents.prompt")}><textarea aria-label={t("agents.prompt")} value={draft.systemPrompt} disabled={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 150, padding: 9, resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
+                  <Field label={t("agents.prompt")}><textarea aria-label={t("agents.prompt")} value={draft.systemPrompt} readOnly={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 150, minHeight: 150, maxHeight: "60vh", padding: 9, overflow: "auto", resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
 
                   <Field label={t("agents.tools")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "9px 10px", border: "1px solid var(--border)", borderRadius: 5 }}>
@@ -482,7 +523,6 @@ export function AgentsConfig({ cwd, onClose }: { cwd: string; onClose: () => voi
             <div style={{ minHeight: 52, padding: "9px 14px", display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
               {error && <span role="alert" style={{ minWidth: 0, flex: 1, color: "#ef4444", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{error}</span>}
               {!error && <span style={{ flex: 1 }} />}
-              {selected && isWritableScope(selected.scope) && mode === "edit" && <button type="button" onClick={() => void remove()} disabled={saving || toggling} style={{ height: 32, padding: "0 12px", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 5, background: "transparent", color: "#ef4444", cursor: saving || toggling ? "default" : "pointer", fontSize: 12 }}>{t("agents.delete")}</button>}
               {editing && <button type="button" onClick={() => void save()} disabled={saving || toggling || !draft.name.trim()} style={{ height: 32, padding: "0 14px", border: "none", borderRadius: 5, background: "var(--accent)", color: "#fff", cursor: saving || toggling ? "default" : "pointer", fontSize: 12 }}>{saving ? t("agents.saving") : t("agents.save")}</button>}
             </div>
           </div>
