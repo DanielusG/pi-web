@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./AgentsConfig.tsx", import.meta.url), "utf8");
+const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 
 test("keeps same-name profiles selectable by scope and groups writable sources first", () => {
   assert.match(source, /return `\$\{profile\.scope\}:\$\{profile\.name\}`/);
@@ -12,7 +13,8 @@ test("keeps same-name profiles selectable by scope and groups writable sources f
 
 test("uses the shared enabled status treatment", () => {
   assert.match(source, /<ConfigStatusDot active=\{profile\.enabled\}/);
-  assert.match(source, /color: profile\.enabled \? "var\(--text\)" : "var\(--text-dim\)"/);
+  assert.match(source, /className=\{`is-grow\$\{profile\.enabled \? "" : " is-muted"\}`\}/);
+  assert.match(cssSource, /\.config-sidebar-text\.is-muted \{[\s\S]*?color: var\(--text-dim\)/);
 });
 
 test("treats global and project profiles as directly editable", () => {

@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import {
   getLastSettingsSection,
@@ -32,12 +31,13 @@ function SectionIcon({ section }: { section: SettingsSection }) {
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
     "aria-hidden": true,
+    className: "settings-section-icon",
   };
 
   if (section === "general") return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 9 19.37a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.63 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15 4.63a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" /></svg>;
   if (section === "models") return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" /></svg>;
   if (section === "skills") return <svg {...common}><path d="m12 2-10 5 10 5 10-5-10-5Z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></svg>;
-  if (section === "agents") return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0M19 5v4M17 7h4" /></svg>;
+  if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
   return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
 }
 
@@ -61,13 +61,13 @@ function GeneralSettings() {
   ];
 
   return (
-    <div style={{ width: "100%", maxWidth: 680, padding: "26px clamp(18px, 4vw, 40px) 40px", overflowY: "auto" }}>
-      <h2 style={{ margin: 0, color: "var(--text)", fontSize: 18, fontWeight: 700 }}>{t("settings.general")}</h2>
+    <div className="settings-general">
+      <h2 className="settings-general-title">{t("settings.general")}</h2>
 
-      <section style={{ marginTop: 24 }}>
-        <h3 style={{ margin: "0 0 5px", color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{t("settings.appearance")}</h3>
-        <p style={{ margin: "0 0 12px", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5 }}>{t("settings.appearanceDescription")}</p>
-        <div role="radiogroup" aria-label={t("settings.appearance")} style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", width: "100%", maxWidth: 420, padding: 3, gap: 3, borderRadius: 7, background: "var(--bg-panel)" }}>
+      <section className="settings-general-section">
+        <h3 className="settings-general-heading">{t("settings.appearance")}</h3>
+        <p className="settings-general-description">{t("settings.appearanceDescription")}</p>
+        <div role="radiogroup" aria-label={t("settings.appearance")} className="settings-theme-options">
           {themeOptions.map((option) => {
             const selected = preference === option.id;
             return (
@@ -77,35 +77,20 @@ function GeneralSettings() {
                 role="radio"
                 aria-checked={selected}
                 onClick={() => setThemePreference(option.id)}
-                style={{
-                  minWidth: 0,
-                  height: 42,
-                  padding: "0 8px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 7,
-                  border: "none",
-                  borderRadius: 5,
-                  background: selected ? "var(--bg-selected)" : "transparent",
-                  color: selected ? "var(--accent)" : "var(--text-muted)",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  fontWeight: selected ? 600 : 400,
-                }}
+                className="settings-theme-option"
               >
                 <ThemeIcon preference={option.id} />
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{option.label}</span>
+                <span className="settings-theme-option-label">{option.label}</span>
               </button>
             );
           })}
         </div>
       </section>
 
-      <section style={{ marginTop: 30 }}>
-        <h3 style={{ margin: "0 0 5px", color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{t("common.language")}</h3>
-        <p style={{ margin: "0 0 12px", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5 }}>{t("settings.languageDescription")}</p>
-        <div role="radiogroup" aria-label={t("common.language")} style={{ display: "flex", flexDirection: "column", width: "100%", maxWidth: 420, gap: 3 }}>
+      <section className="settings-general-section">
+        <h3 className="settings-general-heading">{t("common.language")}</h3>
+        <p className="settings-general-description">{t("settings.languageDescription")}</p>
+        <div role="radiogroup" aria-label={t("common.language")} className="settings-language-options">
           {supportedLocales.map((plugin) => {
             const selected = locale === plugin.id;
             return (
@@ -115,26 +100,13 @@ function GeneralSettings() {
                 role="radio"
                 aria-checked={selected}
                 onClick={() => setLocale(plugin.id as typeof locale)}
-                style={{
-                  height: 44,
-                  padding: "0 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  border: "none",
-                  borderRadius: 5,
-                  background: selected ? "var(--bg-selected)" : "transparent",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  textAlign: "left",
-                }}
+                className="settings-language-option"
               >
-                <span style={{ width: 16, height: 16, display: "grid", placeItems: "center", border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`, borderRadius: "50%", flexShrink: 0 }}>
-                  {selected && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)" }} />}
+                <span className="settings-language-radio">
+                  {selected && <span className="settings-language-radio-dot" />}
                 </span>
-                <span style={{ flex: 1 }}>{plugin.label}</span>
-                <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{plugin.id}</span>
+                <span className="settings-language-label">{plugin.label}</span>
+                <span className="settings-language-code">{plugin.id}</span>
               </button>
             );
           })}
@@ -145,7 +117,6 @@ function GeneralSettings() {
 }
 
 export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Props) {
-  const isMobile = useIsMobile();
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(() => getLastSettingsSection(cwd));
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
@@ -186,7 +157,7 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
     <div
       key={id}
       hidden={section !== id}
-      style={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, flex: 1 }}
+      className="settings-section-host"
     >
       {content}
     </div>
@@ -198,16 +169,24 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
       aria-modal="true"
       aria-label={t("settings.title")}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-      style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.38)" }}
+      className="settings-dialog-backdrop"
     >
-      <div style={{ width: isMobile ? "calc(100vw - 12px)" : 1080, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 12px)" : "84vh", maxHeight: "calc(100dvh - 16px)", display: "flex", flexDirection: "column", overflow: "hidden", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)", boxShadow: "0 16px 48px rgba(0,0,0,0.22)" }}>
-        <div style={{ position: "relative", minHeight: 50, padding: "0 52px 0 18px", display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          <strong style={{ color: "var(--text)", fontSize: 15 }}>{t("settings.title")}</strong>
-          <button type="button" onClick={onClose} title={t("i18n.close")} aria-label={t("i18n.close")} style={{ position: "absolute", right: 14, top: 10, width: 30, height: 30, display: "grid", placeItems: "center", border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
-        </div>
-
-        <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
-          <nav aria-label={t("settings.title")} style={{ width: isMobile ? "100%" : 188, minHeight: isMobile ? 50 : 0, padding: isMobile ? "6px" : "10px 8px", display: "flex", flexDirection: isMobile ? "row" : "column", gap: 2, overflowX: isMobile ? "auto" : "hidden", overflowY: isMobile ? "hidden" : "auto", borderRight: isMobile ? "none" : "1px solid var(--border)", borderBottom: isMobile ? "1px solid var(--border)" : "none", background: "var(--bg-panel)", flexShrink: 0 }}>
+      <div className="settings-dialog-surface">
+        <div className="settings-dialog-header">
+          <strong className="settings-dialog-title">{t("settings.title")}</strong>
+          <select
+            aria-label={t("settings.title")}
+            value={section}
+            onChange={(event) => activateSection(event.target.value as SettingsSection)}
+            className="settings-mobile-section-picker"
+          >
+            {sections.map((item) => (
+              <option key={item.id} value={item.id} disabled={item.requiresProject && !cwd}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <nav aria-label={t("settings.title")} className="settings-section-tabs">
             {sections.map((item) => {
               const selected = section === item.id;
               const disabled = item.requiresProject && !cwd;
@@ -215,11 +194,11 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
                 <button
                   key={item.id}
                   type="button"
+                  className="settings-section-tab"
                   disabled={disabled}
                   title={disabled ? t("settings.projectRequired") : item.label}
                   aria-current={selected ? "page" : undefined}
                   onClick={() => activateSection(item.id)}
-                  style={{ minWidth: isMobile ? 92 : 0, width: isMobile ? "auto" : "100%", height: 36, padding: "0 10px", display: "flex", alignItems: "center", gap: 9, border: "none", borderRadius: 5, background: selected ? "var(--bg-selected)" : "transparent", color: selected ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.38 : 1, fontSize: 12, fontWeight: selected ? 600 : 400, textAlign: "left", flexShrink: 0 }}
                 >
                   <SectionIcon section={item.id} />
                   <span>{item.label}</span>
@@ -227,15 +206,16 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
               );
             })}
           </nav>
-
-          <main style={{ minWidth: 0, minHeight: 0, flex: 1, display: "flex", overflow: "hidden" }}>
-            {sectionHost("general", <GeneralSettings />)}
-            {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
-            {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
-            {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
-            {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />)}
-          </main>
+          <button type="button" onClick={onClose} title={t("i18n.close")} aria-label={t("i18n.close")} className="config-close-button settings-dialog-close">×</button>
         </div>
+
+        <main className="settings-dialog-main">
+          {sectionHost("general", <GeneralSettings />)}
+          {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
+          {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
+          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
+          {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />)}
+        </main>
       </div>
     </div>
   );

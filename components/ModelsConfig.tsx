@@ -22,11 +22,16 @@ import {
 import {
   ConfigButton,
   ConfigDetail,
+  ConfigDetailStack,
+  ConfigEmptyState,
+  ConfigField,
   ConfigFooter,
   ConfigListAction,
   ConfigPanelShell,
+  ConfigSectionTitle,
   ConfigSidebar,
   ConfigSidebarList,
+  ConfigSidebarText,
   ConfigSplitView,
 } from "./SettingsUi";
 // Color icons (have their own fill colors — no background needed)
@@ -231,12 +236,7 @@ const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messag
 // ── Form field helpers ────────────────────────────────────────────────────────
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>{label}</label>
-      {children}
-    </div>
-  );
+  return <ConfigField label={label}>{children}</ConfigField>;
 }
 
 const inputStyle = {
@@ -360,7 +360,7 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{children}</div>;
+  return <ConfigSectionTitle>{children}</ConfigSectionTitle>;
 }
 
 // ── Provider detail ───────────────────────────────────────────────────────────
@@ -2179,7 +2179,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                     onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "none"; }}
                   >
                     <ProviderIcon id={p.id} size={16} />
-                    <span style={{ fontSize: 12, color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                    <ConfigSidebarText className="is-grow">{p.name}</ConfigSidebarText>
                   </div>
                 );
               })}
@@ -2196,7 +2196,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                     onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "none"; }}
                   >
                     <ProviderIcon id={p.id} size={16} />
-                    <span style={{ fontSize: 12, color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</span>
+                    <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
                   </div>
                 );
               })}
@@ -2228,9 +2228,9 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                         <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
                         <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
                       </svg>
-                      <span style={{ fontSize: 12, fontWeight: isProviderSelected ? 600 : 400, color: "var(--text)", fontFamily: "var(--font-mono)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <ConfigSidebarText className="is-grow" style={{ fontWeight: isProviderSelected ? 600 : 400 }}>
                         {pName}
-                      </span>
+                      </ConfigSidebarText>
                     </div>
 
                     {/* Model rows */}
@@ -2244,9 +2244,9 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                           onMouseEnter={(e) => { if (!isModelSelected) e.currentTarget.style.background = "var(--bg-hover)"; }}
                           onMouseLeave={(e) => { if (!isModelSelected) e.currentTarget.style.background = "none"; }}
                         >
-                          <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: m.id ? "var(--text-muted)" : "var(--text-dim)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <ConfigSidebarText className="is-grow" style={{ color: m.id ? "var(--text-muted)" : "var(--text-dim)" }}>
                              {m.id || t("i18n.newModel")}
-                          </span>
+                          </ConfigSidebarText>
                           {m.reasoning && (
                             <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}
@@ -2261,7 +2261,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
                     >
-                       <span style={{ fontSize: 11 }}>+ {t("i18n.model")}</span>
+                       <ConfigSidebarText>+ {t("i18n.model")}</ConfigSidebarText>
                     </div>
                   </div>
                 );
@@ -2274,11 +2274,11 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
 
           {/* Right: detail */}
           <ConfigDetail>
-            {loading ? null : detailContent ?? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 13 }}>
-                 {t("i18n.selectProviderModel")}
-              </div>
-            )}
+            <ConfigDetailStack className="is-fill">
+              {loading ? null : detailContent ?? (
+                <ConfigEmptyState>{t("i18n.selectProviderModel")}</ConfigEmptyState>
+              )}
+            </ConfigDetailStack>
           </ConfigDetail>
         </ConfigSplitView>
 
@@ -2289,13 +2289,11 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
             variant="primary"
             onClick={handleSave}
             disabled={saving || savedOk}
-            style={savedOk
-              ? { minWidth: 92, background: "#16a34a", borderColor: "#16a34a", animation: "saved-pop 0.45s ease" }
-              : { minWidth: 92 }}
+            className={savedOk ? "is-success" : undefined}
           >
             {savedOk && (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
-                style={{ strokeDasharray: 18, animation: "saved-check-draw 0.35s ease forwards", flexShrink: 0 }}>
+                className="config-button-success-icon">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}

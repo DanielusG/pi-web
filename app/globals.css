@@ -138,6 +138,7 @@ body {
   border-radius: 2px;
 }
 
+
 .extension-status-shelf {
   display: flex;
   flex-shrink: 0;
@@ -1218,17 +1219,6 @@ span.token.table {
   .notice-shelf-item {
     animation-duration: 0.001ms !important;
   }
-}
-
-@keyframes saved-pop {
-  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
-  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.25); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
-}
-
-@keyframes saved-check-draw {
-  from { stroke-dashoffset: 18; opacity: 0; }
-  to   { stroke-dashoffset: 0;  opacity: 1; }
 }
 
 /* Keep the panel border as the idle separator; this element only expands the hit target. */

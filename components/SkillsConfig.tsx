@@ -16,11 +16,21 @@ import {
 import {
   ConfigButton,
   ConfigDetail,
+  ConfigDetailActions,
+  ConfigDetailHeader,
+  ConfigDetailHeaderInfo,
+  ConfigDetailStack,
+  ConfigDetailTitle,
+  ConfigEmptyState,
+  ConfigField,
   ConfigFooter,
   ConfigListAction,
   ConfigPanelShell,
   ConfigSidebar,
+  ConfigSidebarGroupLabel,
+  ConfigSidebarItem,
   ConfigSidebarList,
+  ConfigSidebarText,
   ConfigSplitView,
   ConfigStatusDot,
   ConfigSwitch,
@@ -96,57 +106,28 @@ function SkillDetail({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <ConfigDetailStack>
       {/* Path + tag + toggle, with a stable status row below. */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span
-            style={{
-              fontSize: 10,
-              padding: "1px 5px",
-              borderRadius: 3,
-              flexShrink: 0,
-              background:
-                label === "project"
-                  ? "rgba(99,102,241,0.12)"
-                  : "rgba(120,120,120,0.12)",
-              color:
-                label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
-            }}
-          >
-            {label}
-          </span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--text-dim)",
-              flex: 1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {displayPath(skill.filePath)}
-          </span>
-          <ConfigSwitch
-            checked={enabled}
-            loading={toggling}
-            label={enabled ? t("i18n.visibleInPrompt") : t("i18n.hiddenFromPrompt")}
-            onChange={() => onToggle(skill)}
-          />
-        </div>
-        <div
-          style={{
-            minHeight: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: 8,
-            flexWrap: "wrap",
-            textAlign: "right",
-          }}
-        >
+      <div className="skill-detail-heading">
+        <ConfigDetailHeader>
+          <ConfigDetailHeaderInfo>
+            <span className={`config-scope-tag${label === "project" ? " is-project" : ""}`}>
+              {label}
+            </span>
+            <span className="config-detail-path">
+              {displayPath(skill.filePath)}
+            </span>
+          </ConfigDetailHeaderInfo>
+          <ConfigDetailActions>
+            <ConfigSwitch
+              checked={enabled}
+              loading={toggling}
+              label={enabled ? t("i18n.visibleInPrompt") : t("i18n.hiddenFromPrompt")}
+              onChange={() => onToggle(skill)}
+            />
+          </ConfigDetailActions>
+        </ConfigDetailHeader>
+        <div className="skill-detail-status-row">
           {!enabled && (
             <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
               {t("i18n.hiddenButInvocable")}
@@ -161,64 +142,25 @@ function SkillDetail({
       </div>
 
       {skill.install?.skillsShUrl && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          <span
-            style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
-          >
-            Source
-          </span>
+        <ConfigField label="Source">
           <a
             href={skill.install.skillsShUrl}
             target="_blank"
             rel="noreferrer"
             title={skill.install.skillsShUrl}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              width: "fit-content",
-              maxWidth: "100%",
-              color: "var(--accent)",
-              textDecoration: "none",
-            }}
+            className="skill-source-link"
           >
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <span className="skill-source-link-text">
               {skill.install.skillsShUrl.replace(/^https?:\/\//, "")} ↗
             </span>
           </a>
-        </div>
+        </ConfigField>
       )}
 
       {skill.install && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-          <span
-            style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
-          >
-            Version
-          </span>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                color: "var(--text-muted)",
-              }}
-            >
+        <ConfigField label="Version">
+          <div className="skill-version-row">
+            <span className="skill-version-value">
               {shortVersion(updateStatus?.currentVersion ?? skill.install.versionHash)}
             </span>
             {skill.install.canCheckForUpdates && (
@@ -231,29 +173,20 @@ function SkillDetail({
               </ConfigButton>
             )}
             {updateStatus?.state === "update-available" && (
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 12,
-                  color: "#d97706",
-                }}
-              >
+              <span className="skill-version-value is-update">
                 {shortVersion(updateStatus.latestVersion)}
               </span>
             )}
             {(checkingUpdate ||
               (updateStatus && updateStatus.state !== "update-available")) && (
               <span
-                style={{
-                  fontSize: 12,
-                  color: checkingUpdate
-                    ? "var(--accent)"
-                    : updateStatus?.state === "up-to-date"
-                      ? "#16a34a"
-                      : updateStatus?.state === "error"
-                          ? "#ef4444"
-                          : "var(--text-dim)",
-                }}
+                className={`skill-update-status ${checkingUpdate
+                  ? "is-checking"
+                  : updateStatus?.state === "up-to-date"
+                    ? "is-success"
+                    : updateStatus?.state === "error"
+                      ? "is-error"
+                      : "is-muted"}`}
               >
                 {checkingUpdate
                    ? t("i18n.checking")
@@ -278,39 +211,21 @@ function SkillDetail({
           {updateError && (
             <span style={{ fontSize: 12, color: "#ef4444" }}>{updateError}</span>
           )}
-        </div>
+        </ConfigField>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <span
-          style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
-        >
-          Name
-        </span>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 14,
-            color: "var(--text)",
-          }}
-        >
+      <ConfigField label="Name">
+        <span className="skill-name-value">
           {skill.name}
         </span>
-      </div>
+      </ConfigField>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <span
-          style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
-        >
-          Description
-        </span>
-        <span
-          style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}
-        >
+      <ConfigField label="Description">
+        <span className="skill-description">
           {skill.description}
         </span>
-      </div>
-    </div>
+      </ConfigField>
+    </ConfigDetailStack>
   );
 }
 
@@ -404,7 +319,7 @@ function AddSkillPanel({
       : `${shortenPath(cwd)}/.pi/skills/`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <ConfigDetailStack className="is-full-height">
       {/* ── Header area ── */}
       <div
         style={{
@@ -414,9 +329,7 @@ function AddSkillPanel({
           marginBottom: 20,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-           {t("i18n.addSkill")}
-        </div>
+        <ConfigDetailTitle>{t("i18n.addSkill")}</ConfigDetailTitle>
 
         {/* Search row */}
         <div style={{ display: "flex", gap: 8 }}>
@@ -431,7 +344,7 @@ function AddSkillPanel({
             style={{
               flex: 1,
               padding: "7px 10px",
-              fontSize: 13,
+              fontSize: 12,
               background: "var(--bg-panel)",
               border: "1px solid var(--border)",
               borderRadius: 6,
@@ -634,7 +547,7 @@ function AddSkillPanel({
           </div>
         )
       )}
-    </div>
+    </ConfigDetailStack>
   );
 }
 
@@ -826,16 +739,7 @@ export function SkillsConfig({
     <ConfigPanelShell embedded={embedded} title={t("common.skills")} subtitle={shortenPath(cwd)} closeLabel={t("i18n.close")} onClose={onClose}>
 
         {!projectResourcesLoaded && (
-          <div
-            role="status"
-            style={{
-              padding: "8px 18px",
-              borderBottom: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--text-muted)",
-              fontSize: 12,
-            }}
-          >
+          <div role="status" className="config-trust-notice">
             {t("trust.skillsNotLoaded")}
           </div>
         )}
@@ -846,65 +750,52 @@ export function SkillsConfig({
           <ConfigSidebar>
             <ConfigSidebarList>
               {loading ? (
-                <div
-                  style={{
-                    padding: "10px 8px",
-                    fontSize: 12,
-                    color: "var(--text-muted)",
-                  }}
-                >
+                <div className="config-sidebar-message">
                    {t("i18n.loading")}
                 </div>
               ) : error ? (
-                <div
-                  style={{
-                    padding: "10px 8px",
-                    fontSize: 11,
-                    color: "#f87171",
-                  }}
-                >
+                <div className="config-sidebar-message is-error">
                   {error}
                 </div>
               ) : skills.length === 0 ? (
-                <div
-                  style={{
-                    padding: "10px 8px",
-                    fontSize: 11,
-                    color: "var(--text-dim)",
-                  }}
-                >
+                <div className="config-sidebar-message is-empty">
                    {t("i18n.noSkills")}
                 </div>
               ) : (
                 (() => {
                   const groups: { label: string; skills: typeof skills }[] = [];
+                  const scopeLabels = {
+                    project: t("skills.scope.project"),
+                    global: t("skills.scope.global"),
+                    path: t("skills.scope.path"),
+                  };
                   const groupDefinitions = [
                     {
-                      label: "project / skills.sh",
+                      label: `${scopeLabels.project} / skills.sh`,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "project" &&
                         Boolean(skill.install?.skillsShUrl),
                     },
                     {
-                      label: "project",
+                      label: scopeLabels.project,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "project" &&
                         !skill.install?.skillsShUrl,
                     },
                     {
-                      label: "global / skills.sh",
+                      label: `${scopeLabels.global} / skills.sh`,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "global" &&
                         Boolean(skill.install?.skillsShUrl),
                     },
                     {
-                      label: "global",
+                      label: scopeLabels.global,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "global" &&
                         !skill.install?.skillsShUrl,
                     },
                     {
-                      label: "path",
+                      label: scopeLabels.path,
                       matches: (skill: Skill) => sourceLabel(skill) === "path",
                     },
                   ];
@@ -918,87 +809,38 @@ export function SkillsConfig({
                       !addMode && selected === skill.filePath;
                     const disabled = skill.disableModelInvocation;
                     return (
-                      <div
+                      <ConfigSidebarItem
                         key={skill.filePath}
+                        active={isSelected}
                         onClick={() => {
                           setSelected(skill.filePath);
                           setAddMode(false);
                         }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 7,
-                          padding: "8px 8px",
-                          borderRadius: 5,
-                          cursor: "pointer",
-                          background: isSelected
-                            ? "var(--bg-selected)"
-                            : "none",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected)
-                            e.currentTarget.style.background =
-                              "var(--bg-hover)";
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected)
-                            e.currentTarget.style.background = "none";
-                        }}
                       >
                         <ConfigStatusDot active={!disabled} />
-                        <span
-                          style={{
-                            fontSize: 12,
-                            fontWeight: isSelected ? 600 : 400,
-                            color: disabled
-                              ? "var(--text-dim)"
-                              : "var(--text)",
-                            fontFamily: "var(--font-mono)",
-                            flex: 1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <ConfigSidebarText className={`is-grow${disabled ? " is-muted" : ""}`}>
                           {skill.name}
-                        </span>
+                        </ConfigSidebarText>
                         {(() => {
                           const key = updateKey(skill);
                           const status = key ? updateStatuses[key] : undefined;
                           if (status?.state !== "update-available") return null;
                           return (
-                            <span
-                               title={t("i18n.updateAvailable")}
-                              style={{
-                                color: "#d97706",
-                                fontSize: 13,
-                                lineHeight: 1,
-                                flexShrink: 0,
-                              }}
-                            >
+                            <span title={t("i18n.updateAvailable")} className="skill-update-indicator">
                               ↑
                             </span>
                           );
                         })()}
-                      </div>
+                      </ConfigSidebarItem>
                     );
                   };
                   return groups.map(
                     ({ label: grpLabel, skills: grpSkills }) => {
                       return (
-                        <div key={grpLabel} style={{ marginBottom: 6 }}>
-                          <div
-                            style={{
-                              padding: "4px 8px 3px",
-                              fontSize: 10,
-                              fontWeight: 600,
-                              color: "var(--text-dim)",
-                              textTransform: "uppercase",
-                              letterSpacing: "0.06em",
-                            }}
-                          >
+                        <div key={grpLabel} className="config-sidebar-group">
+                          <ConfigSidebarGroupLabel>
                             {grpLabel}
-                          </div>
+                          </ConfigSidebarGroupLabel>
                           {orderSkillsByDormancy(grpSkills).map(renderSkillRow)}
                         </div>
                       );
@@ -1018,7 +860,8 @@ export function SkillsConfig({
 
           {/* Right: detail or add panel */}
           <ConfigDetail>
-            {addMode ? (
+            <ConfigDetailStack className="is-fill">
+              {addMode ? (
               <AddSkillPanel
                 cwd={cwd}
                 projectResourcesLoaded={projectResourcesLoaded}
@@ -1061,20 +904,10 @@ export function SkillsConfig({
                 onCheckUpdate={() => void checkForUpdates(selectedSkill)}
                 onUpdate={() => void updateInstalledSkill(selectedSkill)}
               />
-            ) : (
-              <div
-                style={{
-                  height: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--text-dim)",
-                  fontSize: 13,
-                }}
-              >
-                 {t("i18n.selectSkill")}
-              </div>
-            )}
+              ) : (
+                <ConfigEmptyState>{t("i18n.selectSkill")}</ConfigEmptyState>
+              )}
+            </ConfigDetailStack>
           </ConfigDetail>
         </ConfigSplitView>
 
@@ -1097,12 +930,12 @@ export function SkillsConfig({
               </span>
             )}
         >
+          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
           {skills.some((skill) => Boolean(skill.install)) && (
-            <ConfigButton onClick={() => void checkForUpdates()} disabled={checkingAll || updatingSkill !== null}>
+            <ConfigButton variant="secondary" onClick={() => void checkForUpdates()} disabled={checkingAll || updatingSkill !== null}>
               {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
             </ConfigButton>
           )}
-          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
         </ConfigFooter>
     </ConfigPanelShell>
   );

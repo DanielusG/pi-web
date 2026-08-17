@@ -13,11 +13,20 @@ import {
 import {
   ConfigButton,
   ConfigDetail,
+  ConfigDetailActions,
+  ConfigDetailHeader,
+  ConfigDetailHeaderInfo,
+  ConfigDetailStack,
+  ConfigEmptyState,
+  ConfigField,
   ConfigFooter,
   ConfigListAction,
   ConfigPanelShell,
   ConfigSidebar,
+  ConfigSidebarGroupLabel,
+  ConfigSidebarItem,
   ConfigSidebarList,
+  ConfigSidebarText,
   ConfigSplitView,
   ConfigStatusDot,
   ConfigSwitch,
@@ -100,12 +109,7 @@ function displayProfilePath(profile: SubagentProfile, cwd: string): string | nul
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
-      <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{label}</span>
-      {children}
-    </div>
-  );
+  return <ConfigField label={label}>{children}</ConfigField>;
 }
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (checked: boolean) => void }) {
@@ -331,18 +335,17 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                 const scopedProfiles = profiles.filter((profile) => profile.scope === scope);
                 if (scopedProfiles.length === 0) return null;
                 return (
-                  <div key={scope} style={{ marginBottom: 6 }}>
-                    <div style={{ padding: "5px 9px 3px", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>{t(`agents.scope.${scope}`)}</div>
+                  <div key={scope} className="config-sidebar-group">
+                    <ConfigSidebarGroupLabel>{t(`agents.scope.${scope}`)}</ConfigSidebarGroupLabel>
                     {scopedProfiles.map((profile) => (
-                      <button
+                      <ConfigSidebarItem
                         key={profileKey(profile)}
-                        type="button"
+                        active={selectedKey === profileKey(profile) && !creating}
                         onClick={() => selectProfile(profile)}
-                        style={{ width: "100%", minWidth: 0, padding: "8px 9px", display: "flex", alignItems: "center", gap: 8, border: "none", borderRadius: 5, background: selectedKey === profileKey(profile) && !creating ? "var(--bg-selected)" : "transparent", color: "var(--text)", cursor: "pointer", textAlign: "left" }}
                       >
                         <ConfigStatusDot active={profile.enabled} />
-                        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: profile.enabled ? "var(--text)" : "var(--text-dim)" }}>{profile.displayName}</span>
-                      </button>
+                        <ConfigSidebarText className={`is-grow${profile.enabled ? "" : " is-muted"}`}>{profile.displayName}</ConfigSidebarText>
+                      </ConfigSidebarItem>
                     ))}
                   </div>
                 );
@@ -357,23 +360,28 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
         </ConfigSidebar>
 
         <ConfigDetail>
+          <ConfigDetailStack className="is-fill">
               {!selected && !creating ? (
-                <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("agents.empty")}</div>
+                <ConfigEmptyState>{t("agents.empty")}</ConfigEmptyState>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <div style={{ minHeight: 22, display: "flex", alignItems: "center", gap: 7 }}>
-                    {displayedScope && (
-                      <span style={{ padding: "1px 5px", borderRadius: 3, background: displayedScope === "project" ? "rgba(99,102,241,0.12)" : "rgba(120,120,120,0.12)", color: displayedScope === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>
-                        {t(`agents.scope.${displayedScope}`)}
+                <ConfigDetailStack>
+                  <ConfigDetailHeader>
+                    <ConfigDetailHeaderInfo>
+                      {displayedScope && (
+                        <span className={`config-scope-tag${displayedScope === "project" ? " is-project" : ""}`}>
+                          {t(`agents.scope.${displayedScope}`)}
+                        </span>
+                      )}
+                      <span title={fullPath} className="config-detail-path">
+                        {displayedPath}
                       </span>
-                    )}
-                    <span title={fullPath} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                      {displayedPath}
-                    </span>
-                    {selected && (mode === "view" || mode === "edit") && <ConfigButton size="small" onClick={beginDuplicate} disabled={saving || toggling}>{t("agents.duplicate")}</ConfigButton>}
-                    {selected && isWritableScope(selected.scope) && mode === "edit" && <ConfigButton variant="danger" size="small" onClick={() => void remove()} disabled={saving || toggling}>{t("agents.delete")}</ConfigButton>}
-                    <ConfigSwitch checked={draft.enabled} disabled={disabled} label={draft.enabled ? t("agents.disable") : t("agents.enable")} onChange={(checked) => void toggleEnabled(checked)} />
-                  </div>
+                    </ConfigDetailHeaderInfo>
+                    <ConfigDetailActions>
+                      {selected && (mode === "view" || mode === "edit") && <ConfigButton size="small" onClick={beginDuplicate} disabled={saving || toggling}>{t("agents.duplicate")}</ConfigButton>}
+                      {selected && isWritableScope(selected.scope) && mode === "edit" && <ConfigButton variant="danger" size="small" onClick={() => void remove()} disabled={saving || toggling}>{t("agents.delete")}</ConfigButton>}
+                      <ConfigSwitch checked={draft.enabled} disabled={disabled} label={draft.enabled ? t("agents.disable") : t("agents.enable")} onChange={(checked) => void toggleEnabled(checked)} />
+                    </ConfigDetailActions>
+                  </ConfigDetailHeader>
 
                   {creating && (
                     <Field label={t("agents.saveScope")}>
@@ -455,8 +463,9 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                     <Toggle label={t("agents.inheritContext")} disabled={disabled} checked={draft.inheritContext} onChange={(checked) => update("inheritContext", checked)} />
                     <Toggle label={t("agents.background")} disabled={disabled} checked={draft.runInBackground} onChange={(checked) => update("runInBackground", checked)} />
                   </div>
-                </div>
+                </ConfigDetailStack>
               )}
+          </ConfigDetailStack>
         </ConfigDetail>
       </ConfigSplitView>
       <ConfigFooter status={error && <span role="alert" style={{ color: "#ef4444" }}>{error}</span>}>
