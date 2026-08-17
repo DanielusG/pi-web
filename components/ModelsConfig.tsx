@@ -5,6 +5,10 @@ import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
 import {
+  getLastSettingsSelection,
+  setLastSettingsSelection,
+} from "@/lib/settings-navigation";
+import {
   hasModelCostDraftValue,
   modelCostToDraft,
   parseCompleteModelCost,
@@ -188,6 +192,39 @@ type Selection =
   | { type: "model"; providerName: string; index: number }
   | { type: "oauth"; providerId: string }
   | { type: "apikey"; providerId: string };
+
+function readRememberedSelection(): Selection | null {
+  const raw = getLastSettingsSelection("models");
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object") return null;
+    const selection = value as Record<string, unknown>;
+    if (selection.type === "provider" && typeof selection.name === "string") {
+      return { type: "provider", name: selection.name };
+    }
+    if (selection.type === "model"
+      && typeof selection.providerName === "string"
+      && typeof selection.index === "number"
+      && Number.isInteger(selection.index)
+      && selection.index >= 0) {
+      return { type: "model", providerName: selection.providerName, index: selection.index };
+    }
+    if ((selection.type === "oauth" || selection.type === "apikey")
+      && typeof selection.providerId === "string") {
+      return { type: selection.type, providerId: selection.providerId };
+    }
+  } catch {
+    // Ignore malformed browser state.
+  }
+  return null;
+}
+
+function customSelectionExists(config: ModelsJson, selection: Selection): boolean {
+  if (selection.type === "provider") return Boolean(config.providers?.[selection.name]);
+  if (selection.type !== "model") return true;
+  return Boolean(config.providers?.[selection.providerName]?.models?.[selection.index]);
+}
 
 const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const;
 
@@ -1907,7 +1944,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedOk, setSavedOk] = useState(false);
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(readRememberedSelection);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1946,12 +1983,20 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
         const normalized = d.providers ? d : { ...d, providers: {} };
         setConfig(normalized);
         const keys = Object.keys(normalized.providers ?? {});
-        if (keys.length > 0) setSelection({ type: "provider", name: keys[0] });
+        setSelection((current) => current && customSelectionExists(normalized, current)
+          ? current
+          : keys[0]
+            ? { type: "provider", name: keys[0] }
+            : null);
       })
       .catch(() => setConfig({ providers: {} }))
       .finally(() => setLoading(false));
     refreshAuthProviders();
   }, [refreshAuthProviders]);
+
+  useEffect(() => {
+    if (selection) setLastSettingsSelection("models", JSON.stringify(selection));
+  }, [selection]);
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";

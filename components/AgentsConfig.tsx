@@ -7,6 +7,10 @@ import type { SubagentProfilesResponse } from "@/lib/api-types";
 import type { ModelsData } from "@/lib/models-cache";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
 import {
+  getLastSettingsSelection,
+  setLastSettingsSelection,
+} from "@/lib/settings-navigation";
+import {
   ConfigButton,
   ConfigDetail,
   ConfigFooter,
@@ -120,7 +124,7 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
   const [modelOptions, setModelOptions] = useState<ModelsData["modelList"]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(() => getLastSettingsSelection("agents", cwd));
   const [draft, setDraft] = useState<EditableProfile>(EMPTY_PROFILE);
   const [mode, setMode] = useState<EditorMode>("view");
   const [targetScope, setTargetScope] = useState<SubagentWritableScope>("global");
@@ -152,7 +156,8 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       const next = data.profiles ?? [];
       setProfiles(next);
-      const chosen = next.find((profile) => profileKey(profile) === preferredKey)
+      const rememberedKey = preferredKey ?? getLastSettingsSelection("agents", cwd);
+      const chosen = next.find((profile) => profileKey(profile) === rememberedKey)
         ?? next.find((profile) => profile.scope === "project")
         ?? next.find((profile) => profile.scope === "global")
         ?? next[0]
@@ -173,6 +178,10 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
   useEffect(() => {
     void loadProfiles();
   }, [loadProfiles]);
+
+  useEffect(() => {
+    if (selectedKey) setLastSettingsSelection("agents", selectedKey, cwd);
+  }, [cwd, selectedKey]);
 
   useEffect(() => {
     const controller = new AbortController();

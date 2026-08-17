@@ -4,12 +4,15 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
+import {
+  getLastSettingsSection,
+  setLastSettingsSection,
+  type SettingsSection,
+} from "@/lib/settings-navigation";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { AgentsConfig } from "./AgentsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-
-type SettingsSection = "general" | "models" | "skills" | "agents" | "plugins";
 
 interface Props {
   cwd: string | null;
@@ -144,7 +147,7 @@ function GeneralSettings() {
 export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Props) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsSection>(() => getLastSettingsSection(cwd));
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
@@ -163,13 +166,19 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    if (cwd || (section !== "skills" && section !== "agents" && section !== "plugins")) return;
+    setSection("general");
+    setLastSettingsSection("general");
+  }, [cwd, section]);
+
   let content: ReactNode;
   if (section === "general") content = <GeneralSettings />;
   else if (section === "models") content = <ModelsConfig embedded onClose={onClose} />;
   else if (!cwd) content = null;
-  else if (section === "skills") content = <SkillsConfig embedded cwd={cwd} onClose={onClose} />;
-  else if (section === "agents") content = <AgentsConfig embedded cwd={cwd} onClose={onClose} />;
-  else content = <PluginsConfig embedded cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />;
+  else if (section === "skills") content = <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />;
+  else if (section === "agents") content = <AgentsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />;
+  else content = <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onPluginsReloaded} />;
 
   return (
     <div
@@ -197,7 +206,10 @@ export function SettingsPanel({ cwd, sessionId, onClose, onPluginsReloaded }: Pr
                   disabled={disabled}
                   title={disabled ? t("settings.projectRequired") : item.label}
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => setSection(item.id)}
+                  onClick={() => {
+                    setSection(item.id);
+                    setLastSettingsSection(item.id);
+                  }}
                   style={{ minWidth: isMobile ? 92 : 0, width: isMobile ? "auto" : "100%", height: 36, padding: "0 10px", display: "flex", alignItems: "center", gap: 9, border: "none", borderRadius: 5, background: selected ? "var(--bg-selected)" : "transparent", color: selected ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.38 : 1, fontSize: 12, fontWeight: selected ? 600 : 400, textAlign: "left", flexShrink: 0 }}
                 >
                   <SectionIcon section={item.id} />

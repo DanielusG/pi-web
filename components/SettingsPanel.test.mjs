@@ -23,6 +23,17 @@ test("keeps every requested configuration surface inside the settings panel", ()
   }
 });
 
+test("restores the settings section and each list detail selection", async () => {
+  assert.match(panelSource, /getLastSettingsSection\(cwd\)/);
+  assert.match(panelSource, /setLastSettingsSection\(item\.id\)/);
+  for (const name of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig"]) {
+    assert.match(
+      await readFile(new URL(`./${name}.tsx`, import.meta.url), "utf8"),
+      /getLastSettingsSelection/,
+    );
+  }
+});
+
 test("offers direct light, dark, and system theme selection", () => {
   for (const preference of ["light", "dark", "auto"]) {
     assert.match(panelSource, new RegExp(`id: "${preference}"`));

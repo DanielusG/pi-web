@@ -10,6 +10,10 @@ import type {
   SkillUpdateResult,
 } from "@/lib/api-types";
 import {
+  getLastSettingsSelection,
+  setLastSettingsSelection,
+} from "@/lib/settings-navigation";
+import {
   ConfigButton,
   ConfigDetail,
   ConfigFooter,
@@ -647,7 +651,7 @@ export function SkillsConfig({
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => getLastSettingsSelection("skills", cwd));
   const [toggling, setToggling] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
@@ -668,10 +672,11 @@ export function SkillsConfig({
       const list = d.skills ?? [];
       setSkills(list);
       setProjectResourcesLoaded(d.projectResourcesLoaded ?? true);
-      if (list.length > 0 && !selected) {
+      setSelected((current) => {
+        if (current && list.some((skill) => skill.filePath === current)) return current;
         const initialSkill = list.find((skill) => !skill.disableModelInvocation) ?? list[0];
-        setSelected(initialSkill.filePath);
-      }
+        return initialSkill?.filePath ?? null;
+      });
       return list;
     } catch (e) {
       setError(String(e));
@@ -679,13 +684,17 @@ export function SkillsConfig({
     } finally {
       setLoading(false);
     }
-  }, [cwd, selected]);
+  }, [cwd]);
 
   useEffect(() => {
     setUpdateStatuses({});
     setUpdateError(null);
     void loadSkills();
   }, [cwd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (selected) setLastSettingsSelection("skills", selected, cwd);
+  }, [cwd, selected]);
 
   const checkForUpdates = useCallback(async (skill?: Skill) => {
     const targets = skill
