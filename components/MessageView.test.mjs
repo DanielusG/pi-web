@@ -86,7 +86,7 @@ test("renders subagents as standard tool calls with only an extra session button
   assert.match(html, /border:1px solid rgba\(34,197,94,0\.25\)/);
   assert.match(html, />Agent</);
   assert.match(html, />Explore</);
-  assert.match(html, /aria-label="Open subagent session"/);
+  assert.match(html, /aria-label="Open sub-agent session"/);
   assert.doesNotMatch(html, />completed</);
   assert.doesNotMatch(html, />Find parser</);
 
@@ -99,7 +99,7 @@ test("renders subagents as standard tool calls with only an extra session button
     toolResults: new Map(),
     onOpenSession() {},
   });
-  assert.doesNotMatch(ordinaryHtml, /Open subagent session/);
+  assert.doesNotMatch(ordinaryHtml, /Open sub-agent session/);
 });
 
 const COMPLETE_SKILL_EXPANSION = `<skill name="review" location="/skills/review/SKILL.md">
