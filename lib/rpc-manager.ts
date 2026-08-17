@@ -31,6 +31,8 @@ import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCust
 import {
   createSubagentExtension,
   preferPiWebSubagentExtension,
+  subagentFinalText,
+  subagentToolDetails,
   type StartSubagentRequest,
   type SubagentExecution,
   type SubagentExtensionRuntime,
@@ -1843,6 +1845,23 @@ export async function steerSubagent(sessionId: string, message: string): Promise
   await wrapper.inner.steer(message.trim());
 }
 
+async function notifyParentOfSubagentCompletion(run: SubagentRunInfo): Promise<void> {
+  let parent = getRegistry().get(run.parentSessionId);
+  if (!parent?.isAlive()) {
+    const sessionFile = await resolveSessionPath(run.parentSessionId);
+    if (!sessionFile) throw new Error(`Parent session not found: ${run.parentSessionId}`);
+    parent = (await startRpcSession(run.parentSessionId, sessionFile, undefined)).session;
+  }
+  await parent.waitUntilReady();
+  if (!parent.isAlive()) throw new Error(`Parent session is no longer available: ${run.parentSessionId}`);
+  await parent.inner.sendCustomMessage({
+    customType: "pi-web:subagent-notification",
+    content: subagentFinalText(run),
+    display: true,
+    details: subagentToolDetails(run),
+  }, { deliverAs: "followUp", triggerTurn: true });
+}
+
 export async function abortSubagent(sessionId: string): Promise<void> {
   const wrapper = getRegistry().get(sessionId);
   if (!wrapper?.isAlive() || !wrapper.isRunning()) throw new Error("Subagent is not running");
@@ -1855,6 +1874,7 @@ const SUBAGENT_EXTENSION_RUNTIME: SubagentExtensionRuntime = {
   start: startSubagent,
   get: getSubagentRun,
   steer: steerSubagent,
+  notifyParent: notifyParentOfSubagentCompletion,
 };
 
 function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {

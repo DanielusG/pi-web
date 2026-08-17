@@ -47,6 +47,7 @@ export interface SubagentExtensionRuntime {
   start(request: StartSubagentRequest): Promise<SubagentExecution>;
   get(sessionId: string): Promise<SubagentRunInfo | null>;
   steer(sessionId: string, message: string): Promise<void>;
+  notifyParent(run: SubagentRunInfo): Promise<void>;
 }
 
 export type SubagentProfileProvider = () => readonly SubagentProfile[];
@@ -61,7 +62,7 @@ function agentTypeDescription(profiles: readonly SubagentProfile[]): string {
   }).join("\n");
 }
 
-function details(run: SubagentRunInfo): SubagentToolDetails {
+export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
   return {
     kind: "pi-web-subagent",
     sessionId: run.sessionId,
@@ -75,7 +76,7 @@ function details(run: SubagentRunInfo): SubagentToolDetails {
   };
 }
 
-function finalText(run: SubagentRunInfo): string {
+export function subagentFinalText(run: SubagentRunInfo): string {
   if (run.status === "starting" || run.status === "running") {
     return `Subagent ${run.sessionId} is ${run.status}.`;
   }
@@ -133,29 +134,29 @@ export function createSubagentExtension(
               signal,
               onUpdate: (run) => onUpdate?.({
                 content: [{ type: "text", text: `${run.profile}: ${run.description} (${run.status})` }],
-                details: details(run),
+                details: subagentToolDetails(run),
               }),
             });
 
             if (execution.run.runInBackground) {
-              void execution.completion.then((run) => {
-                pi.sendMessage({
-                  customType: "pi-web:subagent-notification",
-                  content: finalText(run),
-                  display: true,
-                  details: details(run),
-                }, { deliverAs: "followUp", triggerTurn: true });
-              });
+              void execution.completion
+                .then((run) => runtime.notifyParent(run))
+                .catch((error) => {
+                  console.error(
+                    "[pi-web] failed to deliver subagent completion:",
+                    error instanceof Error ? error.message : error,
+                  );
+                });
               return {
                 content: [{ type: "text", text: `Subagent started in background. Session ID: ${execution.run.sessionId}. You will be notified when it completes.` }],
-                details: details(execution.run),
+                details: subagentToolDetails(execution.run),
               };
             }
 
             const run = await execution.completion;
             return {
-              content: [{ type: "text", text: finalText(run) }],
-              details: details(run),
+              content: [{ type: "text", text: subagentFinalText(run) }],
+              details: subagentToolDetails(run),
               ...(run.status === "failed" ? { isError: true } : {}),
             };
           } catch (error) {
@@ -196,8 +197,8 @@ export function createSubagentExtension(
             if (!run) return { content: [{ type: "text", text: `Subagent not found: ${params.agent_id}` }], details: undefined, isError: true };
           }
           return {
-            content: [{ type: "text", text: finalText(run) }],
-            details: details(run),
+            content: [{ type: "text", text: subagentFinalText(run) }],
+            details: subagentToolDetails(run),
             ...(run.status === "failed" ? { isError: true } : {}),
           };
         },
