@@ -414,7 +414,7 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                     <Field label={t("agents.displayName")}><input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={inputStyle} /></Field>
                   </div>
                   <Field label={t("agents.description")}><input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={inputStyle} /></Field>
-                  <Field label={t("agents.prompt")}><textarea aria-label={t("agents.prompt")} value={draft.systemPrompt} readOnly={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 150, minHeight: 150, maxHeight: "60vh", padding: 9, overflow: "auto", resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
+                  <Field label={t("agents.prompt")}><textarea className="agents-system-prompt" aria-label={t("agents.prompt")} value={draft.systemPrompt} readOnly={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 195, minHeight: 195, maxHeight: "60vh", padding: 9, overflow: "auto", resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
 
                   <Field label={t("agents.tools")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "9px 10px", border: "1px solid var(--border)", borderRadius: 5 }}>

@@ -72,8 +72,15 @@ test("renders the stable agent id as text outside create mode", () => {
 });
 
 test("keeps system instructions vertically resizable even when read-only", () => {
-  assert.match(source, /<textarea aria-label=\{t\("agents\.prompt"\)\}[\s\S]*?readOnly=\{disabled\}/);
-  assert.match(source, /maxHeight: "60vh"[\s\S]*?resize: "vertical"/);
+  assert.match(source, /<textarea[^>]*aria-label=\{t\("agents\.prompt"\)\}[\s\S]*?readOnly=\{disabled\}/);
+  assert.match(source, /height: 195,[\s\S]*?minHeight: 195,[\s\S]*?maxHeight: "60vh"[\s\S]*?resize: "vertical"/);
+});
+
+test("keeps a larger resize corner when system instructions need a scrollbar", () => {
+  assert.match(source, /<textarea className="agents-system-prompt" aria-label=\{t\("agents\.prompt"\)\}/);
+  assert.match(cssSource, /.agents-system-prompt \{[\s\S]*?scrollbar-width: auto;/);
+  assert.match(cssSource, /\.agents-system-prompt::-webkit-scrollbar \{[\s\S]*?width: 14px;[\s\S]*?height: 14px;/);
+  assert.match(cssSource, /\.agents-system-prompt::-webkit-scrollbar-thumb \{[\s\S]*?border: 5px solid transparent;/);
 });
 
 test("duplicates any selected profile through the existing create flow", () => {

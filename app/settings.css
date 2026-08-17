@@ -302,6 +302,27 @@
   min-width: 0;
 }
 
+/* Keep the native resize corner usable when the global scrollbar is present. */
+.agents-system-prompt {
+  scrollbar-width: auto;
+}
+
+.agents-system-prompt::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.agents-system-prompt::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agents-system-prompt::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 5px solid transparent;
+  background-clip: padding-box;
+  border-radius: 7px;
+}
+
 .config-field-label {
   color: var(--text-muted);
   font-size: 11px;
