@@ -10,6 +10,7 @@ import type { SubagentProfile, SubagentRunInfo } from "./subagents";
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
 const SUBAGENT_TOOL_NAMES = new Set(["Agent", "get_subagent_result", "steer_subagent"]);
+const LEGACY_SUBAGENT_PACKAGE_NAME = "pi-subagents";
 
 export interface SubagentToolDetails {
   kind: "pi-web-subagent";
@@ -231,6 +232,13 @@ export function preferPiWebSubagentExtension(base: LoadExtensionsResult): LoadEx
   if (!host) return base;
   const legacyPaths = new Set(base.extensions
     .filter((extension) => extension.path !== HOST_SUBAGENT_EXTENSION_PATH)
+    .filter((extension) => {
+      const source = extension.sourceInfo?.source ?? "";
+      const sourcePackage = source.replace(/^npm:/, "").split("@")[0];
+      const pathSegments = extension.path.replaceAll("\\", "/").split("/");
+      return sourcePackage === LEGACY_SUBAGENT_PACKAGE_NAME
+        || pathSegments.some((segment) => segment === LEGACY_SUBAGENT_PACKAGE_NAME);
+    })
     .filter((extension) => [...SUBAGENT_TOOL_NAMES].every((name) => extension.tools.has(name)))
     .map((extension) => extension.path));
   if (legacyPaths.size === 0) return base;
