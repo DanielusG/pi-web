@@ -14,6 +14,14 @@ export async function POST(
   try {
     const body = await req.json() as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
+    const requestedToolNames = body.toolNames;
+    if (
+      requestedToolNames !== undefined
+      && (!Array.isArray(requestedToolNames) || requestedToolNames.some((name) => typeof name !== "string"))
+    ) {
+      throw new Error("toolNames must be an array of strings");
+    }
+    const toolNames = requestedToolNames as string[] | undefined;
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
@@ -33,7 +41,9 @@ export async function POST(
       }, { status: 404 });
     }
 
-    const { session } = await startRpcSession(id, filePath, undefined);
+    const { session } = await startRpcSession(id, filePath, undefined, {
+      ...(toolNames !== undefined ? { toolNames } : {}),
+    });
     const result = await session.send(body);
     promptAccepted = body.type === "prompt";
 

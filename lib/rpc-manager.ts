@@ -373,6 +373,12 @@ export class AgentSessionWrapper {
     }
   }
 
+  private applyActiveTools(toolNames: string[]): void {
+    this.setForceEmptySystemPrompt(toolNames.length === 0);
+    this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
+    this.applyForcedEmptySystemPrompt();
+  }
+
   private emit(event: AgentEvent): void {
     for (const listener of this.listeners) {
       try {
@@ -510,6 +516,19 @@ export class AgentSessionWrapper {
         try {
           if (this.inner.isBashRunning) {
             throw new Error("Cannot send a prompt while a shell command is running");
+          }
+          const requestedToolNames = command.toolNames;
+          if (
+            requestedToolNames !== undefined
+            && (!Array.isArray(requestedToolNames) || requestedToolNames.some((name) => typeof name !== "string"))
+          ) {
+            throw new Error("toolNames must be an array of strings");
+          }
+          // An SSE connection may have recreated this wrapper with SDK defaults
+          // immediately before the prompt POST arrives. Apply the browser preset
+          // only while idle so queued prompts cannot mutate an active run.
+          if (requestedToolNames && !this.isRunning()) {
+            this.applyActiveTools(requestedToolNames);
           }
           const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
           const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
@@ -825,9 +844,7 @@ export class AgentSessionWrapper {
 
       case "set_tools": {
         const toolNames = command.toolNames as string[];
-        this.setForceEmptySystemPrompt(toolNames.length === 0);
-        this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
-        this.applyForcedEmptySystemPrompt();
+        this.applyActiveTools(toolNames);
         return null;
       }
 

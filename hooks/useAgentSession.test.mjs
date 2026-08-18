@@ -115,7 +115,7 @@ test("new-session promotion rekeys drafts before publishing the real session", (
   assert.match(chatWindowSource, /draftKey=\{session\?\.id \?\? newSessionDraftKey \?\? undefined\}/);
 });
 
-test("fresh sessions restore the preferred tool preset without overriding existing sessions", () => {
+test("fresh and dormant sessions restore the preferred tool preset while live sessions use their active tools", () => {
   const preferenceSource = source.slice(
     source.indexOf("  const setToolPresetState"),
     source.indexOf("  const scrollToBottom"),
@@ -131,11 +131,23 @@ test("fresh sessions restore the preferred tool preset without overriding existi
 
   assert.match(
     preferenceSource,
-    /useLayoutEffect\(\(\) => \{\s*if \(!isNew \|\| sessionIdRef\.current\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
+    /const existingSessionId = session\?\.id;[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!existingSessionId && \(!isNew \|\| sessionIdRef\.current\)\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
   );
+  assert.match(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
   assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
   assert.match(changeSource, /sendAgentCommand\(sid, \{ type: "set_tools", toolNames \}\)/);
   assert.doesNotMatch(loadToolsSource, /setPreferredToolPreset/);
+});
+
+test("existing-session prompts carry the displayed tool preset for idle runtime recovery", () => {
+  const sendSource = source.slice(
+    source.indexOf("  const handleSend = useCallback"),
+    source.indexOf("  const executeBash = useCallback"),
+  );
+  const existingSessionPrompt = sendSource.slice(sendSource.indexOf("} else if (session)"));
+
+  assert.match(existingSessionPrompt, /type: "prompt",[\s\S]*?toolNames: getToolNamesForPreset\(toolPreset\)/);
+  assert.match(sendSource, /restoreSubmission, toolPreset\]\);/);
 });
 
 test("submission recovery updates live refs before a possible session rekey", () => {
