@@ -83,6 +83,7 @@ test("opening System lazily starts a dormant session without sending a prompt", 
   assert.match(loadSystemPromptSource, /sessionIdRef\.current \?\? await ensureNewSession\(\)/);
   assert.doesNotMatch(loadSystemPromptSource, /promoteNewSession\(\)/);
   assert.match(loadSystemPromptSource, /sendAgentCommand<AgentStateResponse>\(sid, \{ type: "get_state" \}\)/);
+  assert.match(loadSystemPromptSource, /loadTools\(sid\)/);
   assert.doesNotMatch(loadSystemPromptSource, /type: "prompt"/);
   assert.match(loadSystemPromptSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
   assert.match(loaderEffectSource, /onSystemPromptLoaderChange\?\.\(loadSystemPrompt\)/);

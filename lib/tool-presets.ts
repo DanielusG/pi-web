@@ -2,6 +2,8 @@ export interface ToolEntry {
   name: string;
   description: string;
   active: boolean;
+  parameters?: Record<string, unknown>;
+  promptGuidelines?: string[];
 }
 
 export const TOOL_PRESET_VALUES = ["none", "read-only", "default", "full"] as const;
