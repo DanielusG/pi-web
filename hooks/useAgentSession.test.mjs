@@ -70,32 +70,33 @@ test("a rejected submission preserves a different run reported by the server", (
   assert.match(reconcileSource, /if \(!agentRunningRef\.current\) return;[\s\S]*?finishPromptWithoutStream/);
 });
 
-test("opening System lazily starts a dormant session without sending a prompt", () => {
-  const loadSystemPromptSource = source.slice(
-    source.indexOf("  const loadSystemPrompt = useCallback"),
+test("opening System or Tools lazily starts a dormant session without sending a prompt", () => {
+  const loadSystemInfoSource = source.slice(
+    source.indexOf("  const loadSystemInfo = useCallback"),
     source.indexOf("  const loadSlashCommands = useCallback"),
   );
   const loaderEffectSource = source.slice(
-    source.indexOf("  useEffect(() => {\n    onSystemPromptLoaderChange"),
+    source.indexOf("  useEffect(() => {\n    onSystemInfoLoaderChange"),
     source.indexOf("  useEffect(() => {\n    if (!onBranchDataChange) return;"),
   );
 
-  assert.match(loadSystemPromptSource, /sessionIdRef\.current \?\? await ensureNewSession\(\)/);
-  assert.doesNotMatch(loadSystemPromptSource, /promoteNewSession\(\)/);
-  assert.match(loadSystemPromptSource, /sendAgentCommand<AgentStateResponse>\(sid, \{ type: "get_state" \}\)/);
-  assert.match(loadSystemPromptSource, /loadTools\(sid\)/);
-  assert.doesNotMatch(loadSystemPromptSource, /type: "prompt"/);
-  assert.match(loadSystemPromptSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
-  assert.match(loaderEffectSource, /onSystemPromptLoaderChange\?\.\(loadSystemPrompt\)/);
-  assert.match(loaderEffectSource, /onSystemPromptLoaderChange\?\.\(null\)/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemPromptToggle\(mobile\)\}/);
-  assert.match(appShellSource, /systemPromptLoaderRef\.current/);
-  assert.doesNotMatch(appShellSource, /systemPrompt !== null \|\| systemPromptLoading/);
-  assert.match(appShellSource, /const loadId = \+\+systemPromptLoadIdRef\.current/);
-  assert.match(appShellSource, /systemPromptLoadIdRef\.current === loadId/);
+  assert.match(loadSystemInfoSource, /sessionIdRef\.current \?\? await ensureNewSession\(\)/);
+  assert.doesNotMatch(loadSystemInfoSource, /promoteNewSession\(\)/);
+  assert.match(loadSystemInfoSource, /sendAgentCommand<AgentStateResponse>\(sid, \{ type: "get_state" \}\)/);
+  assert.match(loadSystemInfoSource, /loadTools\(sid\)/);
+  assert.doesNotMatch(loadSystemInfoSource, /type: "prompt"/);
+  assert.match(loadSystemInfoSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
+  assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(loadSystemInfo\)/);
+  assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(null\)/);
+  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("system", mobile\)\}/);
+  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("tools", mobile\)\}/);
+  assert.match(appShellSource, /systemInfoLoaderRef\.current/);
+  assert.doesNotMatch(appShellSource, /systemPrompt !== null \|\| systemInfoLoading/);
+  assert.match(appShellSource, /const loadId = \+\+systemInfoLoadIdRef\.current/);
+  assert.match(appShellSource, /systemInfoLoadIdRef\.current === loadId/);
   assert.match(
     appShellSource,
-    /handleSystemPromptLoaderChange[\s\S]*?systemPromptLoadIdRef\.current \+= 1;[\s\S]*?setSystemPromptLoading\(false\)/,
+    /handleSystemInfoLoaderChange[\s\S]*?systemInfoLoadIdRef\.current \+= 1;[\s\S]*?setSystemInfoLoading\(false\)/,
   );
 });
 

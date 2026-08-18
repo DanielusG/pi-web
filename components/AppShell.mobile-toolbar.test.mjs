@@ -12,14 +12,14 @@ test("keeps action icons inline in medium mobile sidebars", () => {
   assert.match(source, /\{isNarrowMobile && \([\s\S]*?data-mobile-toolbar-more="true"/);
 });
 
-test("uses a compact narrow-mobile toolbar with a floating six-action layer", () => {
+test("uses a compact narrow-mobile toolbar with a floating seven-action layer", () => {
   assert.match(source, /data-mobile-toolbar="true"[\s\S]*?flex: 1,[\s\S]*?minWidth: 0/);
   assert.match(
     source,
     /data-mobile-toolbar-actions="true"[\s\S]*?position: "absolute"[\s\S]*?right: 0,[\s\S]*?left: TOP_BAR_ICON_BUTTON_SIZE/,
   );
 
-  for (const action of ["history", "name", "branches", "system", "theme", "language"]) {
+  for (const action of ["history", "name", "branches", "system", "tools", "theme", "language"]) {
     assert.match(source, new RegExp(`data-mobile-toolbar-action=(?:\\{mobile \\? )?"${action}"`));
   }
 });
@@ -51,7 +51,8 @@ test("keeps the mobile action layer open after using an expanded action", () => 
   }
 
   assert.match(source, /toggleTopPanel\("branches", true\)/);
-  assert.match(source, /handleSystemPromptToggle\(mobile\)/);
+  assert.match(source, /handleSystemInfoToggle\("system", mobile\)/);
+  assert.match(source, /handleSystemInfoToggle\("tools", mobile\)/);
   assert.match(source, /toggleTopPanel\("language", mobile\)/);
   assert.match(source, /onClick=\{\(\) => toggleTopPanel\("session"\)\}/);
 });
