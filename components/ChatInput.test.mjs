@@ -9,6 +9,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("@/lib/draft-store.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
@@ -117,6 +118,30 @@ test("filters model options by name and id", () => {
   assert.equal(filterModelOptions(options, "anthropic/claude").length, 0);
   assert.equal(filterModelOptions(options, "missing").length, 0);
   assert.equal(filterModelOptions(options, "  "), options);
+});
+
+test("renders the shared field model selector as a disabled gray control", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ModelSelector, {
+        options: [{ provider: "openai", modelId: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+        value: null,
+        onChange() {},
+        onClear() {},
+        emptyLabel: "Parent default",
+        ariaLabel: "Model override",
+        disabled: true,
+        variant: "field",
+      }),
+    ),
+  );
+
+  assert.match(html, /aria-label="Model override"/);
+  assert.match(html, /disabled=""/);
+  assert.match(html, /background:var\(--bg-panel\)/);
+  assert.match(html, />Parent default</);
 });
 
 test("caps an upward menu to the visible space above its anchor", () => {

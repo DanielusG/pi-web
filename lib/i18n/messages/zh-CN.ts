@@ -56,6 +56,7 @@ export const zhCNLocale: LocalePlugin = {
     "agents.scope.global": "全局",
     "agents.scope.workspace": "工作区",
     "agents.scope.project": "项目",
+    "agents.overridden": "被覆盖",
     "subagent.open": "打开子代理会话",
     "appUpdate.releaseNotes": "Pi Web v{version} 可用，查看更新说明",
     "sidebar.hide": "隐藏侧边栏",

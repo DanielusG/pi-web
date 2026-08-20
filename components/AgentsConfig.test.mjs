@@ -4,6 +4,8 @@ import test from "node:test";
 
 const source = await readFile(new URL("./AgentsConfig.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
+const chatInputSource = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+const modelSelectorSource = await readFile(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
 
 test("keeps same-name profiles selectable by scope and groups writable sources first", () => {
   assert.match(source, /return `\$\{profile\.scope\}:\$\{profile\.name\}`/);
@@ -15,6 +17,12 @@ test("uses the shared enabled status treatment", () => {
   assert.match(source, /<ConfigStatusDot active=\{profile\.enabled\}/);
   assert.match(source, /className=\{`is-grow\$\{profile\.enabled \? "" : " is-muted"\}`\}/);
   assert.match(cssSource, /\.config-sidebar-text\.is-muted \{[\s\S]*?color: var\(--text-dim\)/);
+});
+
+test("marks profiles shadowed by a higher-precedence source", () => {
+  assert.match(source, /isSubagentProfileOverridden\(profile, profiles\)/);
+  assert.match(source, /overridden && <span className="agents-overridden-label">\{t\("agents\.overridden"\)\}<\/span>/);
+  assert.match(cssSource, /\.agents-overridden-label \{[\s\S]*?white-space: nowrap;/);
 });
 
 test("treats global and project profiles as directly editable", () => {
@@ -39,11 +47,12 @@ test("sends the selected scope for saves and the source scope for deletes", () =
   assert.match(source, /JSON\.stringify\(\{ cwd, scope: selected\.scope, name: selected\.name \}\)/);
 });
 
-test("shows a Skills-style path row and enabled switch at the top of the editor", () => {
+test("shows a Skills-style path row with the same switch in editable and readonly modes", () => {
   assert.match(source, /function displayProfilePath\(profile: SubagentProfile, cwd: string\)/);
   assert.match(source, /profile\.scope === "project" \|\| profile\.scope === "workspace"/);
   assert.match(source, /`~\/\.pi\/agent\/agents\/\$\{draft\.name \|\| "\.\.\."\}\.md`/);
-  assert.match(source, /<ConfigSwitch checked=\{draft\.enabled\}/);
+  assert.match(source, /<ConfigSwitch checked=\{draft\.enabled\} disabled=\{disabled\}/);
+  assert.doesNotMatch(source, /agents-readonly-status/);
   assert.doesNotMatch(source, /<Toggle label=\{t\("agents\.enabled"\)\}/);
 });
 
@@ -55,12 +64,15 @@ test("persists existing profile toggles immediately without submitting unsaved f
   assert.doesNotMatch(source, /method: "PATCH"[\s\S]*?profile: draft/);
 });
 
-test("loads scoped models into a provider-grouped selector without manual entry", () => {
+test("reuses the ChatInput model selector with scoped models", () => {
   assert.match(source, /fetch\(`\/api\/models\?cwd=\$\{encodeURIComponent\(cwd\)\}`/);
-  assert.match(source, /const modelsByProvider = useMemo/);
-  assert.match(source, /<select[\s\S]*?aria-label=\{t\("agents\.model"\)\}/);
-  assert.match(source, /<optgroup key=\{provider\} label=\{provider\}>/);
-  assert.match(source, /value=\{`\$\{model\.provider\}\/\$\{model\.id\}`\}/);
+  assert.match(source, /import \{ ModelSelector \} from "\.\/ModelSelector"/);
+  assert.match(chatInputSource, /import \{ ModelSelector, type ModelSelectorOption \} from "\.\/ModelSelector"/);
+  assert.match(source, /<ModelSelector[\s\S]*?options=\{modelSelectorOptions\}[\s\S]*?variant="field"/);
+  assert.match(chatInputSource, /<ModelSelector[\s\S]*?options=\{modelOptions\}/);
+  assert.match(modelSelectorSource, /filterModelOptions\(sortedOptions, filter\)/);
+  assert.match(modelSelectorSource, /modelsByProvider\.map/);
+  assert.match(modelSelectorSource, /event\.key !== "Escape" \|\| !open[\s\S]*?event\.preventDefault\(\)[\s\S]*?event\.stopPropagation\(\)/);
   assert.match(source, /agents\.modelUnavailable/);
   assert.doesNotMatch(source, /placeholder="provider\/modelId"/);
 });
@@ -71,9 +83,26 @@ test("renders the stable agent id as text outside create mode", () => {
   assert.doesNotMatch(source, /disabled=\{disabled \|\| !creating\}/);
 });
 
-test("keeps system instructions vertically resizable even when read-only", () => {
-  assert.match(source, /<textarea[^>]*aria-label=\{t\("agents\.prompt"\)\}[\s\S]*?readOnly=\{disabled\}/);
-  assert.match(source, /height: 195,[\s\S]*?minHeight: 195,[\s\S]*?maxHeight: "60vh"[\s\S]*?resize: "vertical"/);
+test("uses the same form controls for editable and readonly profiles", () => {
+  assert.match(source, /<input aria-label=\{t\("agents\.displayName"\)\}[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<input aria-label=\{t\("agents\.description"\)\}[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<textarea className="agents-system-prompt"[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<Toggle key=\{tool\}[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<select aria-label=\{t\("agents\.thinking"\)\}[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<input aria-label=\{t\("agents\.maxTurns"\)[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /<Toggle label=\{t\("agents\.inheritContext"\)\} disabled=\{disabled\}/);
+  assert.match(source, /<Toggle label=\{t\("agents\.background"\)\} disabled=\{disabled\}/);
+  assert.doesNotMatch(source, /ReadonlyValue|readonlyPromptStyle|agents-readonly/);
+});
+
+test("shows disabled controls with a gray background", () => {
+  const disabledStyle = source.match(/const disabledInputStyle: CSSProperties = \{([\s\S]*?)\n\};/)?.[1] ?? "";
+  assert.match(source, /<textarea[^>]*aria-label=\{t\("agents\.prompt"\)\}[\s\S]*?disabled=\{disabled\}/);
+  assert.match(source, /height: 195,[\s\S]*?minHeight: 195,[\s\S]*?maxHeight: "60vh"[\s\S]*?resize: disabled \? "none" : "vertical"/);
+  assert.doesNotMatch(source, /agents-system-prompt[^\n]*fontFamily/);
+  assert.match(disabledStyle, /background: "var\(--bg-panel\)"/);
+  assert.match(disabledStyle, /color: "var\(--text-dim\)"/);
+  assert.match(modelSelectorSource, /background: locked \? "var\(--bg-panel\)" : "var\(--bg\)"/);
 });
 
 test("keeps a larger resize corner when system instructions need a scrollbar", () => {

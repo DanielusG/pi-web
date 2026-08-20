@@ -206,6 +206,14 @@
   color: var(--text-dim);
 }
 
+.agents-overridden-label {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .config-sidebar-message {
   padding: 10px 8px;
   color: var(--text-muted);

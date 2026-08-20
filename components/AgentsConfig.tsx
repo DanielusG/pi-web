@@ -5,6 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SubagentProfilesResponse } from "@/lib/api-types";
 import type { ModelsData } from "@/lib/models-cache";
+import { isSubagentProfileOverridden } from "@/lib/subagent-profile-precedence";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
 import {
   getLastSettingsSelection,
@@ -31,6 +32,7 @@ import {
   ConfigStatusDot,
   ConfigSwitch,
 } from "./SettingsUi";
+import { ModelSelector } from "./ModelSelector";
 
 const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -60,6 +62,12 @@ const inputStyle: CSSProperties = {
   color: "var(--text)",
   fontSize: 12,
   outline: "none",
+};
+
+const disabledInputStyle: CSSProperties = {
+  background: "var(--bg-panel)",
+  color: "var(--text-dim)",
+  cursor: "default",
 };
 
 function editableProfile(profile: SubagentProfile): EditableProfile {
@@ -141,15 +149,11 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
     () => profiles.find((profile) => profileKey(profile) === selectedKey) ?? null,
     [profiles, selectedKey],
   );
-  const modelsByProvider = useMemo(() => {
-    const groups = new Map<string, ModelsData["modelList"]>();
-    for (const model of modelOptions) {
-      const group = groups.get(model.provider);
-      if (group) group.push(model);
-      else groups.set(model.provider, [model]);
-    }
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [modelOptions]);
+  const modelSelectorOptions = useMemo(() => modelOptions.map((model) => ({
+    provider: model.provider,
+    modelId: model.id,
+    name: model.name,
+  })), [modelOptions]);
 
   const loadProfiles = useCallback(async (preferredKey?: string) => {
     setLoading(true);
@@ -294,6 +298,14 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
       : "";
   const fullPath = creating ? displayedPath : selected?.filePath ?? displayedPath;
   const selectedModelAvailable = !draft.model || modelOptions.some((model) => `${model.provider}/${model.id}` === draft.model);
+  const selectedModel = (() => {
+    if (!draft.model) return null;
+    const separator = draft.model.indexOf("/");
+    return separator < 0
+      ? { provider: "", modelId: draft.model }
+      : { provider: draft.model.slice(0, separator), modelId: draft.model.slice(separator + 1) };
+  })();
+  const controlStyle = disabled ? { ...inputStyle, ...disabledInputStyle } : inputStyle;
   const update = <K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
@@ -337,16 +349,20 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                 return (
                   <div key={scope} className="config-sidebar-group">
                     <ConfigSidebarGroupLabel>{t(`agents.scope.${scope}`)}</ConfigSidebarGroupLabel>
-                    {scopedProfiles.map((profile) => (
-                      <ConfigSidebarItem
-                        key={profileKey(profile)}
-                        active={selectedKey === profileKey(profile) && !creating}
-                        onClick={() => selectProfile(profile)}
-                      >
-                        <ConfigStatusDot active={profile.enabled} />
-                        <ConfigSidebarText className={`is-grow${profile.enabled ? "" : " is-muted"}`}>{profile.displayName}</ConfigSidebarText>
-                      </ConfigSidebarItem>
-                    ))}
+                    {scopedProfiles.map((profile) => {
+                      const overridden = isSubagentProfileOverridden(profile, profiles);
+                      return (
+                        <ConfigSidebarItem
+                          key={profileKey(profile)}
+                          active={selectedKey === profileKey(profile) && !creating}
+                          onClick={() => selectProfile(profile)}
+                        >
+                          <ConfigStatusDot active={profile.enabled} />
+                          <ConfigSidebarText className={`is-grow${profile.enabled ? "" : " is-muted"}`}>{profile.displayName}</ConfigSidebarText>
+                          {overridden && <span className="agents-overridden-label">{t("agents.overridden")}</span>}
+                        </ConfigSidebarItem>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -411,13 +427,19 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                         </code>
                       )}
                     </Field>
-                    <Field label={t("agents.displayName")}><input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={inputStyle} /></Field>
+                    <Field label={t("agents.displayName")}>
+                      <input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={controlStyle} />
+                    </Field>
                   </div>
-                  <Field label={t("agents.description")}><input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={inputStyle} /></Field>
-                  <Field label={t("agents.prompt")}><textarea className="agents-system-prompt" aria-label={t("agents.prompt")} value={draft.systemPrompt} readOnly={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...inputStyle, height: 195, minHeight: 195, maxHeight: "60vh", padding: 9, overflow: "auto", resize: "vertical", lineHeight: 1.5, fontFamily: "var(--font-mono)" }} /></Field>
+                  <Field label={t("agents.description")}>
+                    <input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={controlStyle} />
+                  </Field>
+                  <Field label={t("agents.prompt")}>
+                    <textarea className="agents-system-prompt" aria-label={t("agents.prompt")} value={draft.systemPrompt} disabled={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...controlStyle, height: 195, minHeight: 195, maxHeight: "60vh", padding: 9, overflow: "auto", resize: disabled ? "none" : "vertical", lineHeight: 1.5 }} />
+                  </Field>
 
                   <Field label={t("agents.tools")}>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "9px 10px", border: "1px solid var(--border)", borderRadius: 5 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", padding: "9px 10px", border: "1px solid var(--border)", borderRadius: 5, background: disabled ? "var(--bg-panel)" : "transparent" }}>
                       {TOOL_OPTIONS.map((tool) => (
                         <Toggle key={tool} label={tool} disabled={disabled} checked={draft.tools.includes(tool)} onChange={(checked) => update("tools", checked ? [...draft.tools, tool] : draft.tools.filter((item) => item !== tool))} />
                       ))}
@@ -427,36 +449,29 @@ export function AgentsConfig({ cwd, onClose, embedded = false }: { cwd: string; 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.5fr) minmax(120px, 0.75fr) minmax(100px, 0.5fr)", gap: 12 }}>
                     <Field label={t("agents.model")}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <select
-                          aria-label={t("agents.model")}
-                          value={draft.model ?? ""}
+                        <ModelSelector
+                          options={modelSelectorOptions}
+                          value={selectedModel}
+                          onChange={(provider, modelId) => update("model", `${provider}/${modelId}`)}
+                          onClear={() => update("model", undefined)}
+                          emptyLabel={modelsLoading ? t("agents.modelsLoading") : t("agents.inherit")}
+                          selectedLabel={draft.model && !selectedModelAvailable ? t("agents.modelUnavailable", { model: draft.model }) : undefined}
                           disabled={disabled || modelsLoading || (modelOptions.length === 0 && !draft.model)}
-                          onChange={(event) => update("model", event.target.value || undefined)}
-                          style={inputStyle}
-                        >
-                          <option value="">{modelsLoading ? t("agents.modelsLoading") : t("agents.inherit")}</option>
-                          {draft.model && !selectedModelAvailable && (
-                            <option value={draft.model}>{t("agents.modelUnavailable", { model: draft.model })}</option>
-                          )}
-                          {modelsByProvider.map(([provider, models]) => (
-                            <optgroup key={provider} label={provider}>
-                              {models.map((model) => (
-                                <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-                                  {model.name === model.id ? model.id : `${model.name} (${model.id})`}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
+                          ariaLabel={t("agents.model")}
+                          variant="field"
+                          placement="auto"
+                        />
                         {modelsError && <span style={{ color: "#ef4444", fontSize: 10 }}>{modelsError}</span>}
                       </div>
                     </Field>
                     <Field label={t("agents.thinking")}>
-                      <select aria-label={t("agents.thinking")} value={draft.thinking ?? ""} disabled={disabled} onChange={(event) => update("thinking", (event.target.value || undefined) as EditableProfile["thinking"])} style={inputStyle}>
+                      <select aria-label={t("agents.thinking")} value={draft.thinking ?? ""} disabled={disabled} onChange={(event) => update("thinking", (event.target.value || undefined) as EditableProfile["thinking"])} style={controlStyle}>
                         {THINKING_OPTIONS.map((value) => <option key={value || "default"} value={value}>{value || t("agents.inherit")}</option>)}
                       </select>
                     </Field>
-                    <Field label={t("agents.maxTurns")}><input aria-label={t("agents.maxTurns")} type="number" min={1} value={draft.maxTurns ?? ""} disabled={disabled} onChange={(event) => update("maxTurns", event.target.value ? Number(event.target.value) : undefined)} style={inputStyle} /></Field>
+                    <Field label={t("agents.maxTurns")}>
+                      <input aria-label={t("agents.maxTurns")} type="number" min={1} value={draft.maxTurns ?? ""} disabled={disabled} onChange={(event) => update("maxTurns", event.target.value ? Number(event.target.value) : undefined)} style={controlStyle} />
+                    </Field>
                   </div>
 
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 20px" }}>

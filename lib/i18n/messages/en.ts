@@ -56,6 +56,7 @@ export const enLocale: LocalePlugin = {
     "agents.scope.global": "global",
     "agents.scope.workspace": "workspace",
     "agents.scope.project": "project",
+    "agents.overridden": "Overridden",
     "subagent.open": "Open sub-agent session",
     "appUpdate.releaseNotes": "Pi Web v{version} is available. View release notes",
     "sidebar.hide": "Hide sidebar",
