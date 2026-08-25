@@ -197,6 +197,8 @@ export class AgentSessionWrapper {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
+  private sessionShutdownEmitted = false;
+  private forceShutdownOnIdle = false;
   private _alive = true;
 
   constructor(
@@ -385,8 +387,10 @@ export class AgentSessionWrapper {
 
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (!this._alive) return;
+    if (!this.isRunning()) this.forceShutdownOnIdle = false;
     this.idleTimer = setTimeout(() => {
-      if (this.isRunning()) {
+      if (this.isRunning() && !this.forceShutdownOnIdle) {
         this.resetIdleTimer();
         return;
       }
@@ -474,7 +478,8 @@ export class AgentSessionWrapper {
     if (tracksMutation) this.activeMutatingCommands += 1;
 
     try {
-      this.resetIdleTimer();
+      // Status reconciliation must not postpone forced cleanup after Stop.
+      if (type !== "get_state") this.resetIdleTimer();
       if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
       if (this.sessionReplacement && !allowedDuringReplacement) {
         throw new Error("Session is being copied to a new session");
@@ -578,8 +583,13 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
-        await this.withFinalRunningNotification(() => this.inner.abort());
-        return null;
+        this.forceShutdownOnIdle = true;
+        try {
+          await this.withFinalRunningNotification(() => this.inner.abort());
+          return null;
+        } finally {
+          if (!this.isRunning()) this.forceShutdownOnIdle = false;
+        }
 
       case "get_state": {
         const model = this.inner.model;
@@ -872,6 +882,7 @@ export class AgentSessionWrapper {
       }
 
       case "abort_bash": {
+        this.forceShutdownOnIdle = true;
         this.inner.abortBash();
         return null;
       }
@@ -895,15 +906,45 @@ export class AgentSessionWrapper {
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     this.clearExtensionWidgets(false);
-    try {
-      this.inner.dispose();
-    } finally {
+
+    const finishDispose = () => {
       try {
-        this.onDestroyCallback?.();
+        this.inner.dispose();
       } finally {
-        notifyRunningChange();
+        try {
+          this.onDestroyCallback?.();
+        } finally {
+          notifyRunningChange();
+        }
       }
+    };
+
+    // Always emit session_shutdown before dispose, even when callers skip
+    // shutdown() (process exit, direct destroy). Await when possible so
+    // extension MCP children can reap before the runner is invalidated.
+    if (this.sessionShutdownEmitted) {
+      finishDispose();
+      return;
     }
+
+    this.sessionShutdownEmitted = true;
+    const emit = this.inner.extensionRunner?.emit;
+    if (typeof emit !== "function") {
+      finishDispose();
+      return;
+    }
+
+    void (async () => emit.call(
+      this.inner.extensionRunner,
+      { type: "session_shutdown", reason: "quit" },
+    ))()
+      .catch((error) => {
+        console.error(
+          "[pi-web] session_shutdown before dispose failed:",
+          error instanceof Error ? error.message : error,
+        );
+      })
+      .finally(finishDispose);
   }
 
   async shutdown(): Promise<void> {
@@ -920,7 +961,10 @@ export class AgentSessionWrapper {
             error instanceof Error ? error.message : error,
           );
         }
-        await this.inner.extensionRunner.emit?.({ type: "session_shutdown", reason: "quit" });
+        if (!this.sessionShutdownEmitted) {
+          this.sessionShutdownEmitted = true;
+          await this.inner.extensionRunner.emit?.({ type: "session_shutdown", reason: "quit" });
+        }
       } finally {
         this.destroy();
       }
@@ -1489,10 +1533,16 @@ declare global {
 function getRegistry(): Map<string, AgentSessionWrapper> {
   if (!globalThis.__piSessions) {
     globalThis.__piSessions = new Map();
-    const cleanup = () => globalThis.__piSessions?.forEach((s) => s.destroy());
-    process.once("exit", cleanup);
-    process.once("SIGINT", cleanup);
-    process.once("SIGTERM", cleanup);
+    const destroy = () => globalThis.__piSessions?.forEach((session) => session.destroy());
+    const shutdown = () => {
+      const sessions = Array.from(globalThis.__piSessions?.values() ?? []);
+      void Promise.allSettled(sessions.map((session) => session.shutdown()));
+    };
+    // Node cannot await work from an exit handler; direct destruction starts
+    // extension cleanup synchronously as a final best effort.
+    process.once("exit", destroy);
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
   }
   return globalThis.__piSessions;
 }
