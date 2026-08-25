@@ -8,7 +8,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
-import { isEditToolName } from "@/lib/tool-names";
+import { isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
@@ -856,7 +856,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} />;
+    return <ToolCallBlock block={tc} result={result} duration={duration} cwd={cwd} />;
   }
   return null;
 }
@@ -948,13 +948,89 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+type PendingToolPreview =
+  | { status: "loading" }
+  | { status: "error"; error: string }
+  | { status: "no-change" }
+  | { status: "done"; patch: string };
+
+type CachedToolPreview = Extract<PendingToolPreview, { status: "done" }>;
+
+// Cache previews per tool call id: the input of a committed tool call never
+// changes, so collapsing/re-expanding (or re-mounting the block) must not
+// refetch. Errors are never cached (a retry on re-expand is desirable), and
+// only small patches are cached: a full-file write of a 5MB source produces a
+// ~10MB patch, and 200 of those would be gigabytes.
+const pendingToolPreviewCache = new Map<string, CachedToolPreview>();
+const PENDING_TOOL_PREVIEW_CACHE_MAX = 200;
+const MAX_CACHED_PATCH_LENGTH = 256 * 1024;
+
+function hasPreviewableInput(block: ToolCallContent): boolean {
+  const input = block.input as { edits?: unknown; content?: unknown };
+  if (isEditToolName(block.toolName)) {
+    return Array.isArray(input.edits) && input.edits.length > 0;
+  }
+  if (isWriteToolName(block.toolName)) {
+    return typeof input.content === "string";
+  }
+  return false;
+}
+
+function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; cwd?: string }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const [preview, setPreview] = useState<PendingToolPreview | null>(null);
   const inputStr = getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
   const isEditTool = isEditToolName(block.toolName);
+  const isPreviewableTool = isEditTool || isWriteToolName(block.toolName);
+  const previewShapeOk = isPreviewableTool && hasPreviewableInput(block);
+  const showPreview = Boolean(cwd) && previewShapeOk && !result && !isStreamingInput;
+  const showRawArgs =
+    isStreamingInput ||
+    !isPreviewableTool ||
+    !previewShapeOk ||
+    !cwd ||
+    (Boolean(result) && !isEditTool);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+
+  useEffect(() => {
+    if (!expanded || !showPreview) return;
+    const cached = pendingToolPreviewCache.get(block.toolCallId);
+    if (cached) {
+      setPreview(cached);
+      return;
+    }
+    const controller = new AbortController();
+    setPreview({ status: "loading" });
+    fetch("/api/edit-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: block.toolName, cwd, input: block.input }),
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data: { patch?: string | null; error?: string }) => {
+        const next: PendingToolPreview = data.error
+          ? { status: "error", error: data.error || "No preview available" }
+          : data.patch
+            ? { status: "done", patch: data.patch }
+            : { status: "no-change" };
+        if (next.status === "done" && next.patch.length <= MAX_CACHED_PATCH_LENGTH) {
+          if (pendingToolPreviewCache.size >= PENDING_TOOL_PREVIEW_CACHE_MAX) {
+            const oldest = pendingToolPreviewCache.keys().next().value;
+            if (oldest !== undefined) pendingToolPreviewCache.delete(oldest);
+          }
+          pendingToolPreviewCache.set(block.toolCallId, next);
+        }
+        setPreview(next);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setPreview({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      });
+    return () => controller.abort();
+  }, [expanded, showPreview, cwd, block.toolCallId, block.toolName, block.input]);
 
   // Result display
   const resultText = result
@@ -1005,8 +1081,57 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         </svg>
       </button>
 
+      {/* ── Expanded: proposed change preview (pending edit/write) ── */}
+      {expanded && showPreview && (
+        preview?.status === "done" ? (
+          <ProposedChangesPreview
+            path={String((block.input as { path?: unknown }).path ?? "")}
+            patchText={preview.patch}
+          />
+        ) : preview?.status === "no-change" ? (
+          <div
+            style={{
+              padding: "8px 10px",
+              color: "var(--text-dim)",
+              fontSize: 12,
+              borderTop: "1px solid var(--border)",
+              background: "var(--bg)",
+            }}
+          >
+            {t("chat.noChanges")}
+          </div>
+        ) : preview?.status === "error" ? (
+          <div
+            style={{
+              padding: "8px 10px",
+              color: "#f87171",
+              fontSize: 12,
+              lineHeight: 1.5,
+              borderTop: "1px solid rgba(248,113,113,0.25)",
+              background: "var(--bg)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {preview.error}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: "8px 10px",
+              color: "var(--text-dim)",
+              fontSize: 12,
+              borderTop: "1px solid var(--border)",
+              background: "var(--bg-subtle)",
+            }}
+          >
+            {t("chat.previewLoading")}
+          </div>
+        )
+      )}
+
       {/* ── Expanded: input args ── */}
-      {expanded && (isStreamingInput || !isEditTool) && (
+      {expanded && showRawArgs && (
         <pre
           style={{
             margin: 0,
@@ -1058,6 +1183,36 @@ function PairedDiffResult({ diff }: {
       }}
     >
       <SplitPatchView text={diff.text} />
+    </div>
+  );
+}
+
+function ProposedChangesPreview({ path, patchText }: { path: string; patchText: string }) {
+  const { t } = useI18n();
+  return (
+    <div
+      style={{
+        borderTop: "1px solid rgba(34,197,94,0.15)",
+        background: "var(--bg)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "5px 10px",
+          borderBottom: "1px solid var(--border)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+        }}
+      >
+        <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{t("chat.proposedChanges")}</span>
+        <span title={path} style={{ color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {path}
+        </span>
+      </div>
+      <SplitPatchView text={patchText} />
     </div>
   );
 }
