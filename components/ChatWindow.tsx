@@ -18,7 +18,6 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import {
   captureScrollDistance,
-  getNextVisibleCount,
   getPromptAnchorSpacerHeight,
   getVisibleRenderWindow,
   restoreScrollTop,
@@ -276,7 +275,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [chatInputRef]);
 
   const {
-    loading, error, messages, entryIds, streamState,
+    loading, error, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
@@ -292,6 +291,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
+    loadContext, activeLeafId,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
@@ -315,7 +315,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
-
+  const loadingOlderRef = useRef(false);
   // IntersectionObserver on the sentinel div at the top of the message list.
   // When it becomes visible, load the next page of older messages.
   useEffect(() => {
@@ -324,17 +324,33 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     if (!sentinel || !container) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          // Save distance from top before prepending to restore scroll later
-          prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
-          setVisibleCount((prev) => getNextVisibleCount(prev));
-        }
+        if (!entries[0]?.isIntersecting) return;
+        // No older history loaded yet: fetch the previous page from the server
+        // and prepend it (loadContext handles prepend + scroll anchoring).
+        // Skip while a page is already loading or nothing older exists.
+        if (loadingOlderRef.current) return;
+        if (!hasEarlierMessages) return;
+        const oldestId = historyCursor;
+        if (!oldestId) return;
+        const sid = session?.id ?? sessionIdRef.current;
+        if (!sid) return;
+        loadingOlderRef.current = true;
+        prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
+        void loadContext(sid, activeLeafId, oldestId).finally(() => {
+          loadingOlderRef.current = false;
+        });
       },
       { root: container, threshold: 0 }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [visibleCount, messages.length, scrollContainerRef]);
+  }, [historyCursor, hasEarlierMessages, session, activeLeafId, loadContext, sessionIdRef, scrollContainerRef]);
+
+  // Keep the rendered window at least as large as what's loaded, so prepended
+  // (older) pages stay visible instead of being sliced off the top.
+  useEffect(() => {
+    setVisibleCount((current) => Math.max(current, messages.length));
+  }, [messages.length]);
 
   // After visibleCount increases (more messages prepended), restore the
   // scroll position so the viewport doesn't jump.
@@ -876,12 +892,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 }
                 idx = endIdx;
               }
-              const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
+              const { startIndex } = getVisibleRenderWindow(rendered.length, visibleCount);
+              const hasMore = startIndex > 0 || hasEarlierMessages;
               return (
                 <>
                   {hasMore && (
                      <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
-                       {t("chat.loadEarlier", { count: startIndex })}
+                       {t("chat.loadEarlier")}
                     </div>
                   )}
                   {rendered.slice(startIndex)}

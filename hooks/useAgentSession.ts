@@ -42,6 +42,8 @@ export interface SessionData {
   context: {
     messages: AgentMessage[];
     entryIds: string[];
+    oldestEntryId: string | null;
+    hasMore: boolean;
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
@@ -278,6 +280,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
   const [streamState, dispatch] = useReducer(streamReducer, INITIAL_STREAMING_STATE);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
@@ -423,7 +427,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const sessionStats = useMemo(() => {
     if (sessionStatsOverride) {
-      return { ...sessionStatsOverride, totalActiveMs: data?.totalActiveMs };
+      return {
+        ...sessionStatsOverride,
+        totalActiveMs: data?.totalActiveMs,
+        ...(contextUsage ? { contextUsage } : {}),
+      };
     }
     const fileStats = data?.stats;
     const stats = mergeSessionStats(fileStats, data?.context.messages ?? [], messages);
@@ -449,6 +457,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setData(null);
           setActiveLeafId(null);
           setMessages([]);
+          setEntryIds([]);
+          setHistoryCursor(null);
+          setHasEarlierMessages(false);
           setError(null);
         }
         return null;
@@ -461,6 +472,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setActiveLeafId(d.leafId);
       setMessages(persistedMessages);
       setEntryIds(d.context.entryIds ?? []);
+      setHistoryCursor(d.context.oldestEntryId);
+      setHasEarlierMessages(d.context.hasMore);
       setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -501,16 +514,39 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, []);
 
-  const loadContext = useCallback(async (sid: string, leafId: string | null) => {
+  const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null) => {
     try {
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
       if (leafId) params.set("leafId", leafId);
+      // Page upward: ask the server for the `tail` ancestors preceding `before`,
+      // then prepend them. Omitting `before` fetches the most-recent `tail`.
+      if (before) params.set("before", before);
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json() as { context: { messages: AgentMessage[]; entryIds: string[] } };
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
+      const d = await res.json() as { context: SessionData["context"] };
+      if (sessionIdRef.current !== sid) return;
+      setHistoryCursor(d.context.oldestEntryId);
+      setHasEarlierMessages(d.context.hasMore);
+      setData((prev) => {
+        if (!prev || prev.sessionId !== sid) return prev;
+        const context = before ? {
+          ...prev.context,
+          messages: [...d.context.messages, ...prev.context.messages],
+          entryIds: [...d.context.entryIds, ...prev.context.entryIds],
+          oldestEntryId: d.context.oldestEntryId,
+          hasMore: d.context.hasMore,
+        } : d.context;
+        return { ...prev, context };
+      });
+      if (before) {
+        // Older page: prepend so scroll position stays anchored.
+        setMessages((prev) => [...d.context.messages, ...prev]);
+        setEntryIds((prev) => [...d.context.entryIds, ...prev]);
+      } else {
+        setMessages(d.context.messages);
+        setEntryIds(d.context.entryIds ?? []);
+      }
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -1943,7 +1979,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, entryIds, streamState,
+    data, loading, error, activeLeafId, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,
@@ -1962,7 +1998,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue,
     handleBuiltinSlashCommand,
     setNoticePaused: setPausedNoticeId,
-    handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
+    handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
     scrollToBottom, scrollUserMsgToTop,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,
