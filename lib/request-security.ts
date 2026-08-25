@@ -106,10 +106,13 @@ export function isApiRequestHostAllowed(
  * `Origin` onto the backend authority, so the two disagree on the scheme alone
  * for a request that really is same-origin (Azure Dev Tunnels does this). Accept
  * that pairing only when the Origin's authority still equals the Host header,
- * which a cross-origin page cannot forge, and only when a proxy is in front.
+ * a proxy is in front, and Fetch Metadata still reports a same-origin request.
  */
 function isProxyRewrittenSameOrigin(request: Request, origin: string): boolean {
-  if (!request.headers.get("x-forwarded-proto")) return false;
+  if (
+    request.headers.get("sec-fetch-site") !== "same-origin"
+    || !request.headers.get("x-forwarded-proto")
+  ) return false;
 
   const host = request.headers.get("host");
   if (!host) return false;
