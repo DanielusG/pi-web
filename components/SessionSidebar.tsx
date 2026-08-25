@@ -138,7 +138,26 @@ interface ValidatedProject {
 }
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
+const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
 const RUNNING_SESSIONS_POLL_MS = 2500;
+
+function loadLastCustomCwd(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(LAST_CUSTOM_CWD_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveLastCustomCwd(cwd: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_CUSTOM_CWD_STORAGE_KEY, cwd);
+  } catch {
+    // Persistence is best-effort.
+  }
+}
 
 function loadUnreadSessionIds(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -390,7 +409,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [projectFilter, setProjectFilter] = useState("");
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
-  const [customPathValue, setCustomPathValue] = useState("");
+  const [customPathValue, setCustomPathValue] = useState(loadLastCustomCwd);
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const [validatedProject, setValidatedProject] = useState<ValidatedProject | null>(null);
@@ -743,9 +762,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         root: data.projectRoot,
         key: data.projectKey,
       });
+      saveLastCustomCwd(data.cwd);
+      setCustomPathValue(data.cwd);
       setSelectedCwd(data.cwd);
       setCustomPathOpen(false);
-      setCustomPathValue("");
       setDropdownOpen(false);
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
@@ -766,7 +786,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (data.cwd) {
         setSelectedCwd(data.cwd);
         setCustomPathOpen(false);
-        setCustomPathValue("");
         setCustomPathError(null);
         setDropdownOpen(false);
       }
@@ -946,6 +965,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {customPathOpen && (
         <DirectoryPicker
+          initialPath={customPathValue}
           busy={customPathValidating}
           error={customPathError}
           onCancel={() => {
@@ -1158,7 +1178,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       setSelectedCwd(project.root);
                       setProjectFilter("");
                       setCustomPathOpen(false);
-                      setCustomPathValue("");
                       setCustomPathError(null);
                       setDropdownOpen(false);
                     }}
