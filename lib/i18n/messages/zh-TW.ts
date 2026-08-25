@@ -254,6 +254,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.commandName": "設定工作階段顯示名稱",
     "chat.commandSession": "顯示工作階段的訊息、Token 和費用統計",
     "chat.commandCopy": "複製最後一則助理訊息",
+    "chat.commandClone": "將目前分支複製為獨立新工作階段",
     "chat.compacted": "已壓縮",
     "chat.tokensSaved": "已節省 {saved}",
     "i18n.close": "關閉",
