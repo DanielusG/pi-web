@@ -52,7 +52,6 @@ export interface SubagentRuntimeDependencies {
   reopenSession(sessionId: string, sessionFile: string): Promise<HostSession>;
   resolveSessionPath(sessionId: string): Promise<string | null>;
   invalidateSessionList(): void;
-  notifyRunningChange(): void;
   isBuiltInSubagentsEnabled?(): boolean;
 }
 
@@ -343,7 +342,6 @@ export function createSubagentController(
         request.onUpdate?.(result);
         getSubagentRuns().delete(initialRun.sessionId);
         dependencies.invalidateSessionList();
-        dependencies.notifyRunningChange();
         return result;
       })();
 

@@ -55,7 +55,6 @@ app/api/
   agent/[id]/route.ts             GET state | POST any command
   agent/[id]/events/route.ts      GET SSE stream
   agent/running/route.ts          GET currently-running session ids
-  agent/running/events/route.ts   GET SSE stream of currently-running session ids
   auth/api-key/[provider]/route.ts POST/DELETE provider API key storage
   auth/login/[provider]/route.ts  GET OAuth/device-code SSE | POST manual code
   auth/logout/[provider]/route.ts POST OAuth logout
