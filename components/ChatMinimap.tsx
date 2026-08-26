@@ -659,7 +659,7 @@ export function ChatMinimap({
               style={{
                 width: 8,
                 height: 8,
-                borderRadius: 2,
+                borderRadius: 4,
                 background: isActive ? "rgba(128,128,128,0.42)" : "rgba(128,128,128,0.16)",
                 border: `1.5px solid ${isActive ? "rgba(128,128,128,0.95)" : "rgba(128,128,128,0.58)"}`,
                 boxShadow: isActive ? "0 0 0 2px var(--bg-panel)" : "none",
@@ -744,9 +744,17 @@ export function ChatMinimap({
   );
 }
 
-// Hook to create a stable array of refs for messages
+// Hook to create a stable array of refs for messages.
+// O(1) in the steady state (count unchanged): the old implementation
+// re-allocated and re-mapped the whole array on every ChatWindow render.
 export function useMessageRefs(count: number): RefObject<(HTMLDivElement | null)[]> {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
-  refs.current = Array(count).fill(null).map((_, i) => refs.current[i] ?? null);
+  if (refs.current.length !== count) {
+    const next: (HTMLDivElement | null)[] = new Array(count).fill(null);
+    for (let i = 0; i < Math.min(next.length, refs.current.length); i++) {
+      next[i] = refs.current[i];
+    }
+    refs.current = next;
+  }
   return refs;
 }

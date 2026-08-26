@@ -1,3 +1,4 @@
+@import "@fontsource-variable/geist";
 @import "tailwindcss";
 
 @theme {
@@ -19,37 +20,61 @@
 }
 
 :root {
+  /* slate-tinted neutrals (light) */
   --bg: #ffffff;
-  --bg-panel: #f5f5f5;
-  --bg-hover: #eeeeee;
-  --bg-selected: #e8e8e8;
-  --border: #e0e0e0;
-  --text: #1a1a1a;
-  --text-muted: #6b7280;
-  --text-dim: #9ca3af;
+  --bg-panel: #f7f8fa;
+  --bg-hover: #eef0f4;
+  --bg-selected: #e7eaef;
+  --border: #e3e6eb;
+  --border-strong: #d3d8e0;
+  --text: #191c21;
+  --text-muted: #5f6672;
+  --text-dim: #9aa1ac;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
-  --user-bg: #eff6ff;
+  --user-bg: #eef3fd;
   --assistant-bg: #ffffff;
-  --tool-bg: #f9fafb;
-  --bg-subtle: rgba(0,0,0,0.03);
+  --tool-bg: #f7f8fa;
+  --bg-subtle: rgba(23,28,38,0.04);
+  --danger: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+
+  /* geometry + depth */
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --ease: cubic-bezier(0.3, 0.7, 0.4, 1);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.06), 0 20px 48px -12px rgba(15, 23, 42, 0.22);
 }
 
 html.dark {
-  --bg: #1a1a1a;
-  --bg-panel: #242424;
-  --bg-hover: #2e2e2e;
-  --bg-selected: #383838;
-  --border: #3a3a3a;
-  --text: #e8e8e8;
-  --text-muted: #9ca3af;
-  --text-dim: #6b7280;
+  /* deep slate (dark) */
+  --bg: #0f1216;
+  --bg-panel: #151a20;
+  --bg-hover: #1c232b;
+  --bg-selected: #232c37;
+  --border: #273039;
+  --border-strong: #34404d;
+  --text: #e5e9ef;
+  --text-muted: #8f99a6;
+  --text-dim: #5c6672;
   --accent: #60a5fa;
   --accent-hover: #93c5fd;
-  --user-bg: #1e293b;
-  --assistant-bg: #1a1a1a;
-  --tool-bg: #1f2937;
-  --bg-subtle: rgba(255,255,255,0.04);
+  --user-bg: #1a2432;
+  --assistant-bg: #0f1216;
+  --tool-bg: #141a21;
+  --bg-subtle: rgba(255,255,255,0.045);
+  --danger: #f87171;
+  --success: #4ade80;
+  --warning: #f59e0b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4), 0 20px 48px -12px rgba(0, 0, 0, 0.6);
 }
 
 .catppuccin-file-icon {
@@ -105,9 +130,15 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Geist Variable", -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overscroll-behavior: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 body {
@@ -116,15 +147,18 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
 }
 
 .extension-status-shelf {
@@ -327,10 +361,6 @@ button.extension-widget-trigger:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
-}
-
 :root {
   --font-mono: var(--font-noto-mono), 'JetBrains Mono', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
 }
@@ -393,11 +423,11 @@ pre, code {
   max-width: 100%;
   height: auto;
   margin: 8px 0;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .markdown-body .markdown-inline-code {
   background: var(--bg-subtle);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 1px 5px;
   color: var(--text);
   font-family: var(--font-mono);
@@ -424,7 +454,7 @@ pre, code {
   height: 14px;
   margin: 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--bg);
   display: inline-grid;
   place-content: center;
@@ -445,7 +475,7 @@ pre, code {
 }
 .markdown-body blockquote {
   border-left: 3px solid color-mix(in srgb, var(--border) 75%, var(--text-muted));
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 8px 8px 0;
   margin: 6px 0;
   padding: 6px 11px;
   background: var(--bg-subtle);
@@ -457,7 +487,7 @@ pre, code {
   overflow-x: auto;
   overflow-y: hidden;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 9px;
 }
 .markdown-body table {
   border-collapse: separate;
@@ -575,7 +605,7 @@ pre, code {
   padding: 7px 8px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-panel);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -596,7 +626,7 @@ pre, code {
   max-width: 100%;
   margin: 6px 0;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 9px;
   overflow: hidden;
   background: var(--bg);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 42%, transparent);
@@ -624,7 +654,7 @@ pre, code {
 }
 .markdown-code-action {
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 7px;
   padding: 2px 7px;
   background: var(--bg);
   color: var(--text-muted);
@@ -713,7 +743,7 @@ pre, code {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
 }
 
@@ -729,7 +759,7 @@ pre, code {
   height: 36px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
@@ -805,7 +835,7 @@ pre, code {
   height: 24px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 7px;
   background: var(--bg);
 }
 .mermaid-zoom-stepper button,
@@ -832,7 +862,7 @@ pre, code {
 .mermaid-zoom-icon-button {
   flex: 0 0 24px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 7px;
 }
 .mermaid-zoom-stepper button:hover:not(:disabled),
 .mermaid-zoom-icon-button:hover {
@@ -869,7 +899,7 @@ pre, code {
 .mermaid-zoom-canvas {
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 9px;
   background: var(--bg-panel);
   margin: 0 auto;
   transition: width 0.15s ease;
@@ -945,7 +975,7 @@ pre, code {
   height: 24px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 7px;
 }
 
 .file-viewer-mode-button {
@@ -979,7 +1009,7 @@ pre, code {
   box-sizing: border-box;
   flex: 0 0 24px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -1038,7 +1068,7 @@ pre, code {
 .markdown-file-preview pre {
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 12px 16px;
   overflow-x: auto;
   font-family: var(--font-mono);
@@ -1050,7 +1080,7 @@ pre, code {
   font-size: 0.9em;
   background: var(--bg-panel);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 5px;
 }
 .markdown-file-preview pre code {
   background: none;
@@ -1062,7 +1092,7 @@ pre, code {
   margin-bottom: 20px;
   padding: 14px 16px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-panel);
 }
 .markdown-frontmatter-title {
@@ -1205,9 +1235,9 @@ span.token.table {
 }
 
 @keyframes saved-pop {
-  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
-  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.25); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 25%, transparent); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 0%, transparent); }
 }
 
 @keyframes saved-check-draw {

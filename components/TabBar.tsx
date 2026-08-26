@@ -69,7 +69,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               minWidth: 80,
               flexShrink: 0,
               userSelect: "none",
-              transition: "background 0.1s, color 0.1s",
+              transition: "background 0.15s var(--ease), color 0.15s var(--ease)",
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
@@ -95,12 +95,12 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 width: 24, height: 24,
                 background: hoveredClose === tab.id ? "var(--bg-hover)" : "transparent",
                 border: "none",
-                borderRadius: 4,
+                borderRadius: 5,
                 color: hoveredClose === tab.id ? "var(--text)" : "var(--text-dim)",
                 cursor: "pointer",
                 padding: 0,
                 flexShrink: 0,
-                transition: "background 0.1s, color 0.1s",
+                transition: "background 0.15s var(--ease), color 0.15s var(--ease)",
               }}
                title={t("i18n.close")}
                aria-label={`${t("i18n.close")} ${tab.label}`}

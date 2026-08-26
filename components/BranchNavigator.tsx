@@ -197,9 +197,9 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
             fontSize: 9,
             fontFamily: "var(--font-mono)",
             color: role === "user" ? "var(--accent)" : "var(--text-dim)",
-            background: role === "user" ? "rgba(37,99,235,0.08)" : "var(--bg-hover)",
-            border: `1px solid ${role === "user" ? "rgba(37,99,235,0.2)" : "var(--border)"}`,
-            borderRadius: 3,
+            background: role === "user" ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "var(--bg-hover)",
+            border: `1px solid ${role === "user" ? "color-mix(in srgb, var(--accent) 20%, transparent)" : "var(--border)"}`,
+            borderRadius: 5,
             padding: "0 4px",
             marginRight: 5,
             flexShrink: 0,
@@ -401,7 +401,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           right: 0,
           background: "var(--bg)",
           borderBottom: "1px solid var(--border)",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          boxShadow: "var(--shadow-md)",
           zIndex: 100,
         }}>
           {hasContent ? (
