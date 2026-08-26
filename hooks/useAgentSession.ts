@@ -12,7 +12,7 @@ import type {
   UserMessage,
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
-import { normalizeToolCalls } from "@/lib/normalize";
+import { mergeMessageIdentities, normalizeToolCalls } from "@/lib/normalize";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
@@ -76,6 +76,18 @@ type AgentStateResponse = {
 export interface QueuedMessages {
   steering: string[];
   followUp: string[];
+}
+
+/**
+ * Return `prev` when `next` is element-identical, so state updates keep the
+ * array reference stable and memoized consumers skip re-running.
+ */
+function stableStringArray(prev: string[], next: string[]): string[] {
+  if (prev.length !== next.length) return next;
+  for (let i = 0; i < prev.length; i++) {
+    if (prev[i] !== next[i]) return next;
+  }
+  return prev;
 }
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
@@ -144,9 +156,6 @@ export interface UseAgentSessionOptions {
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
-  onSystemPromptChange?: (prompt: string | null) => void;
-  /** Registers an action that lazily starts the session and returns its system prompt. */
-  onSystemPromptLoaderChange?: (loader: (() => Promise<void>) | null) => void;
   onSessionStatsPanelOpen?: () => void;
   setToolPreset?: (preset: ToolPreset) => void;
 }
@@ -264,7 +273,7 @@ type SlashCommandsResponse = {
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
-    modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
+    modelsRefreshKey, onBranchDataChange, onSessionStatsPanelOpen,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -325,12 +334,47 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const bashRunningRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
+
+  const flushPendingDeltas = useCallback(() => {
+    if (deltaFlushFrameRef.current !== null) {
+      cancelAnimationFrame(deltaFlushFrameRef.current);
+      deltaFlushFrameRef.current = null;
+    }
+    if (pendingDeltasRef.current.length === 0) return;
+    const deltas = pendingDeltasRef.current;
+    pendingDeltasRef.current = [];
+    for (const delta of deltas) dispatch({ type: "delta", event: delta });
+  }, [dispatch]);
+
+  const scheduleDeltaFlush = useCallback(() => {
+    if (deltaFlushFrameRef.current !== null) return;
+    deltaFlushFrameRef.current = requestAnimationFrame(() => {
+      deltaFlushFrameRef.current = null;
+      if (pendingDeltasRef.current.length === 0) return;
+      const deltas = pendingDeltasRef.current;
+      pendingDeltasRef.current = [];
+      for (const delta of deltas) dispatch({ type: "delta", event: delta });
+    });
+  }, [dispatch]);
+
+  useEffect(() => () => {
+    if (deltaFlushFrameRef.current !== null) cancelAnimationFrame(deltaFlushFrameRef.current);
+    deltaFlushFrameRef.current = null;
+    pendingDeltasRef.current = [];
+  }, []);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const liveFollowFrameRef = useRef<number | null>(null);
+  // Streamed deltas are coalesced into one render per animation frame. Dispatching
+  // each SSE event individually re-rendered the whole ChatWindow per token, which is
+  // brutal on fast models (30–100 events/s). Flushing happens in a rAF and must be
+  // forced synchronously before any end/snapshot/start transition so no delta is lost
+  // or reordered.
+  const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
+  const deltaFlushFrameRef = useRef<number | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -481,8 +525,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const persistedMessages = d.context.messages;
       setData(d);
       setActiveLeafId(d.leafId);
-      setMessages(persistedMessages);
-      setEntryIds(d.context.entryIds ?? []);
+      // Preserve object identity for unchanged messages so memoized
+      // MessageViews skip re-rendering on turn-end re-fetches (full markdown
+      // re-parse + Prism re-tokenization for every visible message).
+      setMessages((prev) => mergeMessageIdentities(prev, persistedMessages));
+      setEntryIds((prev) => stableStringArray(prev, d.context.entryIds ?? []));
       setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -531,8 +578,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as { context: { messages: AgentMessage[]; entryIds: string[] } };
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
+      setMessages((prev) => mergeMessageIdentities(prev, d.context.messages));
+      setEntryIds((prev) => stableStringArray(prev, d.context.entryIds ?? []));
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -628,18 +675,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ensuringNewSessionRef.current = null;
     }
   }, [isNew, newSessionCwd, toolPreset]);
-
-  // Opening the System panel is also allowed to initialize an otherwise dormant
-  // session. This is deliberately a non-prompt command: it creates no message
-  // or model run, but lets users inspect the exact prompt before sending one.
-  const loadSystemPrompt = useCallback(async () => {
-    const sid = sessionIdRef.current ?? await ensureNewSession();
-    if (!sid) return;
-
-    const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
-    if (!sessionHookMountedRef.current || sessionIdRef.current !== sid) return;
-    setSystemPrompt(state.systemPrompt ?? "");
-  }, [ensureNewSession]);
 
   const loadSlashCommands = useCallback(async () => {
     const sid = sessionIdRef.current ?? await ensureNewSession();
@@ -806,9 +841,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentRunning(false);
     setAgentPhase(null);
     setRetryInfo(null);
+    flushPendingDeltas();
     dispatch({ type: "end" });
     return wasRunning;
-  }, []);
+  }, [dispatch, flushPendingDeltas]);
 
   const notifyPromptStage = useCallback((runId: number) => {
     if (notifiedPromptRunIdRef.current === runId) return false;
@@ -1022,6 +1058,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case "connected": {
+        flushPendingDeltas();
         dispatch({ type: "end" });
         if (event.isStreaming === true) {
           cancelEventStreamGrace();
@@ -1038,6 +1075,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         agentRunningRef.current = true;
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
+        flushPendingDeltas();
         dispatch({ type: "start" });
         break;
       case "agent_end":
@@ -1047,6 +1085,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!agentRunningRef.current) break;
         setAgentPhase(null);
         setRetryInfo(null);
+        flushPendingDeltas();
         dispatch({ type: "end" });
         if (sessionIdRef.current) {
           loadSession(sessionIdRef.current);
@@ -1118,6 +1157,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const msg = event.message as AgentMessage | undefined;
           if (msg?.role === "user") break;
           if (msg?.role === "assistant") {
+            flushPendingDeltas();
             dispatch({ type: "snapshot", message: msg });
             if (msg.content.length > 0) setAgentPhase(null);
           } else if (msg) {
@@ -1126,7 +1166,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else {
           const delta = event.assistantMessageEvent as ClientAssistantMessageEvent | undefined;
           if (delta) {
-            dispatch({ type: "delta", event: delta });
+            // Coalesce into one render per frame; see flushPendingDeltas.
+            pendingDeltasRef.current.push(delta);
+            scheduleDeltaFlush();
             if (delta.type !== "toolcall_start" && delta.type !== "toolcall_delta") {
               setAgentPhase(null);
             }
@@ -1171,6 +1213,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else if (completed) {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
         }
+        flushPendingDeltas();
         dispatch({ type: "end" });
         setAgentPhase({ kind: "waiting_model" });
         break;
@@ -1247,7 +1290,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, flushPendingDeltas, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleDeltaFlush, scheduleEventStreamClose, scrollToBottom, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1289,6 +1332,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = true;
     setAgentRunning(true);
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
+    flushPendingDeltas();
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
     setPromptAnchorActive(true);
@@ -1365,9 +1409,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       closeEvents();
       setAgentRunning(false);
       setAgentPhase(null);
+      flushPendingDeltas();
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission]);
+  }, [flushPendingDeltas, isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -1839,15 +1884,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    onSystemPromptChange?.(systemPrompt);
-  }, [systemPrompt, onSystemPromptChange]);
-
-  useEffect(() => {
-    onSystemPromptLoaderChange?.(loadSystemPrompt);
-    return () => onSystemPromptLoaderChange?.(null);
-  }, [loadSystemPrompt, onSystemPromptLoaderChange]);
 
   useEffect(() => {
     if (!onBranchDataChange) return;

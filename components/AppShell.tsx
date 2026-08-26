@@ -52,14 +52,8 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 
 type SessionCopyField = "file" | "id";
-type AutoNameStatus =
-  | { kind: "idle" }
-  | { kind: "naming" }
-  | { kind: "success" }
-  | { kind: "error"; message: string };
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
-const LANGUAGE_MENU_WIDTH = 176;
 
 export function AppShell() {
   const router = useRouter();
@@ -68,7 +62,7 @@ export function AppShell() {
   const { preference, toggleTheme } = useTheme();
   const themeLabelKey =
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
-  const { locale, setLocale, t: translate, supportedLocales } = useI18n();
+  const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   useViewportHeight();
   // Audio ownership lives here (not in ChatWindow) so the completion tone can
@@ -179,7 +173,6 @@ export function AppShell() {
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
-  const languageBtnRef = useRef<HTMLButtonElement>(null);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -196,29 +189,8 @@ export function AppShell() {
     branchLeafChangeFnRef.current?.(leafId);
   }, []);
 
-  const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
-  const [systemPromptLoading, setSystemPromptLoading] = useState(false);
-  const systemPromptLoaderRef = useRef<(() => Promise<void>) | null>(null);
-  const systemPromptLoadIdRef = useRef(0);
-  const systemBtnRef = useRef<HTMLButtonElement>(null);
-
-  const handleSystemPromptChange = useCallback((prompt: string | null) => {
-    setSystemPrompt(prompt);
-    setSystemPromptLoading(false);
-  }, []);
-
-  const handleSystemPromptLoaderChange = useCallback((loader: (() => Promise<void>) | null) => {
-    systemPromptLoadIdRef.current += 1;
-    systemPromptLoaderRef.current = loader;
-    setSystemPromptLoading(false);
-  }, []);
-
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
-  const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
-  const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
-  activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
     setSessionStats(stats);
   }, []);
@@ -235,7 +207,6 @@ export function AppShell() {
   useEffect(() => {
     return () => {
       if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
-      if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     };
   }, []);
 
@@ -246,35 +217,17 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "language" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "session" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const toggleTopPanel = useCallback((
-    panel: "branches" | "system" | "session" | "language",
+    panel: "branches" | "session",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
     if (isMobile && keepMobileToolbarOpen) setMobileToolbarMoreOpen(true);
   }, [isMobile]);
-
-  const handleSystemPromptToggle = useCallback((keepMobileToolbarOpen = false) => {
-    const opening = activeTopPanel !== "system";
-    toggleTopPanel("system", keepMobileToolbarOpen);
-    if (!opening || systemPromptLoading) return;
-
-    const load = systemPromptLoaderRef.current;
-    if (!load) return;
-    const loadId = ++systemPromptLoadIdRef.current;
-    setSystemPromptLoading(true);
-    void load().catch((error) => {
-      console.error("Failed to load system prompt:", error);
-    }).finally(() => {
-      if (systemPromptLoadIdRef.current === loadId) {
-        setSystemPromptLoading(false);
-      }
-    });
-  }, [activeTopPanel, systemPromptLoading, toggleTopPanel]);
 
   const openSessionStatsPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
@@ -336,24 +289,13 @@ export function AppShell() {
     if (!activeTopPanel || !topBarRef.current) return;
     const update = () => {
       const topBarRect = topBarRef.current!.getBoundingClientRect();
-      if (activeTopPanel === "language" && !isMobile && languageBtnRef.current) {
-        const buttonRect = languageBtnRef.current.getBoundingClientRect();
-        const width = Math.min(LANGUAGE_MENU_WIDTH, topBarRect.width);
-        const left = Math.min(
-          buttonRect.left - 1,
-          Math.max(topBarRect.left, topBarRect.right - width),
-        );
-        setTopPanelPos({ top: topBarRect.bottom, left, width });
-        return;
-      }
       setTopPanelPos({ top: topBarRect.bottom, left: topBarRect.left, width: topBarRect.width });
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(topBarRef.current);
-    if (languageBtnRef.current) ro.observe(languageBtnRef.current);
     return () => ro.disconnect();
-  }, [activeTopPanel, isMobile]);
+  }, [activeTopPanel]);
 
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
@@ -537,8 +479,6 @@ export function AppShell() {
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
-    setSystemPrompt(null);
-    setSystemPromptLoading(false);
     setActiveTopPanel(null);
     if (currentProject !== newProject) {
       // File tabs are keyed by absolute path, so tabs opened in the previous
@@ -571,8 +511,6 @@ export function AppShell() {
     setNewSessionCwd(null);
     setSelectedSession(session);
     setSessionKey((k) => k + 1);
-    setSystemPrompt(null);
-    setSystemPromptLoading(false);
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
@@ -598,12 +536,19 @@ export function AppShell() {
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
-    setSystemPrompt(null);
-    setSystemPromptLoading(false);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
   }, [invalidateWorkspaceRestore, router, isMobile]);
+
+  // Top-bar "+" button — same code path as the Ctrl+Alt+N shortcut.
+  const handleHeaderNewSession = useCallback(() => {
+    if (!activeCwd) return;
+    const tempId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    handleNewSession(tempId, activeCwd);
+  }, [activeCwd, handleNewSession]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -704,42 +649,6 @@ export function AppShell() {
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 
-  const handleAutoName = useCallback(async () => {
-    const sessionId = selectedSession?.id;
-    if (!sessionId || autoNameStatus.kind === "naming") return;
-    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-    setActiveTopPanel(null);
-    setAutoNameStatus({ kind: "naming" });
-
-    try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`, {
-        method: "POST",
-      });
-      const body = (await response.json().catch(() => ({}))) as { title?: string; error?: string };
-      if (!response.ok || !body.title) {
-        throw new Error(body.error || `HTTP ${response.status}`);
-      }
-
-      const title = body.title.trim();
-      setRefreshKey((key) => key + 1);
-      if (activeSessionIdRef.current !== sessionId) return;
-      setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
-      setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
-      setAutoNameStatus({ kind: "success" });
-      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
-    } catch (error) {
-      if (activeSessionIdRef.current !== sessionId) return;
-      const message = error instanceof Error ? error.message : String(error);
-      setAutoNameStatus({ kind: "error", message });
-      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
-    }
-  }, [autoNameStatus.kind, selectedSession?.id]);
-
-  useEffect(() => {
-    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-    setAutoNameStatus({ kind: "idle" });
-  }, [selectedSession?.id]);
-
   const handleExplorerRefresh = useCallback(() => {
     setExplorerRefreshKey((k) => k + 1);
   }, []);
@@ -778,8 +687,6 @@ export function AppShell() {
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
-      setSystemPrompt(null);
-      setSystemPromptLoading(false);
       setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
@@ -822,15 +729,6 @@ export function AppShell() {
       return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     });
   }, [fileTabs]);
-
-  const handleViewFullHistory = useCallback(() => {
-    if (!selectedSession) return;
-    window.open(
-      `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
-      "_blank",
-      "noopener,noreferrer",
-    );
-  }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
@@ -910,7 +808,6 @@ export function AppShell() {
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
         onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
         skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
@@ -1033,50 +930,35 @@ export function AppShell() {
     </button>
   );
 
-  const renderLanguageButton = (mobile: boolean) => (
-    <button
-      ref={languageBtnRef}
-      type="button"
-      onClick={() => toggleTopPanel("language", mobile)}
-      title={translate("common.language")}
-      aria-label={translate("common.language")}
-      aria-haspopup="menu"
-      aria-expanded={activeTopPanel === "language"}
-      aria-pressed={activeTopPanel === "language"}
-      style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-        background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
-        border: "none", borderRight: "1px solid var(--border)",
-        color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-      }}
-      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.color = activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)";
-      }}
-      data-mobile-toolbar-action={mobile ? "language" : undefined}
-    >
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
+  const renderNewSessionButton = () => {
+    const cwd = activeCwd;
+    const title = cwd
+      ? translate("sidebar.newSessionTitle", { path: cwd })
+      : translate("sidebar.selectProject");
+    return (
+      <button
+        type="button"
+        onClick={handleHeaderNewSession}
+        disabled={!cwd}
+        title={title}
+        aria-label={title}
+        data-topbar-new-session="true"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+          background: "none", border: "none", borderRight: "1px solid var(--border)",
+          color: cwd ? "var(--text-muted)" : "var(--text-dim)",
+          cursor: cwd ? "pointer" : "not-allowed", flexShrink: 0, transition: "color 0.12s",
+        }}
+        onMouseEnter={(event) => { if (cwd) event.currentTarget.style.color = "var(--accent)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.color = cwd ? "var(--text-muted)" : "var(--text-dim)"; }}
       >
-        <path d="m5 8 6 6" />
-        <path d="m4 14 6-6 2-3" />
-        <path d="M2 5h12" />
-        <path d="M7 2h1" />
-        <path d="m22 22-5-10-5 10" />
-        <path d="M14 18h6" />
-      </svg>
-    </button>
-  );
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
+    );
+  };
 
   const renderProjectTrustWarning = (mobileBanner: boolean) => {
     if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
@@ -1098,11 +980,11 @@ export function AppShell() {
           minHeight: mobileBanner ? 32 : undefined,
           height: mobileBanner ? undefined : "100%",
           padding: mobileBanner ? "6px 12px" : "0 12px",
-          background: mobileBanner ? "color-mix(in srgb, #d97706 8%, var(--bg-panel))" : "none",
+          background: mobileBanner ? "color-mix(in srgb, var(--warning) 8%, var(--bg-panel))" : "none",
           border: "none",
           borderRight: mobileBanner ? "none" : "1px solid var(--border)",
           borderBottom: mobileBanner ? "1px solid var(--border)" : "none",
-          color: "#d97706",
+          color: "var(--warning)",
           cursor: "pointer",
           flexShrink: 0,
           fontSize: 11,
@@ -1136,145 +1018,6 @@ export function AppShell() {
     if (!mobile && !showChat) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
-          onClick={() => {
-            handleViewFullHistory();
-            if (mobile) setMobileToolbarMoreOpen(true);
-          }}
-          disabled={!selectedSession}
-          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-          aria-label={translate("history.full")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%",
-            padding: mobile ? 0 : "0 12px",
-            background: "none",
-            border: "none",
-            borderTop: "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-            cursor: selectedSession ? "pointer" : "not-allowed",
-            opacity: selectedSession ? 1 : 0.45,
-            flexShrink: 0,
-            fontSize: 11,
-            whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s, opacity 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (!selectedSession) return;
-            event.currentTarget.style.color = "var(--text)";
-            event.currentTarget.style.background = "var(--bg-hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-            event.currentTarget.style.background = "none";
-          }}
-          data-mobile-toolbar-action={mobile ? "history" : undefined}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-              flexShrink: 0,
-            }}
-            aria-hidden="true"
-          >
-            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {!mobile && <span>{translate("history.label")}</span>}
-        </button>
-        {(() => {
-          // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
-          const hasMessages = Boolean(
-            selectedSession
-            && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
-          );
-          const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
-          const isSuccess = autoNameStatus.kind === "success";
-          const isError = autoNameStatus.kind === "error";
-          const label = autoNameStatus.kind === "naming"
-            ? translate("title.generating")
-            : isSuccess
-              ? translate("title.updated")
-              : isError
-                ? translate("title.failed")
-                : translate("title.generate");
-          const title = !selectedSession || selectedSession.transient
-            ? translate("title.unsaved")
-            : !hasMessages
-              ? translate("title.noMessages")
-              : isError
-                ? autoNameStatus.message
-                : translate("title.generateSession");
-
-          return (
-            <button
-              type="button"
-              onClick={() => {
-                void handleAutoName();
-                if (mobile) setMobileToolbarMoreOpen(true);
-              }}
-              disabled={disabled}
-              title={title}
-              aria-label={label}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-                height: "100%", padding: mobile ? 0 : "0 12px",
-                background: "none", border: "none",
-                borderTop: "2px solid transparent",
-                borderRight: "1px solid var(--border)",
-                color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
-                cursor: disabled ? "not-allowed" : "pointer",
-                opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
-                flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                transition: "color 0.1s, background 0.1s, opacity 0.1s",
-              }}
-              onMouseEnter={(event) => {
-                if (disabled) return;
-                event.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
-                event.currentTarget.style.background = "var(--bg-hover)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
-                event.currentTarget.style.background = "none";
-              }}
-              data-mobile-toolbar-action={mobile ? "name" : undefined}
-            >
-              {autoNameStatus.kind === "naming" ? (
-                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              ) : isSuccess ? (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="m15 4 5 5L7 22l-5-5Z" />
-                  <path d="m14 5 5 5" />
-                  <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
-                </svg>
-              )}
-              {!mobile && <span>{label}</span>}
-            </button>
-          );
-        })()}
         {mobile ? (
           <button
             type="button"
@@ -1313,46 +1056,7 @@ export function AppShell() {
             hasSession
           />
         )}
-        <button
-          ref={systemBtnRef}
-          type="button"
-          onClick={() => handleSystemPromptToggle(mobile)}
-          disabled={mobile && !showChat}
-          title={translate("system.prompt")}
-          aria-label={translate("system.prompt")}
-          aria-pressed={activeTopPanel === "system"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "system" : undefined}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="13" y2="17" />
-          </svg>
-          {!mobile && <span>{translate("system.label")}</span>}
-        </button>
         {mobile && renderThemeButton(true)}
-        {mobile && renderLanguageButton(true)}
       </div>
     );
   };
@@ -1374,8 +1078,8 @@ export function AppShell() {
     let mobileContextText: string | null = null;
     if (contextUsage?.contextWindow) {
       const percent = contextUsage.percent;
-      if (percent !== null && percent > 90) contextColor = "#ef4444";
-      else if (percent !== null && percent > 70) contextColor = "rgba(234,179,8,0.95)";
+      if (percent !== null && percent > 90) contextColor = "var(--danger)";
+      else if (percent !== null && percent > 70) contextColor = "color-mix(in srgb, var(--warning) 95%, transparent)";
       desktopContextText = percent !== null
         ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
         : `? / ${formatCompact(contextUsage.contextWindow)}`;
@@ -1570,7 +1274,7 @@ export function AppShell() {
           transform: translateY(0);
           filter: blur(0);
           background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
-          box-shadow: 0 18px 44px rgba(37,99,235,0.16);
+          box-shadow: 0 18px 44px color-mix(in srgb, var(--accent) 16%, transparent);
         }
         100% {
           opacity: 1;
@@ -1722,6 +1426,7 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          {isMobile && renderNewSessionButton()}
           {isMobile && (
             <div
               ref={mobileToolbarRef}
@@ -1791,10 +1496,10 @@ export function AppShell() {
               )}
             </div>
           )}
+          {!isMobile && renderNewSessionButton()}
           {!isMobile && (
             <>
               {renderThemeButton(false)}
-              {renderLanguageButton(false)}
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
               {renderSessionStatsButton(false)}
@@ -1826,83 +1531,11 @@ export function AppShell() {
               overflowY: "auto",
               zIndex: 500,
             }}>
-              {activeTopPanel === "language" && (
-                <div
-                  role="menu"
-                  aria-label={translate("common.language")}
-                  style={{
-                    background: "var(--bg-panel)",
-                    borderLeft: "1px solid var(--border)",
-                    borderRight: "1px solid var(--border)",
-                    borderBottom: "1px solid var(--border)",
-                    overflow: "hidden",
-                    padding: 4,
-                  }}
-                >
-                  {supportedLocales.map((plugin) => (
-                    <button
-                      key={plugin.id}
-                      type="button"
-                      onClick={() => {
-                        setLocale(plugin.id as typeof locale);
-                        setActiveTopPanel(null);
-                      }}
-                      role="menuitemradio"
-                      aria-checked={locale === plugin.id}
-                      style={{
-                        display: "flex", alignItems: "center",
-                        width: "100%", height: 34, padding: "0 10px",
-                        border: "none", borderRadius: 4,
-                        background: locale === plugin.id ? "var(--bg-selected)" : "transparent",
-                        color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
-                        transition: "background 0.1s",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (locale !== plugin.id) e.currentTarget.style.background = "var(--bg-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        if (locale !== plugin.id) e.currentTarget.style.background = "transparent";
-                      }}
-                    >
-                      <span>{plugin.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {activeTopPanel === "system" && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                }}>
-                  {systemPrompt ? (
-                    <div style={{
-                      maxHeight: "min(600px, 75vh)",
-                      overflowY: "auto",
-                      padding: "12px 16px",
-                      color: "var(--text-muted)",
-                      fontSize: 12,
-                      lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                      {systemPrompt}
-                    </div>
-                  ) : systemPrompt === "" ? (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                       {translate("system.empty")}
-                    </div>
-                  ) : (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                       {systemPromptLoading ? translate("system.loading") : translate("system.load")}
-                    </div>
-                  )}
-                </div>
-              )}
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
                   background: "var(--bg-panel)",
                   borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                  boxShadow: "var(--shadow-md)",
                   padding: "12px 16px",
                 }}>
                   {sessionStats ? (() => {
@@ -1995,7 +1628,7 @@ export function AppShell() {
                             color: copied ? "var(--accent)" : "var(--text-dim)",
                             background: "transparent",
                             border: "1px solid var(--border)",
-                            borderRadius: 4,
+                            borderRadius: 5,
                             cursor: "pointer",
                             flex: "0 0 auto",
                             transition: "color 0.12s, border-color 0.12s, background 0.12s",
@@ -2091,8 +1724,6 @@ export function AppShell() {
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onContextUsageChange={handleContextUsageChange}
@@ -2117,7 +1748,7 @@ export function AppShell() {
               role="alert"
               style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
             >
-               <div style={{ fontSize: 14, color: "#dc2626" }}>{translate("workspace.unable")}</div>
+               <div style={{ fontSize: 14, color: "var(--danger)" }}>{translate("workspace.unable")}</div>
               <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
                 {initialNavigation.requestedCwd}
               </div>
