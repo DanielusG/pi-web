@@ -42,9 +42,9 @@ export function ProjectTrustDialog({
           width: 440,
           maxWidth: "100%",
           border: "1px solid var(--border)",
-          borderRadius: 8,
+          borderRadius: 10,
           background: "var(--bg-panel)",
-          boxShadow: "0 12px 36px rgba(0,0,0,0.24)",
+          boxShadow: "var(--shadow-lg)",
           overflow: "hidden",
         }}
       >
@@ -54,7 +54,7 @@ export function ProjectTrustDialog({
             height="20"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#f59e0b"
+            stroke="var(--warning)"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -77,7 +77,7 @@ export function ProjectTrustDialog({
                 marginTop: 10,
                 padding: "8px 10px",
                 border: "1px solid var(--border)",
-                borderRadius: 5,
+                borderRadius: 7,
                 background: "var(--bg)",
                 color: "var(--text)",
                 fontFamily: "var(--font-mono)",
@@ -88,7 +88,7 @@ export function ProjectTrustDialog({
               {cwd}
             </code>
             {error && (
-              <div role="alert" style={{ marginTop: 10, color: "#ef4444", fontSize: 12, lineHeight: 1.5 }}>
+              <div role="alert" style={{ marginTop: 10, color: "var(--danger)", fontSize: 12, lineHeight: 1.5 }}>
                 {error}
               </div>
             )}
@@ -111,7 +111,7 @@ export function ProjectTrustDialog({
               height: 32,
               padding: "0 12px",
               border: "1px solid var(--border)",
-              borderRadius: 5,
+              borderRadius: 7,
               background: "transparent",
               color: "var(--text-muted)",
               cursor: busy ? "not-allowed" : "pointer",
@@ -128,7 +128,7 @@ export function ProjectTrustDialog({
               height: 32,
               padding: "0 12px",
               border: "1px solid var(--accent)",
-              borderRadius: 5,
+              borderRadius: 7,
               background: "var(--accent)",
               color: "white",
               cursor: busy ? "wait" : "pointer",

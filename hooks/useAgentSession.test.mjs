@@ -273,6 +273,11 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
     source.indexOf('case "tool_execution_start"'),
   );
 
+  const flushHelperSource = source.slice(
+    source.indexOf("const flushPendingDeltas"),
+    source.indexOf("const scheduleDeltaFlush"),
+  );
+
   assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
   assert.doesNotMatch(source, /streamingMessageRef/);
   assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
@@ -280,9 +285,17 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
   assert.match(connectedSource, /agentRunningRef\.current = true/);
   assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
-  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
+  // Deltas are coalesced into one render per animation frame instead of being
+  // dispatched per SSE event (which re-rendered the whole ChatWindow per token).
+  assert.match(streamSource, /pendingDeltasRef\.current\.push\(delta\)/);
+  assert.match(streamSource, /scheduleDeltaFlush\(\)/);
+  assert.doesNotMatch(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
   assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
+  // The coalesced flush still feeds the reducer, and cancels any pending frame.
+  assert.match(flushHelperSource, /cancelAnimationFrame\(deltaFlushFrameRef\.current\)/);
+  assert.match(source, /for \(const delta of deltas\) dispatch\(\{ type: "delta", event: delta \}\)/);
+  assert.match(source, /deltaFlushFrameRef\.current = requestAnimationFrame/);
   assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
   assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
   assert.match(messageEndSource, /dispatch\(\{ type: "end" \}\)/);

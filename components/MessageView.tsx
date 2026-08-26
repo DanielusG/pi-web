@@ -12,6 +12,7 @@ import { isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
+import { getToolArgsView, toolSummaryLine } from "@/lib/tool-display";
 import type {
   AgentMessage,
   UserMessage,
@@ -347,7 +348,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             <img
               src={src}
               alt=""
-              style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
+              style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid color-mix(in srgb, var(--accent) 15%, transparent)" }}
             />
           </ImagePreview>
         );
@@ -375,8 +376,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             flex: 1,
             minWidth: 0,
             background: "var(--user-bg)",
-            border: "1px solid rgba(59,130,246,0.2)",
-            borderRadius: 12,
+            border: "1px solid color-mix(in srgb, var(--accent) 20%, transparent)",
+            borderRadius: "14px 14px 4px 14px",
             padding: "8px 12px",
             fontSize: 14,
             lineHeight: 1.6,
@@ -777,10 +778,10 @@ function AssistantMessageView({
           style={{
             marginTop: blocks.length > 0 ? 8 : 0,
             padding: "7px 10px",
-            border: "1px solid rgba(239,68,68,0.3)",
+            border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)",
             borderRadius: 6,
-            background: "rgba(239,68,68,0.07)",
-            color: "#ef4444",
+            background: "color-mix(in srgb, var(--danger) 7%, transparent)",
+            color: "var(--danger)",
             fontFamily: "var(--font-mono)",
             fontSize: 12,
             lineHeight: 1.5,
@@ -932,7 +933,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
         <div
           style={{
             padding: "8px 10px",
-            color: error ? "#f87171" : "var(--text-muted)",
+            color: error ? "var(--danger)" : "var(--text-muted)",
             fontSize: 12,
             lineHeight: 1.6,
             whiteSpace: "pre-wrap",
@@ -980,7 +981,6 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [preview, setPreview] = useState<PendingToolPreview | null>(null);
-  const inputStr = getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
   const isEditTool = isEditToolName(block.toolName);
   const isPreviewableTool = isEditTool || isWriteToolName(block.toolName);
@@ -1039,14 +1039,16 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
 
+  const summary = isStreamingInput ? t("chat.generatingToolInput") : toolSummaryLine(block.toolName, block.input);
+
   return (
     <div
       style={{
-        borderRadius: 7,
+        borderRadius: 10,
         overflow: "hidden",
         fontSize: 12,
-        border: isError ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(34,197,94,0.25)",
-        background: isError ? "rgba(248,113,113,0.05)" : "rgba(34,197,94,0.04)",
+        border: isError ? "1px solid color-mix(in srgb, var(--danger) 40%, transparent)" : "1px solid var(--border)",
+        background: "var(--bg)",
       }}
     >
       {/* ── Tool call header ── */}
@@ -1055,9 +1057,9 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 7,
+          gap: 8,
           width: "100%",
-          padding: "6px 10px",
+          padding: "7px 10px",
           background: "none",
           border: "none",
           color: "var(--text-muted)",
@@ -1067,12 +1069,40 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
           minWidth: 0,
         }}
       >
-        <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            fontWeight: 600,
+            color: isError ? "var(--danger)" : "var(--text-muted)",
+            background: isError ? "color-mix(in srgb, var(--danger) 8%, transparent)" : "var(--bg-subtle)",
+            border: `1px solid ${isError ? "color-mix(in srgb, var(--danger) 25%, transparent)" : "var(--border)"}`,
+            borderRadius: 5,
+            padding: "1px 7px",
+            lineHeight: 1.5,
+            flexShrink: 0,
+          }}
+        >
           {block.toolName}
         </span>
-        <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-          {isStreamingInput ? t("chat.generatingToolInput") : getToolPreview(block)}
+        <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+          {summary}
         </span>
+        {isStreamingInput ? (
+          <svg width="12" height="12" viewBox="0 0 12 12" style={{ flexShrink: 0, animation: "spin 1s linear infinite" }} aria-hidden="true">
+            <circle cx="6" cy="6" r="5" fill="none" stroke="color-mix(in srgb, var(--accent) 25%, transparent)" strokeWidth="1.5" />
+            <path d="M11 6A5 5 0 0 0 6 1" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        ) : isError ? (
+          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="var(--danger)" strokeWidth="1.8" strokeLinecap="round" style={{ flexShrink: 0 }} aria-hidden="true">
+            <line x1="2" y1="2" x2="8" y2="8" />
+            <line x1="8" y1="2" x2="2" y2="8" />
+          </svg>
+        ) : result ? (
+          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
+            <polyline points="1.5 5.5 4 8 8.5 2.5" />
+          </svg>
+        ) : null}
         {duration !== undefined && (
           <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}
@@ -1104,10 +1134,10 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
           <div
             style={{
               padding: "8px 10px",
-              color: "#f87171",
+              color: "var(--danger)",
               fontSize: 12,
               lineHeight: 1.5,
-              borderTop: "1px solid rgba(248,113,113,0.25)",
+              borderTop: "1px solid color-mix(in srgb, var(--danger) 25%, transparent)",
               background: "var(--bg)",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -1132,22 +1162,7 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
 
       {/* ── Expanded: input args ── */}
       {expanded && showRawArgs && (
-        <pre
-          style={{
-            margin: 0,
-            padding: "8px 10px",
-            color: "var(--text-muted)",
-            fontSize: 12,
-            lineHeight: 1.5,
-            overflow: "auto",
-            background: "var(--bg-subtle)",
-            borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-          }}
-        >
-          {inputStr}
-        </pre>
+        <ToolArgsBody toolName={block.toolName} input={block.input} rawInput={block.rawInput} />
       )}
 
       {/* ── Paired result — only shown when expanded ── */}
@@ -1168,6 +1183,122 @@ function ToolCallBlock({ block, result, duration, cwd }: { block: ToolCallConten
   );
 }
 
+const MAX_TOOL_PRE_CHARS = 100_000;
+
+/**
+ * Expanded argument body for a tool call. Renders per-tool views
+ * (command as code, write content, read path/meta) instead of a raw JSON dump.
+ */
+function ToolArgsBody({ toolName, input, rawInput }: {
+  toolName: string;
+  input: unknown;
+  rawInput?: string;
+}) {
+  const view = rawInput !== undefined
+    ? { kind: "json" as const, text: rawInput }
+    : getToolArgsView(toolName, input);
+
+  if (view.kind === "meta") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          padding: "8px 10px",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        {view.lines.map((line, i) => (
+          <span
+            key={i}
+            title={line}
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: i === 0 ? "var(--text)" : "var(--text-dim)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {line}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  const truncated = view.text.length > MAX_TOOL_PRE_CHARS;
+  const shown = truncated
+    ? `${view.text.slice(0, MAX_TOOL_PRE_CHARS)}\n\n… (truncated — ${view.text.length.toLocaleString()} chars total)`
+    : view.text;
+
+  if (view.kind === "pre") {
+    return (
+      <div
+        style={{
+          borderTop: "1px solid var(--border)",
+          padding: "8px 10px",
+          background: "var(--bg-subtle)",
+        }}
+      >
+        {view.label && (
+          <div
+            title={view.label}
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--text-dim)",
+              marginBottom: 6,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {view.label}
+          </div>
+        )}
+        <pre
+          style={{
+            margin: 0,
+            color: "var(--text-muted)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            lineHeight: 1.55,
+            overflow: "auto",
+            maxHeight: 320,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {shown}
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <pre
+      style={{
+        margin: 0,
+        padding: "8px 10px",
+        color: "var(--text-muted)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        overflow: "auto",
+        maxHeight: 360,
+        borderTop: "1px solid var(--border)",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {shown}
+    </pre>
+  );
+}
+
 interface ResultDiff {
   text: string;
 }
@@ -1178,7 +1309,7 @@ function PairedDiffResult({ diff }: {
   return (
     <div
       style={{
-        borderTop: "1px solid rgba(34,197,94,0.15)",
+        borderTop: "1px solid var(--border)",
         background: "var(--bg)",
       }}
     >
@@ -1192,7 +1323,7 @@ function ProposedChangesPreview({ path, patchText }: { path: string; patchText: 
   return (
     <div
       style={{
-        borderTop: "1px solid rgba(34,197,94,0.15)",
+        borderTop: "1px solid var(--border)",
         background: "var(--bg)",
       }}
     >
@@ -1294,16 +1425,16 @@ function SplitDiffHeader({ title, side }: { title: string; side: "left" | "right
 function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" | "right" }) {
   const bg =
     cell.type === "added"
-      ? "rgba(34,197,94,0.12)"
+      ? "color-mix(in srgb, var(--success) 12%, transparent)"
       : cell.type === "removed"
-      ? "rgba(248,113,113,0.13)"
+      ? "color-mix(in srgb, var(--danger) 13%, transparent)"
       : cell.type === "empty"
       ? "var(--bg-subtle)"
       : "transparent";
   const marker =
     cell.type === "added" ? "+" : cell.type === "removed" ? "-" : " ";
   const markerColor =
-    cell.type === "added" ? "#22c55e" : cell.type === "removed" ? "#f87171" : "var(--text-dim)";
+    cell.type === "added" ? "var(--success)" : cell.type === "removed" ? "var(--danger)" : "var(--text-dim)";
 
   return (
     <div
@@ -1368,13 +1499,13 @@ function PatchTextView({ text }: { text: string }) {
           line.startsWith("-") && !line.startsWith("---") ? "removed" :
           "context";
         const bg =
-          kind === "added" ? "rgba(34,197,94,0.12)" :
-          kind === "removed" ? "rgba(248,113,113,0.13)" :
-          kind === "hunk" ? "rgba(96,165,250,0.12)" :
+          kind === "added" ? "color-mix(in srgb, var(--success) 12%, transparent)" :
+          kind === "removed" ? "color-mix(in srgb, var(--danger) 13%, transparent)" :
+          kind === "hunk" ? "color-mix(in srgb, var(--accent) 12%, transparent)" :
           "transparent";
         const color =
-          kind === "added" ? "#22c55e" :
-          kind === "removed" ? "#f87171" :
+          kind === "added" ? "var(--success)" :
+          kind === "removed" ? "var(--danger)" :
           kind === "hunk" ? "var(--accent)" :
           "var(--text)";
 
@@ -1385,9 +1516,9 @@ function PatchTextView({ text }: { text: string }) {
               display: "flex",
               background: bg,
               borderLeft: kind === "added"
-                ? "3px solid #22c55e"
+                ? "3px solid var(--success)"
                 : kind === "removed"
-                ? "3px solid #f87171"
+                ? "3px solid var(--danger)"
                 : kind === "hunk"
                 ? "3px solid var(--accent)"
                 : "3px solid transparent",
@@ -1443,20 +1574,19 @@ function PairedResult({ text, isEmpty, isError }: {
   return (
     <div
       style={{
-        borderTop: `1px solid ${isError ? "rgba(248,113,113,0.3)" : "rgba(34,197,94,0.15)"}`,
-        background: isError ? "rgba(248,113,113,0.04)" : "var(--bg-subtle)",
+        borderTop: isError ? "1px solid color-mix(in srgb, var(--danger) 30%, transparent)" : "1px solid var(--border)",
+        background: isError ? "color-mix(in srgb, var(--danger) 4%, transparent)" : "var(--bg-subtle)",
       }}
     >
       <pre
         style={{
           margin: 0,
           padding: "8px 10px",
-          color: isError ? "#f87171" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
+          color: isError ? "var(--danger)" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
           fontSize: 12,
           lineHeight: 1.5,
           overflow: "auto",
           maxHeight: 400,
-          background: "var(--bg)",
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
           fontStyle: isEmpty ? "italic" : "normal",
@@ -1759,24 +1889,6 @@ function previewText(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "Show extension message";
   return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
-}
-
-
-function getToolPreview(block: ToolCallContent): string {
-  const input = block.input;
-  if (!input || typeof input !== "object") return "";
-  const keys = Object.keys(input);
-  if (keys.length === 0) return "";
-
-  // Common tool input patterns
-  if ("command" in input) return String(input.command).slice(0, 120);
-  if ("path" in input) return String(input.path).slice(0, 120);
-  if ("file_path" in input) return String(input.file_path).slice(0, 120);
-  if ("pattern" in input) return String(input.pattern).slice(0, 120);
-  if ("query" in input) return String(input.query).slice(0, 120);
-
-  const first = input[keys[0]];
-  return String(first).slice(0, 120);
 }
 
 function formatUsage(usage: {

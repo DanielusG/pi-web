@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type MouseEvent } from "react";
+import { memo, useMemo, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
@@ -15,7 +15,13 @@ interface MarkdownBodyProps {
   onOpenFile?: (filePath: string) => void;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+// Memoized: history messages must not re-run the full react-markdown pipeline
+// (remark + rehype + katex) when a parent re-renders for unrelated state.
+// Shallow compare is sufficient — children/cwd/className are strings (value
+// equality), isStreaming is a boolean, and onOpenFile is a stable useCallback
+// in the chat context. The streaming bubble still re-parses per chunk, which
+// is unavoidable without incremental markdown rendering.
+export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
@@ -99,4 +105,4 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       </ReactMarkdown>
     </div>
   );
-}
+});
