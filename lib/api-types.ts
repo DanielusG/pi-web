@@ -1,4 +1,18 @@
 import type { ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import type { SubagentProfile } from "./subagents";
+
+export interface SubagentProfilesResponse {
+  profiles: SubagentProfile[];
+}
+
+export interface SubagentSettingsResponse {
+  enabled: boolean;
+}
+
+export interface ShellToolSettingsResponse {
+  isWindows: boolean;
+  powerShellEnabled: boolean;
+}
 
 export interface SkillSearchResult {
   package: string;
@@ -64,6 +78,10 @@ export interface AppUpdateResponse {
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+}
+
+export interface PushConfigResponse {
+  publicKey: string;
 }
 
 export type PluginScope = "global" | "project";
