@@ -7,7 +7,11 @@ import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
-import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
+import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffRow } from "@/lib/patch";
+import { inlineDiff, type InlineDiff, type InlineSegment } from "@/lib/word-diff";
+
+/** A split-diff line row enriched with VS Code-style intra-line segments. */
+type InlineLineRow = Extract<SplitDiffRow, { type: "line" }> & { inline: InlineDiff | null };
 import { isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
@@ -1373,7 +1377,19 @@ function ProposedChangesPreview({ path, patchText }: { path: string; patchText: 
 
 function SplitPatchView({ text }: { text: string }) {
   const { t } = useI18n();
-  const files = useMemo(() => parseUnifiedPatch(text), [text]);
+  const files = useMemo(() => {
+    const parsed = parseUnifiedPatch(text);
+    if (!parsed) return null;
+    return parsed.map((file) => ({
+      ...file,
+      rows: file.rows.map((row): SplitDiffRow | InlineLineRow => {
+        if (row.type === "line" && row.left.type === "removed" && row.right.type === "added") {
+          return { ...row, inline: inlineDiff(row.left.text, row.right.text) };
+        }
+        return row;
+      }),
+    }));
+  }, [text]);
   if (!files) return <PatchTextView text={text} />;
   const showFileHeaders = files.length > 1;
 
@@ -1413,10 +1429,12 @@ function SplitPatchView({ text }: { text: string }) {
                 return null;
               }
 
+              const inline = "inline" in row ? row.inline : null;
+
               return (
                 <div key={rowIndex} style={{ display: "contents" }}>
-                  <SplitDiffCellView cell={row.left} side="left" />
-                  <SplitDiffCellView cell={row.right} side="right" />
+                  <SplitDiffCellView cell={row.left} side="left" inline={inline ? inline.old : undefined} />
+                  <SplitDiffCellView cell={row.right} side="right" inline={inline ? inline.new : undefined} />
                 </div>
               );
             })}
@@ -1445,7 +1463,11 @@ function SplitDiffHeader({ title, side }: { title: string; side: "left" | "right
   );
 }
 
-function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" | "right" }) {
+function SplitDiffCellView({ cell, side, inline }: {
+  cell: SplitDiffCell;
+  side: "left" | "right";
+  inline?: InlineSegment[];
+}) {
   const bg =
     cell.type === "added"
       ? "color-mix(in srgb, var(--success) 12%, transparent)"
@@ -1454,6 +1476,12 @@ function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" |
       : cell.type === "empty"
       ? "var(--bg-subtle)"
       : "transparent";
+  const inlineBg =
+    cell.type === "added"
+      ? "color-mix(in srgb, var(--success) 32%, transparent)"
+      : cell.type === "removed"
+      ? "color-mix(in srgb, var(--danger) 32%, transparent)"
+      : undefined;
   const marker =
     cell.type === "added" ? "+" : cell.type === "removed" ? "-" : " ";
   const markerColor =
@@ -1504,7 +1532,18 @@ function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" |
           overflowWrap: "anywhere",
         }}
       >
-        {cell.text || "\u00a0"}
+        {inline ? (
+          inline.map((segment, segmentIndex) => (
+            <span
+              key={segmentIndex}
+              style={segment.changed && inlineBg ? { background: inlineBg } : undefined}
+            >
+              {segment.text}
+            </span>
+          ))
+        ) : (
+          cell.text || "\u00a0"
+        )}
       </span>
     </div>
   );
