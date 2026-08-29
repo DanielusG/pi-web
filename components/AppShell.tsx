@@ -1256,10 +1256,16 @@ export function AppShell() {
       const percent = contextUsage.percent;
       if (percent !== null && percent > 90) contextColor = "var(--danger)";
       else if (percent !== null && percent > 70) contextColor = "color-mix(in srgb, var(--warning) 95%, transparent)";
-      desktopContextText = percent !== null
-        ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
-        : `? / ${formatCompact(contextUsage.contextWindow)}`;
-      mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
+      const pctText = percent !== null ? ` (${percent.toFixed(0)}%)` : "";
+      if (contextUsage.tokens != null) {
+        desktopContextText = `${formatCompact(contextUsage.tokens)} / ${formatCompact(contextUsage.contextWindow)}${pctText}`;
+        mobileContextText = `${formatCompact(contextUsage.tokens)} / ${formatCompact(contextUsage.contextWindow)}${pctText}`;
+      } else {
+        desktopContextText = percent !== null
+          ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
+          : `? / ${formatCompact(contextUsage.contextWindow)}`;
+        mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
+      }
     }
 
     const tooltipParts: string[] = [];
@@ -1272,7 +1278,10 @@ export function AppShell() {
     }
     if (contextUsage?.contextWindow) {
       const percent = contextUsage.percent;
-      tooltipParts.push(`context: ${percent !== null ? percent.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+      const ctxTokens = contextUsage.tokens;
+      tooltipParts.push(ctxTokens != null
+        ? `context: ${ctxTokens.toLocaleString(locale)} / ${contextUsage.contextWindow.toLocaleString(locale)} tokens${percent !== null ? ` (${percent.toFixed(1)}%)` : ""}`
+        : `context: ${percent !== null ? percent.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
     }
     const tooltip = tooltipParts.join("  |  ");
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
@@ -1775,7 +1784,9 @@ export function AppShell() {
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
-                       ...(ctx?.contextWindow ? [[translate("session.context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
+                       ...(ctx?.contextWindow ? [[translate("session.context"), ctx.tokens != null
+                        ? `${ctx.tokens.toLocaleString(locale)} / ${ctx.contextWindow.toLocaleString(locale)}${ctx.percent !== null ? ` (${ctx.percent.toFixed(1)}%)` : ""}`
+                        : `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
                        // Cache hit rate = cache reads / (input + cache writes + cache reads) — the denominator covers all input-class tokens.
                        ...(sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0 && sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input > 0
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
