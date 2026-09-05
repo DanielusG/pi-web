@@ -287,6 +287,7 @@ export const enLocale: LocalePlugin = {
     "chat.openWrittenFile": "Open {name}",
     "chat.loadEarlier": "Scroll up to load earlier messages",
     "chat.extensionRequest": "extension request",
+    "chat.extensionExpiresIn": "expires in {seconds}s",
     "chat.extensionPending": "Awaiting response",
     "chat.extensionCollapse": "Collapse",
     "chat.extensionExpand": "Expand",
