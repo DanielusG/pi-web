@@ -518,18 +518,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [setToolPresetState]);
 
-  const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null) => {
+  const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null, options?: { tail?: number; signal?: AbortSignal }) => {
     try {
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
       if (leafId) params.set("leafId", leafId);
       // Page upward: ask the server for the `tail` ancestors preceding `before`,
       // then prepend them. Omitting `before` fetches the most-recent `tail`.
       if (before) params.set("before", before);
+      if (options?.tail) params.set("tail", String(options.tail));
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: options?.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as { context: SessionData["context"] };
-      if (sessionIdRef.current !== sid) return;
+      if (sessionIdRef.current !== sid || options?.signal?.aborted || !sessionHookMountedRef.current) return;
       setHistoryCursor(d.context.oldestEntryId);
       setHasEarlierMessages(d.context.hasMore);
       setData((prev) => {
@@ -551,8 +552,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setMessages(d.context.messages);
         setEntryIds(d.context.entryIds ?? []);
       }
+      return d.context;
     } catch (e) {
-      console.error("Failed to load context:", e);
+      if (!options?.signal?.aborted) console.error("Failed to load context:", e);
     }
   }, []);
 
@@ -1797,6 +1799,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [cancelEventStreamGrace, closeEvents, loadTools, setToolPresetState]);
 
+  const scrollToMessage = useCallback((element: HTMLElement) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (liveFollowFrameRef.current !== null) {
+      cancelAnimationFrame(liveFollowFrameRef.current);
+      liveFollowFrameRef.current = null;
+    }
+    initialScrollDoneRef.current = true;
+    pendingScrollToUserRef.current = false;
+    isNearBottomRef.current = false;
+    setPromptAnchorActive(false);
+    container.scrollTo({
+      top: element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 16,
+      behavior: "instant",
+    });
+    previousScrollTopRef.current = container.scrollTop;
+  }, []);
+
   const scrollUserMsgToTop = useCallback(() => {
     const container = scrollContainerRef.current;
     const el = lastUserMsgRef.current;
@@ -2027,7 +2047,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleBuiltinSlashCommand,
     setNoticePaused: setPausedNoticeId,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
-    scrollToBottom, scrollUserMsgToTop,
+    scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,
     // Subscriptions

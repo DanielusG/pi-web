@@ -28,6 +28,8 @@ import {
 
 interface Props {
   session: SessionInfo | null;
+  searchTarget?: { sessionId: string; entryId: string; blockIndex?: number } | null;
+  onSearchTargetHandled?: (target: { sessionId: string; entryId: string }) => void;
   sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
@@ -210,8 +212,11 @@ function withAssistantBlocks(
   return next;
 }
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, reveal = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  useLayoutEffect(() => {
+    if (reveal) setExpanded(true);
+  }, [reveal]);
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
 
@@ -219,7 +224,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
     <div style={{ marginBottom: 14 }}>
       <button
         type="button"
-        aria-expanded={expanded}
+        aria-expanded={expanded || reveal}
         onClick={() => setExpanded((v) => !v)}
         style={{
           display: "flex",
@@ -244,7 +249,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
           {parts.join(" · ")}
         </span>
       </button>
-      {expanded && (
+      {(expanded || reveal) && (
         <div style={{ marginTop: 8 }}>
           {children}
         </div>
@@ -253,7 +258,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const completionNotificationsEnabled = session?.relation?.kind !== "subagent";
@@ -296,7 +301,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
-    loadContext, activeLeafId,
+    loadContext, activeLeafId, scrollToMessage,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
@@ -325,6 +330,59 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const sentinelRef = useRef<HTMLDivElement>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
+  const [pendingSearchScroll, setPendingSearchScroll] = useState<Props["searchTarget"]>(null);
+  const searchMessage = messages[entryIds.indexOf(pendingSearchScroll?.entryId ?? "")];
+  const searchBlock = searchMessage?.role === "assistant"
+    ? (pendingSearchScroll?.blockIndex === undefined
+      ? searchMessage.content.find((block) => block.type === "text")
+      : searchMessage.content[pendingSearchScroll.blockIndex])
+    : undefined;
+  const searchHistoryRef = useRef({ entryIds, historyCursor, hasEarlierMessages });
+  searchHistoryRef.current = { entryIds, historyCursor, hasEarlierMessages };
+
+  useEffect(() => {
+    if (!searchTarget || loading) return;
+    const controller = new AbortController();
+    const locate = async () => {
+      const history = searchHistoryRef.current;
+      let found = history.entryIds.includes(searchTarget.entryId);
+      if (!found && !sessionBusy && history.hasEarlierMessages && history.historyCursor && !loadingOlderRef.current) {
+        loadingOlderRef.current = true;
+        const container = scrollContainerRef.current;
+        if (container) prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
+        // ponytail: one extra page of 200 entries; deeper or other-branch hits just open the session.
+        const context = await loadContext(searchTarget.sessionId, activeLeafId, history.historyCursor, { tail: 200, signal: controller.signal });
+        loadingOlderRef.current = false;
+        found = Boolean(context?.entryIds.includes(searchTarget.entryId));
+      }
+      if (controller.signal.aborted) return;
+      if (found) {
+        prevScrollDistanceRef.current = null;
+        setVisibleCount((current) => Math.max(current, (searchHistoryRef.current.entryIds.length + 200) * 2));
+        setPendingSearchScroll(searchTarget);
+      } else {
+        onSearchTargetHandled?.(searchTarget);
+      }
+    };
+    void locate();
+    return () => controller.abort();
+  }, [searchTarget, loading, activeLeafId, sessionBusy, loadContext, onSearchTargetHandled, scrollContainerRef]);
+
+  useLayoutEffect(() => {
+    if (!pendingSearchScroll || pendingSearchScroll !== searchTarget) return;
+    const selector = `[data-entry-id="${CSS.escape(pendingSearchScroll.entryId)}"]`;
+    const element = scrollContainerRef.current?.querySelector<HTMLElement>(searchMessage?.role === "user" ? selector : `${selector} [data-search-target]`);
+    if (element) {
+      scrollToMessage(element);
+      element.animate([
+        { backgroundColor: "var(--bg-selected)" },
+        { backgroundColor: "transparent" },
+      ], { duration: 2500 });
+    }
+    setPendingSearchScroll(null);
+    onSearchTargetHandled?.(pendingSearchScroll);
+  }, [pendingSearchScroll, searchTarget, searchMessage, scrollContainerRef, scrollToMessage, onSearchTargetHandled]);
+
   // IntersectionObserver on the sentinel div at the top of the message list.
   // When it becomes visible, load the next page of older messages.
   useEffect(() => {
@@ -747,6 +805,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     onOpenFile={onOpenFile}
                     onOpenSession={onOpenSession}
                     entryId={entryIds[idx]}
+                    searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
                     onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={sessionBusy ? undefined : handleNavigate}
@@ -758,9 +817,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     writtenFiles={options.writtenFiles}
                   />
                 );
-                if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
+                if (!isVisible || currentRefIdx === undefined) return view;
                 return (
-                  <div key={`${keyPrefix}-${messageKey}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+                  <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)}>
                     {view}
                   </div>
                 );
@@ -824,6 +883,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     <ProcessDetailsGroup
                       messageCount={processCount}
                       defaultExpanded={!finalAnswerMessage}
+                      reveal={Boolean(pendingSearchScroll && (visibleProcessIndices.some((index) => entryIds[index] === pendingSearchScroll.entryId) || (searchBlock && finalSplit.processBlocks.includes(searchBlock))))}
                       t={t}
                       toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
                     >
