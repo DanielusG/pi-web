@@ -1,12 +1,14 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
+import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
+import { getAssistantErrorMessage, getThinkingPreview, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { isEditToolName } from "@/lib/tool-names";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
@@ -288,6 +290,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
+    && prev.writtenFiles === next.writtenFiles
     && prev.sessionId === next.sessionId;
 });
 
@@ -889,6 +892,7 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
   const [error, setError] = useState<string | null>(null);
   const tRef = useRef(t);
   tRef.current = t;
+  const preview = getThinkingPreview(block.thinking);
 
   // Keep already-mounted blocks in sync when the preference changes.
   useEffect(() => {
@@ -929,25 +933,23 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
   }, [expanded, block.deferred, content, sessionId, entryId, blockIndex]);
 
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        overflow: "hidden",
-        fontSize: 13,
-      }}
-    >
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
       <button
         type="button"
         aria-expanded={expanded}
+        aria-label={`${t("i18n.thinking")}${preview ? `: ${preview}` : ""}`}
+        title={t("i18n.thinking")}
         onClick={() => setExpanded((v) => !v)}
         style={{
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
           gap: 6,
-          width: "100%",
-          padding: "6px 10px",
-          background: "var(--bg-panel)",
+          width: expanded ? 14 : "100%",
+          flexShrink: expanded ? 0 : 1,
+          minWidth: 0,
+          minHeight: 24,
+          padding: "2px 0",
+          background: "transparent",
           border: "none",
           color: "var(--text-muted)",
           cursor: "pointer",
@@ -955,29 +957,31 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
           textAlign: "left",
         }}
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
-          <polyline points="4 2.5 7.5 6 4 9.5" />
-        </svg>
-        <span>{t("i18n.thinking")}</span>
-        {duration !== undefined && (
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+        <ThinkingIcon active={expanded} />
+        {!expanded && (
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {preview ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{preview}</ReactMarkdown> : "..."}
+          </span>
         )}
       </button>
       {expanded && (
         <div
           style={{
-            padding: "8px 10px",
+            flex: 1,
+            minWidth: 0,
+            padding: "2px 0",
             color: error ? "#f87171" : "var(--text-muted)",
             fontSize: 12,
             lineHeight: 1.6,
             whiteSpace: "pre-wrap",
-            background: "var(--bg-panel)",
             overflowWrap: "anywhere",
-            borderTop: "1px solid var(--border)",
           }}
         >
            {loading ? t("i18n.loadingThinking") : error ?? (block.deferred ? content : block.thinking)}
         </div>
+      )}
+      {duration !== undefined && (
+        <span style={{ flexShrink: 0, paddingTop: 4, fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
       )}
     </div>
   );
