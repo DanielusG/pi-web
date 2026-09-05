@@ -1260,8 +1260,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (sendShortcut) {
         e.preventDefault();
         if (isStreaming && (onSteer || onFollowUp)) {
-          // Default Enter sends as steer if available, else followup
-          sendQueued(onSteer ? "steer" : "followup");
+          sendQueued((e.altKey && onFollowUp) || !onSteer ? "followup" : "steer");
         } else {
           handleSend();
         }
@@ -2055,7 +2054,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={() => sendQueued("followup")}
                   disabled={!canQueueStreamingMessage}
-                  title={t("chat.followUpHint")}
+                  title={`${t("chat.followUpHint")} (${isMobile ? "Ctrl/Cmd+" : ""}Alt/Option+Enter)`}
+                  aria-keyshortcuts={isMobile ? "Control+Alt+Enter Meta+Alt+Enter" : "Alt+Enter"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
