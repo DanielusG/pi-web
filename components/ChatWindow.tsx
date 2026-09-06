@@ -1,11 +1,13 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
+import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
+import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -18,16 +20,22 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
+import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import {
   captureScrollDistance,
   getPromptAnchorSpacerHeight,
   getVisibleRenderWindow,
+  isScrollAtTail,
   restoreScrollTop,
   VISIBLE_PAGE_SIZE,
 } from "@/lib/chat-lazy-load";
 
 interface Props {
   session: SessionInfo | null;
+  searchTarget?: { sessionId: string; entryId: string; blockIndex?: number } | null;
+  onSearchTargetHandled?: (target: { sessionId: string; entryId: string }) => void;
+  initialScrollPosition?: ChatScrollPosition | null;
+  onScrollPositionChange?: (sessionId: string, position: ChatScrollPosition) => void;
   sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
@@ -38,6 +46,7 @@ interface Props {
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
+  onSystemPromptChange?: (prompt: string | null) => void;
   onSystemToolsChange?: (tools: ToolEntry[] | null) => void;
   onSystemInfoLoaderChange?: (loader: (() => Promise<void>) | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
@@ -45,6 +54,10 @@ interface Props {
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
   onOpenSession?: (sessionId: string) => void;
+  onAskInNewChat?: (prompt: string, sourceSessionId: string, sourceEntryId: string) => Promise<void>;
+  quoteSelectionEnabled?: boolean;
+  initialPrompt?: string;
+  onInitialPromptConsumed?: () => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
   soundEnabled?: boolean;
@@ -209,8 +222,11 @@ function withAssistantBlocks(
   return next;
 }
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, reveal = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  useLayoutEffect(() => {
+    if (reveal) setExpanded(true);
+  }, [reveal]);
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
 
@@ -218,7 +234,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
     <div style={{ marginBottom: 14 }}>
       <button
         type="button"
-        aria-expanded={expanded}
+        aria-expanded={expanded || reveal}
         onClick={() => setExpanded((v) => !v)}
         style={{
           display: "flex",
@@ -243,7 +259,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
           {parts.join(" · ")}
         </span>
       </button>
-      {expanded && (
+      {(expanded || reveal) && (
         <div style={{ marginTop: 8 }}>
           {children}
         </div>
@@ -252,7 +268,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const completionNotificationsEnabled = session?.relation?.kind !== "subagent";
@@ -278,6 +294,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     chatInputRef?.current?.replaceMessage(message);
   }, [chatInputRef]);
 
+  const initialScrollPositionRef = useRef(searchTarget ? null : initialScrollPosition ?? null);
+  const [pendingScrollRestore, setPendingScrollRestore] = useState<Extract<ChatScrollPosition, { atBottom: false }> | null>(() => {
+    const position = initialScrollPositionRef.current;
+    return position && !position.atBottom ? position : null;
+  });
+  const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
+
   const {
     loading, error, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
@@ -288,19 +311,168 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     isAutoModelSelection,
     agentPhase,
     isNew,
-    sessionIdRef, messagesEndRef, scrollContainerRef,
+    sessionIdRef, scrollContainerRef,
     lastUserMsgRef, promptAnchorActive,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
-    loadContext, activeLeafId,
+    loadContext, activeLeafId, scrollToBottom, scrollToMessage,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
-    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
+    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
+    deferInitialScroll: Boolean(pendingScrollRestore),
   });
   const sessionBusy = agentRunning || bashRunning;
+  const [quotedSelection, setQuotedSelection] = useState<{
+    text: string;
+    top: number;
+    left: number;
+    sourceEntryId?: string;
+  } | null>(null);
+  const [quoteInputOpen, setQuoteInputOpen] = useState(false);
+  const [quoteSubmitting, setQuoteSubmitting] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const quotePopoverRef = useRef<HTMLDivElement | null>(null);
+  const quoteChatInputRef = useRef<ChatInputHandle | null>(null);
+  const closeQuotedSelection = useCallback(() => {
+    setQuotedSelection(null);
+    setQuoteInputOpen(false);
+    setQuoteError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!quoteSelectionEnabled) closeQuotedSelection();
+  }, [quoteSelectionEnabled, closeQuotedSelection]);
+
+  const captureQuotedSelection = useCallback(() => {
+    if (!quoteSelectionEnabled || quoteInputOpen) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const root = messageContentRef.current;
+    if (!selection || selection.isCollapsed || !range || !root || !root.contains(range.commonAncestorContainer)) {
+      setQuotedSelection(null);
+      return;
+    }
+    const text = selection.toString().trim();
+    if (!text) {
+      setQuotedSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    const ancestor = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer as Element
+      : range.commonAncestorContainer.parentElement;
+    const start = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer as Element
+      : range.startContainer.parentElement;
+    const end = range.endContainer.nodeType === Node.ELEMENT_NODE
+      ? range.endContainer as Element
+      : range.endContainer.parentElement;
+    const sourceEntryId = [ancestor, start, end]
+      .map((element) => element?.closest<HTMLElement>("[data-message-role=\"assistant\"]")?.dataset.entryId)
+      .find((entryId): entryId is string => Boolean(entryId));
+    setQuotedSelection({
+      text,
+      top: Math.min(window.innerHeight - 44, rect.bottom + 8),
+      left: Math.max(64, Math.min(window.innerWidth - 64, rect.left + rect.width / 2)),
+      sourceEntryId,
+    });
+  }, [quoteSelectionEnabled, quoteInputOpen]);
+
+  useEffect(() => {
+    if (!quoteInputOpen || !quotedSelection) return;
+    quoteChatInputRef.current?.insertIfEmpty(buildQuotedSelection(
+      quotedSelection.text,
+      t("chat.quoteIntro"),
+      t("chat.quoteQuestion"),
+    ));
+  }, [quoteInputOpen, quotedSelection, t]);
+
+  useLayoutEffect(() => {
+    const popover = quotePopoverRef.current;
+    if (!popover || !quotedSelection) return;
+    const viewport = window.visualViewport;
+    const position = () => {
+      const rect = popover.getBoundingClientRect();
+      const top = viewport?.offsetTop ?? 0;
+      const left = viewport?.offsetLeft ?? 0;
+      popover.style.top = `${Math.max(top + 8, Math.min(quotedSelection.top, top + (viewport?.height ?? window.innerHeight) - rect.height - 8))}px`;
+      popover.style.left = `${Math.max(left + 8, Math.min(quotedSelection.left - rect.width / 2, left + (viewport?.width ?? window.innerWidth) - rect.width - 8))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(popover);
+    window.addEventListener("resize", position);
+    viewport?.addEventListener("resize", position);
+    viewport?.addEventListener("scroll", position);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      viewport?.removeEventListener("resize", position);
+      viewport?.removeEventListener("scroll", position);
+    };
+  }, [quotedSelection, quoteInputOpen, quoteError]);
+
+  useEffect(() => {
+    if (!quotedSelection) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!quoteInputOpen && !quotePopoverRef.current?.contains(event.target as Node)) closeQuotedSelection();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!quoteSubmitting) closeQuotedSelection();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [quotedSelection, quoteInputOpen, quoteSubmitting, closeQuotedSelection]);
+
+  const askSelectionHere = useCallback(() => {
+    if (!quotedSelection) return;
+    chatInputRef?.current?.insertText(buildQuotedSelection(
+      quotedSelection.text,
+      t("chat.quoteIntro"),
+      t("chat.quoteQuestion"),
+    ));
+    window.getSelection()?.removeAllRanges();
+    closeQuotedSelection();
+  }, [chatInputRef, quotedSelection, closeQuotedSelection, t]);
+
+  const askSelectionInNewChat = useCallback(async (prompt: string) => {
+    const sourceSessionId = sessionIdRef.current ?? session?.id;
+    if (quoteSubmitting || !prompt.trim() || !quotedSelection?.sourceEntryId || !sourceSessionId || !onAskInNewChat) return;
+    setQuoteSubmitting(true);
+    setQuoteError(null);
+    unlockAudio?.();
+    try {
+      await onAskInNewChat(
+        prompt,
+        sourceSessionId,
+        quotedSelection.sourceEntryId,
+      );
+      closeQuotedSelection();
+    } catch (error) {
+      quoteChatInputRef.current?.restoreSubmission(prompt);
+      setQuoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setQuoteSubmitting(false);
+    }
+  }, [onAskInNewChat, quotedSelection, quoteSubmitting, session?.id, sessionIdRef, closeQuotedSelection, unlockAudio]);
+
+  const initialPromptSentRef = useRef(false);
+  useEffect(() => {
+    if (loading || error || !initialPrompt || initialPromptSentRef.current) return;
+    initialPromptSentRef.current = true;
+    onInitialPromptConsumed?.();
+    void handleSend(initialPrompt);
+  }, [initialPrompt, loading, error, handleSend, onInitialPromptConsumed]);
 
   useEffect(() => {
     if (
@@ -322,8 +494,167 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   // top, load another page while keeping the scroll position stable.
   const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const messageContentRef = useRef<HTMLDivElement | null>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
+  const restoreStartedRef = useRef(false);
+  const pendingScrollRestoreRef = useRef(pendingScrollRestore);
+  pendingScrollRestoreRef.current = pendingScrollRestore;
+  const [pendingSearchScroll, setPendingSearchScroll] = useState<Props["searchTarget"]>(null);
+  const searchMessage = messages[entryIds.indexOf(pendingSearchScroll?.entryId ?? "")];
+  const searchBlock = searchMessage?.role === "assistant"
+    ? (pendingSearchScroll?.blockIndex === undefined
+      ? searchMessage.content.find((block) => block.type === "text")
+      : searchMessage.content[pendingSearchScroll.blockIndex])
+    : undefined;
+  const searchHistoryRef = useRef({ entryIds, historyCursor, hasEarlierMessages });
+  searchHistoryRef.current = { entryIds, historyCursor, hasEarlierMessages };
+
+  useLayoutEffect(() => {
+    const sessionId = session?.id;
+    const container = scrollContainerRef.current;
+    const content = messageContentRef.current;
+    if (!sessionId || !onScrollPositionChange || !container || !content) return;
+    return () => {
+      if (pendingScrollRestoreRef.current) return;
+      if (isScrollAtTail(container.scrollTop, container.clientHeight, container.scrollHeight)) {
+        onScrollPositionChange(sessionId, { atBottom: true });
+        return;
+      }
+      const viewportTop = container.getBoundingClientRect().top;
+      const candidates = Array.from(content.children).flatMap((element) => {
+        if (!(element instanceof HTMLElement) || !element.dataset.entryId) return [];
+        const rect = element.getBoundingClientRect();
+        return [{ entryId: element.dataset.entryId, top: rect.top, bottom: rect.bottom }];
+      });
+      const anchor = findChatScrollAnchor(candidates, viewportTop);
+      if (!anchor) return;
+      onScrollPositionChange(sessionId, {
+        atBottom: false,
+        ...anchor,
+        oldestEntryId: searchHistoryRef.current.historyCursor,
+      });
+    };
+  }, [loading, onScrollPositionChange, scrollContainerRef, session?.id]);
+
+  useEffect(() => {
+    if (searchTarget) setPendingScrollRestore(null);
+  }, [searchTarget]);
+
+  useEffect(() => {
+    const position = pendingScrollRestore;
+    const sessionId = session?.id;
+    if (!position || !sessionId || loading || searchTarget || restoreStartedRef.current) return;
+    restoreStartedRef.current = true;
+    const controller = new AbortController();
+
+    const locate = async () => {
+      const initialHistory = searchHistoryRef.current;
+      if (initialHistory.entryIds.includes(position.anchorEntryId)) {
+        setVisibleCount((current) => Math.max(current, initialHistory.entryIds.length * 2));
+        setRestoreAnchorReady(true);
+        return;
+      }
+
+      loadingOlderRef.current = true;
+      let before = initialHistory.historyCursor;
+      let hasMore = initialHistory.hasEarlierMessages;
+      try {
+        while (hasMore && before && !controller.signal.aborted) {
+          const context = await loadContext(sessionId, activeLeafId, before, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          if (!context) {
+            scrollToBottom("instant");
+            setPendingScrollRestore(null);
+            return;
+          }
+          setVisibleCount((current) => current + Math.max(VISIBLE_PAGE_SIZE, context.messages.length * 2));
+          if (context.entryIds.includes(position.anchorEntryId)) {
+            setRestoreAnchorReady(true);
+            return;
+          }
+          if (context.oldestEntryId === position.oldestEntryId) break;
+          before = context.oldestEntryId;
+          hasMore = context.hasMore;
+        }
+        if (!controller.signal.aborted) {
+          scrollToBottom("instant");
+          setPendingScrollRestore(null);
+        }
+      } finally {
+        loadingOlderRef.current = false;
+      }
+    };
+
+    void locate();
+    return () => {
+      controller.abort();
+      // A branch change cancels restoration and must reveal the new context.
+      setPendingScrollRestore(null);
+    };
+  }, [activeLeafId, loadContext, loading, pendingScrollRestore, scrollToBottom, searchTarget, session?.id]);
+
+  useLayoutEffect(() => {
+    const position = pendingScrollRestore;
+    const content = messageContentRef.current;
+    if (!position || !content || searchTarget) return;
+    const element = Array.from(content.children).find((candidate) => (
+      candidate instanceof HTMLElement && candidate.dataset.entryId === position.anchorEntryId
+    ));
+    if (element instanceof HTMLElement) {
+      scrollToMessage(element, position.anchorOffset);
+      setPendingScrollRestore(null);
+      return;
+    }
+    if (restoreAnchorReady) {
+      scrollToBottom("instant");
+      setPendingScrollRestore(null);
+    }
+  }, [entryIds, pendingScrollRestore, restoreAnchorReady, scrollToBottom, scrollToMessage, searchTarget, visibleCount]);
+
+  useEffect(() => {
+    if (!searchTarget || loading) return;
+    const controller = new AbortController();
+    const locate = async () => {
+      const history = searchHistoryRef.current;
+      let found = history.entryIds.includes(searchTarget.entryId);
+      if (!found && !sessionBusy && history.hasEarlierMessages && history.historyCursor && !loadingOlderRef.current) {
+        loadingOlderRef.current = true;
+        const container = scrollContainerRef.current;
+        if (container) prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
+        // ponytail: one extra page of 200 entries; deeper or other-branch hits just open the session.
+        const context = await loadContext(searchTarget.sessionId, activeLeafId, history.historyCursor, { tail: 200, signal: controller.signal });
+        loadingOlderRef.current = false;
+        found = Boolean(context?.entryIds.includes(searchTarget.entryId));
+      }
+      if (controller.signal.aborted) return;
+      if (found) {
+        prevScrollDistanceRef.current = null;
+        setVisibleCount((current) => Math.max(current, (searchHistoryRef.current.entryIds.length + 200) * 2));
+        setPendingSearchScroll(searchTarget);
+      } else {
+        onSearchTargetHandled?.(searchTarget);
+      }
+    };
+    void locate();
+    return () => controller.abort();
+  }, [searchTarget, loading, activeLeafId, sessionBusy, loadContext, onSearchTargetHandled, scrollContainerRef]);
+
+  useLayoutEffect(() => {
+    if (!pendingSearchScroll || pendingSearchScroll !== searchTarget) return;
+    const selector = `[data-entry-id="${CSS.escape(pendingSearchScroll.entryId)}"]`;
+    const element = scrollContainerRef.current?.querySelector<HTMLElement>(searchMessage?.role === "user" ? selector : `${selector} [data-search-target]`);
+    if (element) {
+      scrollToMessage(element);
+      element.animate([
+        { backgroundColor: "var(--bg-selected)" },
+        { backgroundColor: "transparent" },
+      ], { duration: 2500 });
+    }
+    setPendingSearchScroll(null);
+    onSearchTargetHandled?.(pendingSearchScroll);
+  }, [pendingSearchScroll, searchTarget, searchMessage, scrollContainerRef, scrollToMessage, onSearchTargetHandled]);
+
   // IntersectionObserver on the sentinel div at the top of the message list.
   // When it becomes visible, load the next page of older messages.
   useEffect(() => {
@@ -414,7 +745,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
-  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const visibleMessages = messages.filter((m) => isMessageGroupAnchor(m) || m.role === "assistant");
   // Stable Map identity: `messages` doesn't change during streaming updates
   // (the streaming message lives in streamState), so memoized MessageViews
   // skip re-rendering on every message_update event. An inline `new Map()`
@@ -448,7 +779,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
-  const messageContentRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerHeightRef = useRef(0);
   const promptAnchorMeasureFrameRef = useRef<number | null>(null);
@@ -621,6 +951,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           onOpenFile={onOpenFile}
           onOpenSession={onOpenSession}
           entryId={entryIds[idx]}
+          searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
           onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
           forking={forkingEntryId === entryIds[idx]}
           onNavigate={sessionBusy ? undefined : handleNavigate}
@@ -694,10 +1025,27 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
           .find((value): value is number => typeof value === "number")
           ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
+        // Open the group when the search target lives inside it.
+        let revealProcess = false;
+        if (pendingSearchScroll) {
+          for (const processIdx of visibleProcessIndices) {
+            if (entryIds[processIdx] !== pendingSearchScroll.entryId) continue;
+            const m = messages[processIdx];
+            if (m.role !== "assistant") { revealProcess = true; break; }
+            const blocks = getDisplayableAssistantBlocks(m);
+            revealProcess = !searchBlock || blocks.includes(searchBlock);
+            break;
+          }
+          if (!revealProcess && finalProcessMessage && entryIds[finalAssistantIdx] === pendingSearchScroll.entryId) {
+            const blocks = getDisplayableAssistantBlocks(finalProcessMessage);
+            revealProcess = !searchBlock || blocks.includes(searchBlock);
+          }
+        }
         const processGroup = (
           <ProcessDetailsGroup
             messageCount={processCount}
             defaultExpanded={!finalAnswerMessage}
+            reveal={revealProcess}
             t={t}
             toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
           >
@@ -771,6 +1119,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     sessionIdRef,
     hasEarlierMessages,
     onOpenSession,
+    pendingSearchScroll,
+    searchBlock,
   ]);
 
   const chatInputElement = (
@@ -817,22 +1167,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     />
   );
 
-  // Inline replacement for the input bar: while an extension has a blocking
-  // UI request open (question / permission), the dialog takes the input's
-  // place so the chat above stays visible and scrollable.
-  const extensionDialogElement = extensionDialog ? (
-    <div
-      style={{
-        flexShrink: 0,
-        padding: "0 16px 8px",
-        paddingRight: isMobile ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
-      }}
-    >
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
-        <ExtensionDialog request={extensionDialog} onRespond={respondToExtensionUi} />
-      </div>
-    </div>
-  ) : null;
 
   if (loading) {
     return (
@@ -852,7 +1186,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   return (
     <div
-      className="relative flex h-full min-w-0 flex-col overflow-hidden"
+      className="chat-content relative flex h-full min-w-0 flex-col overflow-hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
@@ -891,13 +1225,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         </div>
       )}
 
-      {extensionCustomUi && (
-        <ExtensionCustomPanel
-          request={extensionCustomUi}
-          onInput={sendExtensionCustomInput}
-        />
-      )}
-
       <div
         style={{
           position: "absolute",
@@ -915,45 +1242,21 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
       </div>
 
-      {isEmptyNew ? (
-        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-          <div className="w-full max-w-[820px]">
-            <div
-              className="mb-3"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                marginLeft: 16,
-                marginRight: isMobile ? 16 : 52,
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
-                <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
-                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
-                <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
-                </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
-                </span>
-              </div>
-            </div>
-            {extensionDialogElement ?? chatInputElement}
-            <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
-          </div>
-        </div>
-      ) : (
-      <>
-      <div className="relative flex min-w-0 flex-1 overflow-hidden">
-        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        {extensionDialog && (
+          <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
+        )}
+        {extensionCustomUi && (
+          <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} onInput={sendExtensionCustomInput} />
+        )}
+        {!isEmptyNew && <>
+        <div
+          ref={scrollContainerRef}
+          className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]"
+          style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
+        >
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
+            <div ref={messageContentRef} onPointerUp={captureQuotedSelection} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {messageListNode}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
               <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} />
@@ -985,12 +1288,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
             )}
 
             <div ref={promptAnchorSpacerRef} aria-hidden="true" />
-
-            <div ref={messagesEndRef} />
             </div>
           </div>
         </div>
-        {isMobile ? null : (
+        {isMobile || pendingScrollRestore ? null : (
           <ChatMinimap
             messages={messages}
             streamingMessage={streamState.streamingMessage}
@@ -999,14 +1300,112 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
             onRevealHistory={revealHistoryForMinimap}
           />
         )}
+        </>}
       </div>
 
-      <div className="relative">
-        {extensionDialogElement ?? chatInputElement}
+      {quoteSelectionEnabled && quotedSelection && createPortal(
+        <div
+          ref={quotePopoverRef}
+          role={quoteInputOpen ? "dialog" : "toolbar"}
+          aria-label={t(quoteInputOpen ? "chat.newQuoteChat" : "chat.askSelection")}
+          style={{
+            position: "fixed",
+            top: quotedSelection.top,
+            left: quotedSelection.left,
+            zIndex: 130,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 3,
+            width: quoteInputOpen ? "min(420px, calc(100vw - 16px))" : undefined,
+            maxWidth: "calc(100vw - 16px)",
+            maxHeight: "calc(var(--app-viewport-height, 100dvh) - 16px)",
+            overflowY: "auto",
+            padding: quoteInputOpen ? 12 : 3,
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--bg)",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+          }}
+        >
+          {quoteInputOpen ? (
+            <fieldset
+              disabled={quoteSubmitting}
+              aria-busy={quoteSubmitting}
+              style={{ width: "100%", minWidth: 0, margin: 0, padding: 0, border: "none", display: "flex", flexDirection: "column", gap: 10 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600 }}>{t("chat.askInNewChat")}</span>
+                <button type="button" className="file-viewer-icon-button" title={t("i18n.close")} aria-label={t("i18n.close")} disabled={quoteSubmitting} onClick={closeQuotedSelection} style={{ border: "none" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+                </button>
+              </div>
+              <ChatInput
+                ref={quoteChatInputRef}
+                compact
+                onSend={askSelectionInNewChat}
+                onAbort={closeQuotedSelection}
+                isStreaming={false}
+              />
+              {quoteError && <div role="alert" style={{ color: "#dc2626", fontSize: 12, overflowWrap: "anywhere" }}>{quoteError}</div>}
+            </fieldset>
+          ) : <>
+          <button
+            type="button"
+            className="file-viewer-icon-button"
+            title={t("chat.askInCurrent")}
+            aria-label={t("chat.askInCurrent")}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={askSelectionHere}
+            style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+          >
+            <span aria-hidden="true" style={{ fontSize: 15 }}>@</span>
+            <span>{t("chat.askInCurrent")}</span>
+          </button>
+          {onAskInNewChat && quotedSelection.sourceEntryId && !sessionBusy && (
+            <button
+              type="button"
+              className="file-viewer-icon-button"
+              title={t("chat.askInNewChat")}
+              aria-label={t("chat.askInNewChat")}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { setQuoteInputOpen(true); window.getSelection()?.removeAllRanges(); }}
+              style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 3v12M18 9a9 9 0 0 1-9 9" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+              </svg>
+              <span>{t("chat.askInNewChat")}</span>
+            </button>
+          )}
+          </>}
+        </div>,
+        document.body,
+      )}
+
+      <div className="relative shrink-0">
+        {isEmptyNew && (
+          <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontFamily: "var(--font-mono)" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
+                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
+                <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+        {chatInputElement}
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
       </div>
-      </>
-      )}
+      {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>
   );
 }
@@ -1113,6 +1512,15 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
 
 type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
+function getExtensionDialogSummary(request: ExtensionDialogRequest): string | undefined {
+  if (request.method === "select" && request.options.length > 0) return request.options[0];
+  if (request.method === "confirm") {
+    const firstLine = request.message.split("\n").find((line) => line.trim());
+    return firstLine?.trim();
+  }
+  return undefined;
+}
+
 function ExtensionDialog({
   request,
   onRespond,
@@ -1121,14 +1529,26 @@ function ExtensionDialog({
   onRespond: (request: ExtensionDialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => void;
 }) {
   const { t } = useI18n();
-  const dialogTitleId = useId();
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [collapsed, setCollapsed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const summary = getExtensionDialogSummary(request);
+  const remainingSeconds = request.expiresAt === undefined
+    ? null
+    : Math.max(0, Math.ceil((request.expiresAt - now) / 1000));
 
   useEffect(() => {
-    setValue(request.method === "editor" ? request.prefill ?? "" : "");
-    setCollapsed(false);
-  }, [request]);
+    if (request.expiresAt === undefined) return;
+    // The server closes expired requests via extension_ui_closed.
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [request.expiresAt]);
+
+  const countdown = remainingSeconds !== null && (
+    <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0 }}>
+      {t("chat.extensionExpiresIn", { seconds: remainingSeconds })}
+    </span>
+  );
 
   const submitValue = () => {
     if (request.method === "confirm") {
@@ -1138,208 +1558,256 @@ function ExtensionDialog({
     }
   };
 
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={() => setCollapsed(false)}
-        aria-label={t("chat.expandRequest")}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: 10,
-          border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))",
-          background: "var(--bg-panel)",
-          cursor: "pointer",
-          textAlign: "left",
-        }}
-      >
-        <span
-          className="animate-[pulse_1.5s_infinite]"
-          style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }}
-        />
-        <span style={{ color: "var(--text)", fontSize: 13, fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {request.title}
-        </span>
-        <span style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>{t("chat.extensionRequest")}</span>
-      </button>
-    );
-  }
-
   return (
     <div
-      role="dialog"
-      aria-labelledby={dialogTitleId}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onRespond(request, { cancelled: true });
+      }}
       style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 90,
         display: "flex",
-        flexDirection: "column",
-        width: "100%",
-        maxHeight: "min(45vh, 360px)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        background: "var(--bg)",
-        boxShadow: "var(--shadow-md)",
-        overflow: "hidden",
+        alignItems: collapsed ? "flex-start" : "flex-end",
+        justifyContent: "center",
+        padding: `12px ${CHAT_COLUMN_PADDING}px`,
+        pointerEvents: "none",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
-          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat.extensionRequest")}</div>
-        </div>
+      {collapsed ? (
         <button
           type="button"
-          onClick={() => setCollapsed(true)}
-          aria-label={t("chat.collapseRequest")}
-          title={t("chat.collapseRequest")}
+          onClick={() => setCollapsed(false)}
+          aria-expanded={false}
           style={{
+            pointerEvents: "auto",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            width: 26,
-            height: 26,
-            borderRadius: 8,
+            gap: 10,
+            maxWidth: "min(560px, 100%)",
+            width: "100%",
+            padding: "10px 12px",
             border: "1px solid var(--border)",
-            background: "var(--bg-panel)",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </button>
-      </div>
-
-      <div style={{ padding: 14, overflowY: "auto", minHeight: 0, flex: 1 }}>
-        {request.method === "confirm" && (
-          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
-        )}
-        {request.method === "select" && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {request.options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => onRespond(request, { value: option })}
-                style={{
-                  width: "100%",
-                  padding: "9px 10px",
-                  borderRadius: 9,
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-panel)",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: 13,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        )}
-        {request.method === "input" && (
-          <input
-            autoFocus
-            value={value}
-            placeholder={request.placeholder}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitValue();
-              if (e.key === "Escape") onRespond(request, { cancelled: true });
-            }}
-            style={{
-              width: "100%",
-              padding: "9px 10px",
-              borderRadius: 9,
-              border: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--text)",
-              outline: "none",
-              fontSize: 13,
-            }}
-          />
-        )}
-        {request.method === "editor" && (
-          <textarea
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") onRespond(request, { cancelled: true });
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitValue();
-            }}
-            style={{
-              width: "100%",
-              minHeight: 220,
-              padding: 10,
-              borderRadius: 9,
-              border: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--text)",
-              outline: "none",
-              resize: "vertical",
-              fontSize: 13,
-              lineHeight: 1.55,
-              fontFamily: "var(--font-mono)",
-            }}
-          />
-        )}
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)", flexShrink: 0 }}>
-        <button
-          type="button"
-          onClick={() => onRespond(request, { cancelled: true })}
-          style={{
-            padding: "6px 10px",
             borderRadius: 8,
-            border: "1px solid var(--border)",
             background: "var(--bg)",
-            color: "var(--text-muted)",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
+            color: "var(--text)",
             cursor: "pointer",
+            textAlign: "left",
           }}
         >
-          {t("chat.cancel")}
+          <span style={{ fontSize: 11, fontWeight: 650, color: "var(--accent)", flexShrink: 0 }}>
+            {t("chat.extensionPending")}
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+            {request.title}
+          </span>
+          {summary && (
+            <span style={{ fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "34%", flexShrink: 1 }}>
+              {summary}
+            </span>
+          )}
+          {countdown}
+          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
+            {t("chat.extensionExpand")}
+          </span>
         </button>
-        {request.method === "confirm" ? (
+      ) : (
+      <div
+        role="dialog"
+        aria-label={request.title}
+        style={{
+          pointerEvents: "auto",
+          width: "100%",
+          maxWidth: "var(--chat-content-max-width, 820px)",
+          maxHeight: "min(760px, 100%)",
+          display: "flex",
+          flexDirection: "column",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          background: "var(--bg)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+              <span>{t("chat.extensionRequest")}</span>
+              {countdown}
+            </div>
+          </div>
           <button
             type="button"
-            onClick={submitValue}
+            onClick={() => setCollapsed(true)}
+            aria-expanded={true}
+            title={t("chat.extensionCollapse")}
+            aria-label={t("chat.extensionCollapse")}
+            style={{
+              display: "grid",
+              placeItems: "center",
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </button>
+        </div>
+
+        <div
+          style={{
+            padding: 14,
+            flex: "1 1 auto", minHeight: 0, overflowY: "auto",
+          }}
+        >
+          {request.method === "confirm" && (
+            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
+          )}
+          {request.method === "select" && (
+            <div
+              onKeyDown={(event) => {
+                if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+                const buttons = Array.from(event.currentTarget.querySelectorAll("button"));
+                const index = buttons.indexOf(event.target as HTMLButtonElement);
+                if (index < 0) return;
+                event.preventDefault();
+                const next = event.key === "Home" ? 0
+                  : event.key === "End" ? buttons.length - 1
+                  : (index + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+                buttons[next].focus({ preventScroll: true });
+                buttons[next].scrollIntoView({ block: "nearest" });
+              }}
+              style={{ display: "grid", gap: 8 }}
+            >
+              {request.options.map((option, index) => (
+                <button
+                  key={option}
+                  autoFocus={index === 0}
+                  onClick={() => onRespond(request, { value: option })}
+                  style={{
+                    width: "100%",
+                    padding: "9px 10px",
+                    borderRadius: 7,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg-panel)",
+                    color: "var(--text)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontSize: 13,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
+          {request.method === "input" && (
+            <input
+              autoFocus
+              value={value}
+              placeholder={request.placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
+              }}
+              style={{
+                width: "100%",
+                padding: "9px 10px",
+                borderRadius: 7,
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                color: "var(--text)",
+                outline: "none",
+                fontSize: 13,
+              }}
+            />
+          )}
+          {request.method === "editor" && (
+            <textarea
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
+              }}
+              style={{
+                width: "100%",
+                minHeight: 220,
+                padding: 10,
+                borderRadius: 7,
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                color: "var(--text)",
+                outline: "none",
+                resize: "vertical",
+                fontSize: 13,
+                lineHeight: 1.55,
+                fontFamily: "var(--font-mono)",
+              }}
+            />
+          )}
+        </div>
+
+        <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+          <button
+            autoFocus={request.method === "confirm" || (request.method === "select" && request.options.length === 0)}
+            onClick={() => onRespond(request, { cancelled: true })}
             style={{
               padding: "6px 10px",
-              borderRadius: 8,
-              border: "1px solid var(--accent)",
-              background: "var(--accent)",
-              color: "#fff",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: "var(--bg)",
+              color: "var(--text-muted)",
               cursor: "pointer",
             }}
           >
-            {t("chat.confirm")}
+             {t("chat.cancel")}
           </button>
-        ) : request.method !== "select" ? (
-          <button
-            type="button"
-            onClick={submitValue}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: "1px solid var(--accent)",
-              background: "var(--accent)",
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            {t("chat.submit")}
-          </button>
-        ) : null}
+          {request.method === "confirm" ? (
+            <button
+              onClick={submitValue}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--accent)",
+                background: "var(--accent)",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+               {t("chat.confirm")}
+            </button>
+          ) : request.method !== "select" ? (
+            <button
+              onClick={submitValue}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--accent)",
+                background: "var(--accent)",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+               {t("chat.submit")}
+            </button>
+          ) : null}
+        </div>
       </div>
+      )}
     </div>
   );
 }
@@ -1356,11 +1824,13 @@ function ExtensionCustomPanel({
   const { t } = useI18n();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const [collapsed, setCollapsed] = useState(false);
   const displayLines = normalizeCustomPanelLines(request.lines);
+  const summary = displayLines.find((line) => line.trim())?.trim();
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, [request.id]);
+    if (!collapsed) inputRef.current?.focus();
+  }, [collapsed]);
 
   return (
     <div
@@ -1369,23 +1839,62 @@ function ExtensionCustomPanel({
         inset: 0,
         zIndex: 95,
         display: "flex",
-        alignItems: "center",
+        alignItems: collapsed ? "flex-start" : "center",
         justifyContent: "center",
         padding: 20,
-        background: "rgba(0,0,0,0.18)",
+        pointerEvents: "none",
       }}
     >
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          aria-expanded={false}
+          style={{
+            pointerEvents: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            maxWidth: "min(920px, 100%)",
+            width: "100%",
+            padding: "10px 12px",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--bg)",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
+            color: "var(--text)",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 650, color: "var(--accent)", flexShrink: 0 }}>
+            {t("chat.extensionPending")}
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+            {t("chat.extensionPanel")}
+          </span>
+          {summary && (
+            <span style={{ fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "34%", flexShrink: 1 }}>
+              {summary}
+            </span>
+          )}
+          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
+            {t("chat.extensionExpand")}
+          </span>
+        </button>
+      ) : (
       <div
         role="dialog"
-        aria-modal="true"
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest("button")) inputRef.current?.focus();
         }}
         style={{
+          pointerEvents: "auto",
           position: "relative",
           width: "min(920px, 100%)",
           maxHeight: "min(760px, 100%)",
-          border: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",          border: "1px solid var(--border)",
           borderRadius: 10,
           background: "var(--bg)",
           boxShadow: "var(--shadow-lg)",
@@ -1441,28 +1950,52 @@ function ExtensionCustomPanel({
             pointerEvents: "none",
           }}
         />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
            <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{t("chat.extensionPanel")}</div>
-          <button
-            onClick={() => onInput(request, "\x03")}
-            style={{
-              padding: "5px 9px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-             {t("chat.close")}
-          </button>
-        </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setCollapsed(true)}
+              aria-expanded={true}
+              title={t("chat.extensionCollapse")}
+              aria-label={t("chat.extensionCollapse")}
+              style={{
+                display: "grid",
+                placeItems: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="2 3.5 5 6.5 8 3.5" />
+              </svg>
+            </button>
+            <button
+              onClick={() => onInput(request, "\x03")}
+              style={{
+                padding: "5px 9px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+               {t("chat.close")}
+            </button>
+          </div>        </div>
         <pre
           style={{
             margin: 0,
             padding: 14,
-            maxHeight: "calc(min(760px, 100vh - 40px) - 48px)",
+            minHeight: 0,
             overflow: "auto",
             background: "var(--bg-panel)",
             color: "var(--text)",
@@ -1475,6 +2008,7 @@ function ExtensionCustomPanel({
           <AnsiText text={displayLines.join("\n")} />
         </pre>
       </div>
+      )}
     </div>
   );
 }
