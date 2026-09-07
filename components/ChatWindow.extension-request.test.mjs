@@ -3,18 +3,19 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
-const dialogSource = source.slice(source.indexOf("function ExtensionDialog"));
-const customSource = source.slice(source.indexOf("function ExtensionCustomPanel"));
+const dialogStart = source.indexOf("function ExtensionDialog");
+const customStart = source.indexOf("function ExtensionCustomPanel");
+const dialogSource = source.slice(dialogStart, customStart);
+const customSource = source.slice(customStart);
 
-test("confines extension overlays to the content region above the composer", () => {
-  assert.doesNotMatch(source, /function ExtensionRequestSheet/);
-  assert.match(
-    source,
-    /className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"[\s\S]*?<ExtensionDialog[\s\S]*?<ExtensionCustomPanel[\s\S]*?className="relative shrink-0"[\s\S]*?{chatInputElement}/,
-  );
-  assert.match(dialogSource, /position: "absolute"[\s\S]*?inset: 0/);
-  assert.match(dialogSource, /pointerEvents: "none"/);
-  assert.match(dialogSource, /pointerEvents: "auto"/);
+test("renders the extension dialog inline in the composer slot (fork layout)", () => {
+  // While a blocking extension request is open, the dialog replaces the input bar.
+  assert.match(source, /const extensionDialogElement = extensionDialog \?/);
+  assert.match(source, /\{extensionDialogElement \?\? chatInputElement\}/);
+  // The dialog is not an overlay: no absolute positioning in the dialog component.
+  assert.doesNotMatch(dialogSource, /position: "absolute"/);
+  assert.doesNotMatch(dialogSource, /inset: 0/);
+  // The custom panel remains an overlay confined to the content region above the composer.
   assert.match(customSource, /position: "absolute"[\s\S]*?inset: 0/);
   assert.match(customSource, /pointerEvents: "none"/);
   assert.doesNotMatch(source, /z-\[100\]|zIndex: 100/);
@@ -29,7 +30,7 @@ test("adds collapse without replacing cancel", () => {
 });
 
 test("resets collapse state when a new extension request arrives", () => {
-  assert.match(source, /<ExtensionDialog key=\{extensionDialog.id\}/);
-  assert.match(source, /<ExtensionCustomPanel key=\{extensionCustomUi.id\}/);
-  assert.match(customSource, /if \(!collapsed\) inputRef.current\?\.focus\(\);\s*}, \[collapsed\]\)/);
+  assert.match(dialogSource, /setCollapsed\(false\);\s*}, \[request\]\)/);
+  assert.match(source, /<ExtensionCustomPanel key=\{extensionCustomUi\.id\}/);
+  assert.match(customSource, /if \(!collapsed\) inputRef\.current\?\.focus\(\);\s*}, \[collapsed\]\)/);
 });
