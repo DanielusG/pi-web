@@ -1,6 +1,6 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
@@ -1167,6 +1167,23 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     />
   );
 
+  // Inline replacement for the input bar: while an extension has a blocking
+  // UI request open (question / permission), the dialog takes the input's
+  // place so the chat above stays visible and scrollable.
+  const extensionDialogElement = extensionDialog ? (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: "0 16px 8px",
+        paddingRight: isMobile ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+      }}
+    >
+      <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+        <ExtensionDialog request={extensionDialog} onRespond={respondToExtensionUi} />
+      </div>
+    </div>
+  ) : null;
+
 
   if (loading) {
     return (
@@ -1243,9 +1260,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {extensionDialog && (
-          <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
-        )}
         {extensionCustomUi && (
           <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} onInput={sendExtensionCustomInput} />
         )}
@@ -1402,7 +1416,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        {chatInputElement}
+        {extensionDialogElement ?? chatInputElement}
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
@@ -1512,15 +1526,6 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
 
 type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
-function getExtensionDialogSummary(request: ExtensionDialogRequest): string | undefined {
-  if (request.method === "select" && request.options.length > 0) return request.options[0];
-  if (request.method === "confirm") {
-    const firstLine = request.message.split("\n").find((line) => line.trim());
-    return firstLine?.trim();
-  }
-  return undefined;
-}
-
 function ExtensionDialog({
   request,
   onRespond,
@@ -1529,26 +1534,14 @@ function ExtensionDialog({
   onRespond: (request: ExtensionDialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => void;
 }) {
   const { t } = useI18n();
+  const dialogTitleId = useId();
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [collapsed, setCollapsed] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const summary = getExtensionDialogSummary(request);
-  const remainingSeconds = request.expiresAt === undefined
-    ? null
-    : Math.max(0, Math.ceil((request.expiresAt - now) / 1000));
 
   useEffect(() => {
-    if (request.expiresAt === undefined) return;
-    // The server closes expired requests via extension_ui_closed.
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [request.expiresAt]);
-
-  const countdown = remainingSeconds !== null && (
-    <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0 }}>
-      {t("chat.extensionExpiresIn", { seconds: remainingSeconds })}
-    </span>
-  );
+    setValue(request.method === "editor" ? request.prefill ?? "" : "");
+    setCollapsed(false);
+  }, [request]);
 
   const submitValue = () => {
     if (request.method === "confirm") {
@@ -1558,256 +1551,208 @@ function ExtensionDialog({
     }
   };
 
-  return (
-    <div
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onRespond(request, { cancelled: true });
-      }}
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        alignItems: collapsed ? "flex-start" : "flex-end",
-        justifyContent: "center",
-        padding: `12px ${CHAT_COLUMN_PADDING}px`,
-        pointerEvents: "none",
-      }}
-    >
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          aria-expanded={false}
-          style={{
-            pointerEvents: "auto",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            maxWidth: "min(560px, 100%)",
-            width: "100%",
-            padding: "10px 12px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            background: "var(--bg)",
-            boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
-            color: "var(--text)",
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <span style={{ fontSize: 11, fontWeight: 650, color: "var(--accent)", flexShrink: 0 }}>
-            {t("chat.extensionPending")}
-          </span>
-          <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-            {request.title}
-          </span>
-          {summary && (
-            <span style={{ fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "34%", flexShrink: 1 }}>
-              {summary}
-            </span>
-          )}
-          {countdown}
-          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
-            {t("chat.extensionExpand")}
-          </span>
-        </button>
-      ) : (
-      <div
-        role="dialog"
-        aria-label={request.title}
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        aria-label={t("chat.extensionExpand")}
         style={{
-          pointerEvents: "auto",
-          width: "100%",
-          maxWidth: "var(--chat-content-max-width, 820px)",
-          maxHeight: "min(760px, 100%)",
           display: "flex",
-          flexDirection: "column",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
-          overflow: "hidden",
+          alignItems: "center",
+          gap: 10,
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: 10,
+          border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))",
+          background: "var(--bg-panel)",
+          cursor: "pointer",
+          textAlign: "left",
         }}
       >
-        <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-              <span>{t("chat.extensionRequest")}</span>
-              {countdown}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            aria-expanded={true}
-            title={t("chat.extensionCollapse")}
-            aria-label={t("chat.extensionCollapse")}
-            style={{
-              display: "grid",
-              placeItems: "center",
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: "var(--bg-panel)",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="2 3.5 5 6.5 8 3.5" />
-            </svg>
-          </button>
-        </div>
+        <span
+          className="animate-[pulse_1.5s_infinite]"
+          style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }}
+        />
+        <span style={{ color: "var(--text)", fontSize: 13, fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {request.title}
+        </span>
+        <span style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>{t("chat.extensionRequest")}</span>
+      </button>
+    );
+  }
 
-        <div
+  return (
+    <div
+      role="dialog"
+      aria-labelledby={dialogTitleId}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        maxHeight: "min(45vh, 360px)",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--bg)",
+        boxShadow: "var(--shadow-md)",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
+          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat.extensionRequest")}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          aria-label={t("chat.extensionCollapse")}
+          title={t("chat.extensionCollapse")}
           style={{
-            padding: 14,
-            flex: "1 1 auto", minHeight: 0, overflowY: "auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 26,
+            height: 26,
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--bg-panel)",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            flexShrink: 0,
           }}
         >
-          {request.method === "confirm" && (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
-          )}
-          {request.method === "select" && (
-            <div
-              onKeyDown={(event) => {
-                if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) return;
-                const buttons = Array.from(event.currentTarget.querySelectorAll("button"));
-                const index = buttons.indexOf(event.target as HTMLButtonElement);
-                if (index < 0) return;
-                event.preventDefault();
-                const next = event.key === "Home" ? 0
-                  : event.key === "End" ? buttons.length - 1
-                  : (index + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
-                buttons[next].focus({ preventScroll: true });
-                buttons[next].scrollIntoView({ block: "nearest" });
-              }}
-              style={{ display: "grid", gap: 8 }}
-            >
-              {request.options.map((option, index) => (
-                <button
-                  key={option}
-                  autoFocus={index === 0}
-                  onClick={() => onRespond(request, { value: option })}
-                  style={{
-                    width: "100%",
-                    padding: "9px 10px",
-                    borderRadius: 7,
-                    border: "1px solid var(--border)",
-                    background: "var(--bg-panel)",
-                    color: "var(--text)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    fontSize: 13,
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          )}
-          {request.method === "input" && (
-            <input
-              autoFocus
-              value={value}
-              placeholder={request.placeholder}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
-              }}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                borderRadius: 7,
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text)",
-                outline: "none",
-                fontSize: 13,
-              }}
-            />
-          )}
-          {request.method === "editor" && (
-            <textarea
-              autoFocus
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
-              }}
-              style={{
-                width: "100%",
-                minHeight: 220,
-                padding: 10,
-                borderRadius: 7,
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text)",
-                outline: "none",
-                resize: "vertical",
-                fontSize: 13,
-                lineHeight: 1.55,
-                fontFamily: "var(--font-mono)",
-              }}
-            />
-          )}
-        </div>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6l4 4 4-4" />
+          </svg>
+        </button>
+      </div>
 
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+      <div style={{ padding: 14, overflowY: "auto", minHeight: 0, flex: 1 }}>
+        {request.method === "confirm" && (
+          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
+        )}
+        {request.method === "select" && (
+          <div style={{ display: "grid", gap: 8 }}>
+            {request.options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onRespond(request, { value: option })}
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontSize: 13,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {request.method === "input" && (
+          <input
+            autoFocus
+            value={value}
+            placeholder={request.placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitValue();
+              if (e.key === "Escape") onRespond(request, { cancelled: true });
+            }}
+            style={{
+              width: "100%",
+              padding: "9px 10px",
+              borderRadius: 9,
+              border: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text)",
+              outline: "none",
+              fontSize: 13,
+            }}
+          />
+        )}
+        {request.method === "editor" && (
+          <textarea
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onRespond(request, { cancelled: true });
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitValue();
+            }}
+            style={{
+              width: "100%",
+              minHeight: 220,
+              padding: 10,
+              borderRadius: 9,
+              border: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text)",
+              outline: "none",
+              resize: "vertical",
+              fontSize: 13,
+              lineHeight: 1.55,
+              fontFamily: "var(--font-mono)",
+            }}
+          />
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)", flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={() => onRespond(request, { cancelled: true })}
+          style={{
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--bg)",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+          }}
+        >
+          {t("chat.cancel")}
+        </button>
+        {request.method === "confirm" ? (
           <button
-            autoFocus={request.method === "confirm" || (request.method === "select" && request.options.length === 0)}
-            onClick={() => onRespond(request, { cancelled: true })}
+            type="button"
+            onClick={submitValue}
             style={{
               padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
+              borderRadius: 8,
+              border: "1px solid var(--accent)",
+              background: "var(--accent)",
+              color: "#fff",
               cursor: "pointer",
             }}
           >
-             {t("chat.cancel")}
+            {t("chat.confirm")}
           </button>
-          {request.method === "confirm" ? (
-            <button
-              onClick={submitValue}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--accent)",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-               {t("chat.confirm")}
-            </button>
-          ) : request.method !== "select" ? (
-            <button
-              onClick={submitValue}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--accent)",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-               {t("chat.submit")}
-            </button>
-          ) : null}
-        </div>
+        ) : request.method !== "select" ? (
+          <button
+            type="button"
+            onClick={submitValue}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--accent)",
+              background: "var(--accent)",
+              color: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            {t("chat.submit")}
+          </button>
+        ) : null}
       </div>
-      )}
     </div>
   );
 }
