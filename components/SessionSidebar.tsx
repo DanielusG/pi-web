@@ -1543,7 +1543,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, initialSess
                             background: "var(--accent)",
                             border: "none",
                             borderRadius: 7,
-                            color: "#fff",
+                            color: "var(--accent-contrast)",
                             fontSize: 11,
                             fontWeight: 600,
                             cursor: wtBusy || !wtNewBranch.trim() ? "not-allowed" : "pointer",
