@@ -9,6 +9,7 @@ import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantB
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView } from "./MessageView";
+import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
@@ -302,7 +303,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
 
   const {
-    loading, error, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
+    loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
@@ -751,14 +752,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // skip re-rendering on every message_update event. An inline `new Map()`
   // here used to defeat MessageView's memo() on each streamed chunk.
   const toolResultsMap = useMemo(() => {
-    const map = new Map<string, ToolResultMessage>();
+    const map = new Map(activeToolResults);
     for (const msg of messages) {
       if (msg.role === "toolResult") {
         map.set((msg as ToolResultMessage).toolCallId, msg as ToolResultMessage);
       }
     }
     return map;
-  }, [messages]);
+  }, [activeToolResults, messages]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
@@ -1273,7 +1274,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             <div ref={messageContentRef} onPointerUp={captureQuotedSelection} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {messageListNode}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (
@@ -1526,6 +1527,15 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
 
 type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
+function getExtensionDialogSummary(request: ExtensionDialogRequest): string | undefined {
+  if (request.method === "select" && request.options.length > 0) return request.options[0];
+  if (request.method === "confirm") {
+    const firstLine = request.message.split("\n").find((line) => line.trim());
+    return firstLine?.trim();
+  }
+  return undefined;
+}
+
 function ExtensionDialog({
   request,
   onRespond,
@@ -1537,11 +1547,30 @@ function ExtensionDialog({
   const dialogTitleId = useId();
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [collapsed, setCollapsed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const focusFirstOption = useCallback((element: HTMLDivElement | null) => element?.focus(), []);
+  const summary = getExtensionDialogSummary(request);
+  const remainingSeconds = request.expiresAt === undefined
+    ? null
+    : Math.max(0, Math.ceil((request.expiresAt - now) / 1000));
 
   useEffect(() => {
     setValue(request.method === "editor" ? request.prefill ?? "" : "");
     setCollapsed(false);
   }, [request]);
+
+  useEffect(() => {
+    if (request.expiresAt === undefined) return;
+    // The server closes expired requests via extension_ui_closed.
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [request.expiresAt]);
+
+  const countdown = remainingSeconds !== null && (
+    <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0 }}>
+      {t("chat.extensionExpiresIn", { seconds: remainingSeconds })}
+    </span>
+  );
 
   const submitValue = () => {
     if (request.method === "confirm") {
@@ -1577,6 +1606,12 @@ function ExtensionDialog({
         <span style={{ color: "var(--text)", fontSize: 13, fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {request.title}
         </span>
+        {summary && (
+          <span style={{ fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "34%", flexShrink: 1 }}>
+            {summary}
+          </span>
+        )}
+        {countdown}
         <span style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)", flexShrink: 0 }}>{t("chat.extensionRequest")}</span>
       </button>
     );
@@ -1586,6 +1621,12 @@ function ExtensionDialog({
     <div
       role="dialog"
       aria-labelledby={dialogTitleId}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onRespond(request, { cancelled: true });
+      }}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -1601,7 +1642,10 @@ function ExtensionDialog({
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
-          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat.extensionRequest")}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+            <span>{t("chat.extensionRequest")}</span>
+            {countdown}
+          </div>
         </div>
         <button
           type="button"
@@ -1630,15 +1674,38 @@ function ExtensionDialog({
 
       <div style={{ padding: 14, overflowY: "auto", minHeight: 0, flex: 1 }}>
         {request.method === "confirm" && (
-          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
+          <MarkdownBody>{request.message}</MarkdownBody>
         )}
         {request.method === "select" && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {request.options.map((option) => (
-              <button
+          <div
+            onKeyDown={(event) => {
+              if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+              const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-extension-option]"));
+              const index = buttons.indexOf(event.target as HTMLElement);
+              if (index < 0) return;
+              event.preventDefault();
+              const next = event.key === "Home" ? 0
+                : event.key === "End" ? buttons.length - 1
+                : (index + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+              buttons[next].focus({ preventScroll: true });
+              buttons[next].scrollIntoView({ block: "nearest" });
+            }}
+            style={{ display: "grid", gap: 8 }}
+          >
+            {request.options.map((option, index) => (
+              <div
                 key={option}
-                type="button"
+                role="button"
+                tabIndex={0}
+                data-extension-option
+                aria-label={option}
+                ref={index === 0 ? focusFirstOption : undefined}
                 onClick={() => onRespond(request, { value: option })}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  onRespond(request, { value: option });
+                }}
                 style={{
                   width: "100%",
                   padding: "9px 10px",
@@ -1652,8 +1719,10 @@ function ExtensionDialog({
                   overflowWrap: "anywhere",
                 }}
               >
-                {option}
-              </button>
+                <div inert>
+                  <MarkdownBody>{option}</MarkdownBody>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -1664,7 +1733,7 @@ function ExtensionDialog({
             placeholder={request.placeholder}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") submitValue();
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
               if (e.key === "Escape") onRespond(request, { cancelled: true });
             }}
             style={{
@@ -1686,7 +1755,7 @@ function ExtensionDialog({
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") onRespond(request, { cancelled: true });
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitValue();
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
             }}
             style={{
               width: "100%",
@@ -1709,6 +1778,7 @@ function ExtensionDialog({
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-panel)", flexShrink: 0 }}>
         <button
           type="button"
+          autoFocus={request.method === "confirm" || (request.method === "select" && request.options.length === 0)}
           onClick={() => onRespond(request, { cancelled: true })}
           style={{
             padding: "6px 10px",
@@ -1730,7 +1800,7 @@ function ExtensionDialog({
               borderRadius: 8,
               border: "1px solid var(--accent)",
               background: "var(--accent)",
-              color: "#fff",
+              color: "var(--accent-contrast)",
               cursor: "pointer",
             }}
           >
@@ -1745,7 +1815,7 @@ function ExtensionDialog({
               borderRadius: 8,
               border: "1px solid var(--accent)",
               background: "var(--accent)",
-              color: "#fff",
+              color: "var(--accent-contrast)",
               cursor: "pointer",
             }}
           >

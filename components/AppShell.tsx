@@ -73,9 +73,8 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
-  const { preference, toggleTheme } = useTheme();
-  const themeLabelKey =
-    preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
+  // Keep the system-theme subscription mounted for the lifetime of the app.
+  useTheme();
   const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   const isNarrowMobile = useIsNarrowMobile();
@@ -162,7 +161,7 @@ export function AppShell() {
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -1126,48 +1125,6 @@ export function AppShell() {
     </>
   );
 
-  const renderThemeButton = (mobile: boolean) => (
-    <button
-      type="button"
-      onClick={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-        if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-      }}
-      title={translate(themeLabelKey)}
-      aria-label={translate(themeLabelKey)}
-      style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-        background: "none", border: "none", borderRight: "1px solid var(--border)",
-        color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-      }}
-      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text-muted)"; }}
-      data-mobile-toolbar-action={mobile ? "theme" : undefined}
-    >
-      {preference === "light" ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-        </svg>
-      ) : preference === "dark" ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-        </svg>
-      ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="2" y="3" width="20" height="14" rx="2" />
-          <line x1="8" y1="21" x2="16" y2="21" />
-          <line x1="12" y1="17" x2="12" y2="21" />
-        </svg>
-      )}
-    </button>
-  );
-
   const renderNewSessionButton = () => {
     const cwd = activeCwd;
     const title = cwd
@@ -1197,7 +1154,6 @@ export function AppShell() {
       </button>
     );
   };
-
   const renderProjectTrustWarning = (mobileBanner: boolean) => {
     if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
     return (
@@ -1367,7 +1323,6 @@ export function AppShell() {
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
         </button>
-        {mobile && renderThemeButton(true)}
       </div>
     );
   };
@@ -1822,7 +1777,6 @@ export function AppShell() {
           {!isMobile && (
             <>
               {!isMobile && renderNewSessionButton()}
-              {renderThemeButton(false)}
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
               {renderSessionStatsButton(false)}

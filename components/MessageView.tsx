@@ -196,7 +196,7 @@ interface Props {
   searchBlock?: AssistantContentBlock;
   onFork?: (entryId: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
+  onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   onEditContent?: (message: UserMessage) => void;
   showTimestamp?: boolean;
@@ -209,6 +209,25 @@ interface Props {
    * final answer text-only.
    */
   writtenFiles?: WrittenFile[];
+}
+
+export function getModelDisplayName(
+  provider: string,
+  responseModel: string,
+  modelNames?: Record<string, string>,
+): string {
+  const normalizedProvider = provider.toLowerCase();
+  const normalizedResponse = responseModel.toLowerCase();
+  const configured = Object.entries(modelNames ?? {}).flatMap(([key, name]) => {
+    const separator = key.indexOf(":");
+    return separator > 0 && key.slice(0, separator).toLowerCase() === normalizedProvider
+      ? [{ id: key.slice(separator + 1).toLowerCase(), name }]
+      : [];
+  });
+  return configured.find((model) => model.id === normalizedResponse)?.name
+    ?? configured.find((model) => normalizedResponse.endsWith(`/${model.id}`))?.name
+    ?? Object.entries(modelNames ?? {}).find(([key]) => key.toLowerCase() === normalizedResponse)?.[1]
+    ?? `${provider}/${responseModel}`;
 }
 
 function formatTime(ts?: number): string | null {
@@ -306,7 +325,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
+  onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   onEditContent?: (message: UserMessage) => void;
 }) {
@@ -520,7 +539,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             }}>
               {canNavigate && (
                 <button
-                  onClick={() => { onNavigate!(prevAssistantEntryId!); onEditContent?.(editTarget); }}
+                  onClick={() => void onNavigate!(prevAssistantEntryId!).then((navigated) => {
+                    if (navigated) onEditContent?.(editTarget);
+                  })}
                    title={t("i18n.editFromHereTitle")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
@@ -755,7 +776,7 @@ function AssistantMessageView({
         }}
       >
         {message.provider && (
-          <span>{modelNames?.[`${message.provider}:${message.model}`] ?? modelNames?.[message.model] ?? message.model}</span>
+          <span>{getModelDisplayName(message.provider, message.model, modelNames)}</span>
         )}
         {isStreaming && (() => {
           const est = Math.round(estimatedTokens);
