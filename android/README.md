@@ -1,0 +1,134 @@
+# Pi Mobile — native Android client for pi-web
+
+A native Kotlin + Jetpack Compose app that talks to a running pi-web backend on
+another machine over its existing HTTP + SSE API. It needs no backend changes.
+
+**Status: first working version.** It covers one complete flow and is meant to decide
+the direction before building a full-featured app. It has been tested on an Android 15
+emulator against `tools/mock-pi-web.mjs`, a mock that follows the pi-web wire contract.
+It has **not yet been tested against a real pi-web with a real model.**
+
+## What works
+
+- **Server setup:** address + `PI_WEB_PASSWORD` (Basic auth), with a connection test
+  and clear 401/403 messages.
+- **Sessions:** grouped by project, pull to refresh, a live "running" dot (polls
+  `/api/agent/running` every 3 s, reloads when `sessionListVersion` changes), and
+  "show all" for long projects.
+- **New session:** pick a recent working directory or type a path (validated by the
+  server). The session is created on the first message.
+- **Chat:**
+  - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
+  - Collapsible thinking; deferred thinking loads its full text on tap.
+  - Tool call cards with a spinner, check or error state. Tap for input and output;
+    bash output streams live.
+  - `!bash` executions and compaction notices.
+  - "Load earlier messages" paging.
+- **Live runs:**
+  - Token streaming, throttled to about 20 UI updates per second.
+  - Stop (`abort`). Typing while the agent runs sends a steering message.
+  - Model picker, thinking level, context % indicator.
+- **Extension dialogs:** select / confirm / input / editor, so an extension waiting for
+  an answer doesn't hang the agent.
+- **Resilience on mobile networks:**
+  - SSE read timeout of 75 s (the server heartbeat is 30 s), so half-open connections
+    are detected.
+  - Automatic reconnect with backoff; after a reconnect, history is reloaded to cover
+    missed events.
+  - State polling every 15 s while running, plus a check when the app returns to the
+    foreground.
+  - SSE lease renewal. The run ends on `prompt_done` / `agent_settled`, never on the
+    first `agent_end`.
+
+- **Tool views:**
+  - Every tool gets pi-web's header summary: path, command, `path · N edits`…
+  - `edit` shows the SDK's `details.patch` as a unified diff, with line numbers, word-level highlights, a `+N -M` count and the run time.
+  - An edit that has no result yet shows a server-computed preview from `/api/edit-preview`.
+- **Context indicator:**
+  - A ring in the chat header shows the % of the context window used.
+  - Tapping it shows context tokens, input/output, cache read/write, cache hit rate, cost, message counts and active time.
+- **Notifications:**
+  - pi-web's own push is Web Push, which a native app can't receive. Instead, `notify/RunWatcherService` runs as a foreground service only while a session is running.
+  - It polls `/api/agent/running` every 3 s and posts "Task finished." when a session goes idle.
+  - It stays silent for subagents (pi-web's suppression list) and for the session already on screen.
+  - Tapping the notification opens that session.
+
+## Install on a phone
+
+APK files:
+
+- `app/build/outputs/apk/release/app-release.apk`: recommended, small and smooth.
+  Signed with the local debug key.
+- `app/build/outputs/apk/debug/app-debug.apk`
+
+To install:
+
+- **USB:** `~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/release/app-release.apk`
+- **Without USB:** copy the APK to the phone and open it (allow "install unknown apps").
+
+## Server side (pi-web machine)
+
+1. Listen on the network: `npm run start:lan`, or `dev:lan` in development.
+2. Set `PI_WEB_PASSWORD=...`.
+3. In the app, use the **IP address**, e.g. `192.168.1.20:30141` or a Tailscale
+   `100.x.y.z:30141`. A hostname is rejected with 403 unless it is listed in
+   `PI_WEB_ALLOWED_HOSTS`.
+4. Traffic is plain HTTP with Basic auth. That is fine on a LAN or over Tailscale; put
+   an HTTPS reverse proxy in front for anything else.
+
+## Build
+
+Requirements: JDK 17 and the Android SDK at `~/Android/Sdk` (`local.properties` points to it).
+
+```bash
+cd android
+./gradlew assembleRelease      # or assembleDebug
+```
+
+## Try it without a real backend
+
+```bash
+node tools/mock-pi-web.mjs     # port 30150, password "test"
+# emulator: server address 10.0.2.2:30150
+# a prompt containing "confirm" triggers an extension confirm dialog
+# curl -X POST localhost:30150/mock/drop   # kills SSE sockets to test reconnect
+```
+
+## Code map
+
+```
+app/src/main/java/app/pimobile/
+  PiApp.kt                 process-wide PiApi + SettingsStore
+  MainActivity.kt          navigation: settings → sessions → chat
+  data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, error mapping
+  data/ChatModel.kt        message → ChatItem parsing (both tool-call spellings),
+                           StreamingAssembler (applies message_update deltas)
+  data/Settings.kt         DataStore server config
+  data/Json.kt             lenient JsonObject accessors
+  ui/sessions/             session list + new-session sheet
+  ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
+  ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
+  ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
+  ui/markdown/Markdown.kt  small markdown renderer
+```
+
+The API contract this client relies on (endpoints, SSE events, delta rules) was
+mapped from pi-web `main` at df32731. JSON is handled as lenient trees rather than
+strict DTOs, because pi-web passes pi SDK objects through and their shapes change
+between SDK releases.
+
+## Not done yet (road to a full app)
+
+| Area | Notes |
+|---|---|
+| Notifications, part 2 | "Needs your input" (blocking extension dialog) requires holding SSE from the service. Real push (FCM) would need a backend addition. |
+| Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
+| Images | Sending attachments, and rendering image blocks / tool-result images (URL form needs auth). |
+| Branches & forks | Tree view, `navigate_tree`, fork from a message. |
+| Session management | Rename, delete, search. |
+| Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |
+| Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
+| Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
+| Slash commands, `!bash`, tool presets, compaction button | Commands exist (`get_commands`, `bash`, `set_tools`, `compact`). |
+| Security | The password is stored in plain DataStore; move to the Android Keystore. Release signing key. |
+| Tests | Unit tests for `StreamingAssembler`, markdown parser, and run-state transitions. |

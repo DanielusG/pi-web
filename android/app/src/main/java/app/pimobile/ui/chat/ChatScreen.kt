@@ -1,0 +1,821 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
+package app.pimobile.ui.chat
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import app.pimobile.data.Block
+import app.pimobile.data.ChatItem
+import app.pimobile.notify.AppVisibility
+import app.pimobile.ui.baseName
+import app.pimobile.ui.compactNumber
+import app.pimobile.ui.formatDuration
+import app.pimobile.ui.groupedNumber
+import app.pimobile.ui.shortPath
+import app.pimobile.ui.theme.Geist
+import app.pimobile.ui.theme.GeistMono
+import app.pimobile.ui.theme.Pi
+import app.pimobile.ui.theme.PiIcons
+import app.pimobile.ui.theme.PiPrimaryButton
+import app.pimobile.ui.theme.PiSecondaryButton
+import app.pimobile.ui.theme.ShimmerText
+import app.pimobile.ui.theme.StatusDot
+import app.pimobile.ui.theme.piTextFieldColors
+import kotlinx.coroutines.awaitCancellation
+import kotlin.math.roundToInt
+
+private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
+
+@Composable
+fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val t = Pi.tokens
+    val snackbar = remember { SnackbarHostState() }
+    val listState = rememberLazyListState()
+    var draft by rememberSaveable { mutableStateOf("") }
+    var showModels by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            vm.onForeground()
+            awaitCancellation()
+        }
+    }
+    // Completion notifications are skipped for the session on screen.
+    LaunchedEffect(lifecycleOwner, state.sessionId) {
+        val id = state.sessionId ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            AppVisibility.viewingSessionId = id
+            try {
+                awaitCancellation()
+            } finally {
+                if (AppVisibility.viewingSessionId == id) AppVisibility.viewingSessionId = null
+            }
+        }
+    }
+    LaunchedEffect(state.error) {
+        state.error?.let {
+            snackbar.showSnackbar(it)
+            vm.clearError()
+        }
+    }
+    LaunchedEffect(state.notice) {
+        state.notice?.let {
+            snackbar.showSnackbar(it)
+            vm.clearNotice()
+        }
+    }
+    LaunchedEffect(state.restoredDraft) {
+        state.restoredDraft?.let {
+            if (draft.isBlank()) draft = it
+            vm.consumeRestoredDraft()
+        }
+    }
+
+    // Follow the bottom unless the user scrolled up to read.
+    var follow by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (!scrolling) follow = !listState.canScrollForward
+        }
+    }
+    val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
+    val rowCount = listOf(state.loading, state.hasMore, showEmpty, state.streaming != null).count { it } +
+        state.items.size + 1
+    val streamSize = state.streaming?.blocks?.sumOf { block ->
+        when (block) {
+            is Block.Text -> block.text.length
+            is Block.Thinking -> block.text.length
+            is Block.ToolCall -> block.rawInput.length + 1
+            is Block.Image -> 1
+        }
+    } ?: 0
+    val liveOutputSize = state.liveTools.values.sumOf { it.output.length }
+    LaunchedEffect(rowCount, streamSize, liveOutputSize, state.toolResults.size) {
+        if (follow) listState.scrollToItem(rowCount - 1)
+    }
+
+    Scaffold(
+        containerColor = t.background,
+        topBar = {
+            ChatTopBar(
+                state = state,
+                scrolled = listState.canScrollBackward,
+                onBack = onBack,
+            )
+        },
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Snackbar(
+                    data,
+                    shape = RoundedCornerShape(12.dp),
+                    containerColor = t.text,
+                    contentColor = t.background,
+                )
+            }
+        },
+        bottomBar = {
+            Composer(
+                state = state,
+                draft = draft,
+                onDraft = { draft = it },
+                onSend = {
+                    vm.send(draft)
+                    draft = ""
+                    follow = true
+                },
+                onStop = vm::abort,
+                onModels = { showModels = true },
+                onThinking = vm::selectThinking,
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            if (state.loading) {
+                item("loading") {
+                    Box(Modifier.fillMaxWidth().padding(64.dp), contentAlignment = Alignment.Center) {
+                        ShimmerText("Loading session")
+                    }
+                }
+            }
+            if (state.hasMore) {
+                item("earlier") {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = vm::loadEarlier, enabled = !state.loadingEarlier) {
+                            Text(
+                                if (state.loadingEarlier) "Loading…" else "Load earlier messages",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = t.textSecondary,
+                            )
+                        }
+                    }
+                }
+            }
+            if (showEmpty) {
+                item("empty") { EmptyChat(state.cwd) }
+            }
+            items(state.items, key = { it.key }, contentType = { it::class.simpleName }) { item ->
+                when (item) {
+                    is ChatItem.User -> UserBubble(item)
+                    is ChatItem.Assistant -> AssistantMessage(
+                        item = item,
+                        toolResults = state.toolResults,
+                        liveTools = state.liveTools,
+                        running = state.running,
+                        fullThinking = state.fullThinking,
+                        onLoadThinking = vm::loadFullThinking,
+                        editPreviews = state.editPreviews,
+                        onPreview = vm::loadEditPreview,
+                    )
+                    is ChatItem.Bash -> BashCard(item)
+                    is ChatItem.Notice -> NoticeRow(item)
+                }
+            }
+            state.streaming?.let { streaming ->
+                item("streaming") {
+                    AssistantMessage(
+                        item = streaming,
+                        toolResults = state.toolResults,
+                        liveTools = state.liveTools,
+                        running = true,
+                        fullThinking = state.fullThinking,
+                        onLoadThinking = vm::loadFullThinking,
+                        editPreviews = state.editPreviews,
+                        onPreview = vm::loadEditPreview,
+                    )
+                }
+            }
+            item("bottom") { Spacer(Modifier.height(4.dp)) }
+        }
+    }
+
+    if (showModels) {
+        ModelSheet(state, onDismiss = { showModels = false }, onSelect = {
+            vm.selectModel(it)
+            showModels = false
+        })
+    }
+    state.dialog?.let { dialog -> ExtensionDialogView(dialog, vm) }
+}
+
+@Composable
+private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit) {
+    val t = Pi.tokens
+    Column(Modifier.background(t.background)) {
+        TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = t.background,
+                scrolledContainerColor = t.background,
+            ),
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(PiIcons.ArrowLeft, contentDescription = "Back", tint = t.text, modifier = Modifier.size(22.dp))
+                }
+            },
+            title = {
+                Column {
+                    Text(
+                        state.title.ifBlank { if (state.sessionId == null) "New session" else "Session" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = t.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            baseName(state.cwd),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = t.textTertiary,
+                            maxLines = 1,
+                        )
+                        // Run status lives here; connection state only surfaces when it's broken.
+                        val (dot, label) = when {
+                            state.link == LinkState.Reconnecting -> t.danger to "Reconnecting…"
+                            state.running -> t.success to (state.status ?: "Working…")
+                            else -> null to null
+                        }
+                        if (dot != null && label != null) {
+                            Spacer(Modifier.width(8.dp))
+                            StatusDot(dot, pulsing = true)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = t.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            },
+            actions = {
+                if (state.sessionId != null) ContextIndicator(state)
+            },
+        )
+        HorizontalDivider(color = if (scrolled) t.border else Color.Transparent)
+    }
+}
+
+@Composable
+private fun ContextIndicator(state: ChatUiState) {
+    val t = Pi.tokens
+    var open by remember { mutableStateOf(false) }
+    val percent = state.contextPercent
+    Box(Modifier.padding(end = 6.dp)) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable { open = true }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ContextRing(percent, size = 18.dp, stroke = 2.5.dp)
+            if (percent != null) {
+                Spacer(Modifier.width(7.dp))
+                Text("${percent.roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = t.textSecondary)
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = t.surface,
+            border = BorderStroke(1.dp, t.border),
+            shadowElevation = 8.dp,
+            modifier = Modifier.width(288.dp),
+        ) {
+            ContextDetails(state)
+        }
+    }
+}
+
+@Composable
+private fun contextColor(percent: Double?): Color {
+    val t = Pi.tokens
+    return when {
+        percent == null -> t.textTertiary
+        percent >= 90 -> t.danger
+        percent >= 75 -> t.warning
+        else -> t.text
+    }
+}
+
+@Composable
+private fun ContextRing(percent: Double?, size: Dp, stroke: Dp) {
+    val progress by animateFloatAsState(((percent ?: 0.0) / 100.0).toFloat().coerceIn(0f, 1f), label = "context")
+    CircularProgressIndicator(
+        progress = { progress },
+        modifier = Modifier.size(size),
+        color = contextColor(percent),
+        trackColor = Pi.tokens.border,
+        strokeWidth = stroke,
+        strokeCap = StrokeCap.Round,
+        gapSize = 0.dp,
+    )
+}
+
+@Composable
+private fun ContextDetails(state: ChatUiState) {
+    val t = Pi.tokens
+    val typography = MaterialTheme.typography
+    val percent = state.contextPercent
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.Center) {
+                ContextRing(percent, size = 46.dp, stroke = 4.dp)
+                Text(
+                    percent?.let { "${it.roundToInt()}%" } ?: "–",
+                    style = typography.labelSmall.copy(fontSize = 11.sp),
+                    color = t.text,
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("Context window", style = typography.labelLarge, color = t.text)
+                val tokens = state.contextTokens
+                val window = state.contextWindow
+                Text(
+                    when {
+                        tokens != null && window != null -> "${compactNumber(tokens)} / ${compactNumber(window)} tokens"
+                        window != null -> "? / ${compactNumber(window)} tokens"
+                        else -> "Available while the agent is loaded"
+                    },
+                    style = typography.labelSmall.copy(fontWeight = FontWeight.Normal),
+                    color = t.textTertiary,
+                )
+            }
+        }
+        val stats = state.stats ?: return@Column
+        StatsSection("Tokens") {
+            StatRow("Input", groupedNumber(stats.input))
+            StatRow("Output", groupedNumber(stats.output))
+            if (stats.cacheRead > 0) StatRow("Cache read", groupedNumber(stats.cacheRead))
+            if (stats.cacheWrite > 0) StatRow("Cache write", groupedNumber(stats.cacheWrite))
+            stats.cacheHitRate?.let { StatRow("Cache hit rate", String.format(java.util.Locale.US, "%.1f%%", it)) }
+            StatRow("Total", groupedNumber(stats.totalTokens), strong = true)
+            if (stats.cost > 0) StatRow("Cost", String.format(java.util.Locale.US, "$%.4f", stats.cost), strong = true)
+        }
+        StatsSection("Session") {
+            StatRow("Your messages", groupedNumber(stats.userMessages.toLong()))
+            StatRow("Replies", groupedNumber(stats.assistantMessages.toLong()))
+            StatRow("Tool calls", groupedNumber(stats.toolCalls.toLong()))
+            if (stats.activeMs > 0) StatRow("Active time", formatDuration(stats.activeMs))
+        }
+    }
+}
+
+@Composable
+private fun StatsSection(title: String, content: @Composable () -> Unit) {
+    val t = Pi.tokens
+    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = t.border)
+    Text(
+        title.uppercase(),
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, letterSpacing = 0.6.sp),
+        color = t.textTertiary,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
+    content()
+}
+
+@Composable
+private fun StatRow(label: String, value: String, strong: Boolean = false) {
+    val t = Pi.tokens
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = t.textSecondary, modifier = Modifier.weight(1f))
+        Text(
+            value,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontFamily = GeistMono,
+                fontWeight = if (strong) FontWeight.Medium else FontWeight.Normal,
+            ),
+            color = t.text,
+        )
+    }
+}
+
+@Composable
+private fun EmptyChat(cwd: String) {
+    val t = Pi.tokens
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 120.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(t.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "π",
+                color = t.onPrimary,
+                fontFamily = Geist,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 30.sp,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("What should we work on?", style = MaterialTheme.typography.headlineSmall, color = t.text)
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(PiIcons.Folder, null, tint = t.textTertiary, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                shortPath(cwd),
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = GeistMono),
+                color = t.textTertiary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Composer(
+    state: ChatUiState,
+    draft: String,
+    onDraft: (String) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    onModels: () -> Unit,
+    onThinking: (String) -> Unit,
+) {
+    val t = Pi.tokens
+    val typography = MaterialTheme.typography
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(26.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(t.background)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
+    ) {
+        if (state.queued.isNotEmpty()) {
+            Text(
+                "Queued · " + state.queued.joinToString(" · "),
+                style = typography.labelSmall,
+                color = t.textTertiary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 10.dp, bottom = 8.dp),
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(t.surface)
+                .border(1.dp, if (focused) t.borderStrong else t.border, shape)
+                .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 8.dp),
+        ) {
+            BasicTextField(
+                value = draft,
+                onValueChange = onDraft,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 10.dp)
+                    .onFocusChanged { focused = it.isFocused },
+                textStyle = typography.bodyLarge.copy(color = t.text),
+                cursorBrush = SolidColor(t.text),
+                maxLines = 6,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                decorationBox = { field ->
+                    Box {
+                        if (draft.isEmpty()) {
+                            Text(
+                                if (state.running) "Steer the agent…" else "Ask pi anything…",
+                                style = typography.bodyLarge,
+                                color = t.textTertiary,
+                            )
+                        }
+                        field()
+                    }
+                },
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .offset(x = (-8).dp) // align chip text with the placeholder
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val model = state.model
+                    val modelName = model?.let { ref ->
+                        state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
+                    } ?: "Model"
+                    GhostChip(modelName, onClick = onModels)
+                    ThinkingChip(state, onThinking)
+                }
+                val stopping = state.running && draft.isBlank()
+                val enabled = stopping || draft.isNotBlank()
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) t.primary else t.muted)
+                        .clickable(enabled = enabled, onClick = if (stopping) onStop else onSend),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (stopping) {
+                        Box(
+                            Modifier
+                                .size(11.dp)
+                                .background(t.onPrimary, RoundedCornerShape(2.5.dp)),
+                        )
+                    } else {
+                        Icon(
+                            PiIcons.ArrowUp,
+                            contentDescription = "Send",
+                            tint = if (enabled) t.onPrimary else t.textTertiary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val t = Pi.tokens
+    Row(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = t.textSecondary, maxLines = 1)
+        Spacer(Modifier.width(3.dp))
+        Icon(PiIcons.ChevronDown, null, tint = t.textTertiary, modifier = Modifier.size(13.dp))
+    }
+}
+
+@Composable
+private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit) {
+    val t = Pi.tokens
+    var open by remember { mutableStateOf(false) }
+    val levels = state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
+    Box {
+        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true })
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = RoundedCornerShape(14.dp),
+            containerColor = t.surface,
+            border = BorderStroke(1.dp, t.border),
+            shadowElevation = 6.dp,
+        ) {
+            levels.forEach { level ->
+                DropdownMenuItem(
+                    text = { Text(level, style = MaterialTheme.typography.bodyMedium, color = t.text) },
+                    trailingIcon = {
+                        if (level == state.thinkingLevel) Icon(PiIcons.Check, null, tint = t.text, modifier = Modifier.size(16.dp))
+                    },
+                    onClick = {
+                        open = false
+                        onThinking(level)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (ModelOption) -> Unit) {
+    val t = Pi.tokens
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = t.background,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(vertical = 10.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(t.borderStrong),
+            )
+        },
+    ) {
+        Text(
+            "Model",
+            style = MaterialTheme.typography.titleLarge,
+            color = t.text,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+        if (state.models.isEmpty()) {
+            Text(
+                "No models available. Configure providers in pi-web.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = t.textSecondary,
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+        LazyColumn(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding(),
+            contentPadding = PaddingValues(bottom = 16.dp),
+        ) {
+            state.models.groupBy { it.provider }.forEach { (provider, options) ->
+                item(key = "provider:$provider") {
+                    Text(
+                        provider.uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
+                        color = t.textTertiary,
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
+                    )
+                }
+                items(options, key = { it.key }) { option ->
+                    val selected = state.model?.let { it.provider == option.provider && it.modelId == option.id } == true
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (selected) t.muted else Color.Transparent)
+                            .clickable { onSelect(option) }
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(option.name, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium), color = t.text)
+                            Text(
+                                option.id,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontWeight = FontWeight.Normal),
+                                color = t.textTertiary,
+                            )
+                        }
+                        if (selected) Icon(PiIcons.Check, contentDescription = "Selected", tint = t.text, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
+    val t = Pi.tokens
+    var text by rememberSaveable(dialog.id) { mutableStateOf(dialog.prefill.orEmpty()) }
+    BasicAlertDialog(onDismissRequest = { vm.respondDialog(cancelled = true) }) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = t.background,
+            border = BorderStroke(1.dp, t.border),
+        ) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    dialog.title.ifBlank { "The agent needs input" },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = t.text,
+                )
+                dialog.message?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = t.textSecondary)
+                }
+                when (dialog.method) {
+                    "select" -> dialog.options.forEach { option ->
+                        Text(
+                            option,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = t.text,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, t.border, RoundedCornerShape(12.dp))
+                                .clickable { vm.respondDialog(value = option) }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                        )
+                    }
+                    "input", "editor" -> OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        placeholder = { dialog.placeholder?.let { Text(it) } },
+                        singleLine = dialog.method == "input",
+                        minLines = if (dialog.method == "editor") 4 else 1,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = piTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                ) {
+                    when (dialog.method) {
+                        "confirm" -> {
+                            PiSecondaryButton("No", onClick = { vm.respondDialog(confirmed = false) })
+                            PiPrimaryButton("Yes", onClick = { vm.respondDialog(confirmed = true) })
+                        }
+                        "input", "editor" -> {
+                            PiSecondaryButton("Cancel", onClick = { vm.respondDialog(cancelled = true) })
+                            PiPrimaryButton("OK", onClick = { vm.respondDialog(value = text) })
+                        }
+                        else -> PiSecondaryButton("Cancel", onClick = { vm.respondDialog(cancelled = true) })
+                    }
+                }
+            }
+        }
+    }
+}
