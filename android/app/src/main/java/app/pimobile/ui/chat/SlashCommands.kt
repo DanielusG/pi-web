@@ -64,7 +64,12 @@ data class SlashGroup(val source: SlashSource, val commands: List<SlashCommand>)
  * any other `/word` reaches the server as a prompt.
  */
 val BUILTIN_SLASH_COMMANDS = listOf(
+    SlashCommand("compact", "Compress context, optionally with instructions", SlashSource.Builtin),
+    SlashCommand("reload", "Reload extensions, skills, prompts, and tools", SlashSource.Builtin),
     SlashCommand("name", "Set the session display name", SlashSource.Builtin),
+    SlashCommand("session", "Show session message, token, and cost stats", SlashSource.Builtin, availableWhileStreaming = true),
+    SlashCommand("copy", "Copy the last assistant message", SlashSource.Builtin, availableWhileStreaming = true),
+    SlashCommand("clone", "Clone the current branch into a new session", SlashSource.Builtin),
 )
 
 private val COMMAND_NAME = Regex("^/(\\S+)(?:\\s|$)")

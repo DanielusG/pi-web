@@ -83,8 +83,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -125,7 +127,7 @@ import kotlin.math.roundToInt
 private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
 
 @Composable
-fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
+fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSession) -> Unit = {}) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
     val snackbar = remember { SnackbarHostState() }
@@ -168,6 +170,19 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
         state.notice?.let {
             snackbar.showSnackbar(it)
             vm.clearNotice()
+        }
+    }
+    val clipboard = LocalClipboardManager.current
+    LaunchedEffect(state.clipboard) {
+        state.clipboard?.let {
+            clipboard.setText(AnnotatedString(it))
+            vm.consumeClipboard()
+        }
+    }
+    LaunchedEffect(state.openSession) {
+        state.openSession?.let {
+            vm.consumeOpenSession()
+            onOpenSession(it)
         }
     }
     LaunchedEffect(state.restoredDraft) {
@@ -268,6 +283,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 state = state,
                 scrolled = listState.canScrollBackward,
                 onBack = onBack,
+                onStatsOpened = vm::consumeStatsRequest,
             )
         },
         snackbarHost = {
@@ -392,7 +408,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit) {
+private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit, onStatsOpened: () -> Unit) {
     val t = Pi.tokens
     // The idle runtime the slash palette creates (ensure_session) is still a new chat.
     val fresh = state.sessionId == null ||
@@ -428,6 +444,7 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                         val (dot, label) = when {
                             state.link == LinkState.Reconnecting -> t.danger to "Reconnecting…"
                             state.running -> t.success to (state.status ?: "Working…")
+                            state.commandStatus != null -> t.success to state.commandStatus
                             else -> null to null
                         }
                         if (dot != null && label != null) {
@@ -446,7 +463,8 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                 }
             },
             actions = {
-                if (!fresh) ContextIndicator(state)
+                // /session in a new chat still opens the stats it fetched.
+                if (!fresh || state.stats != null) ContextIndicator(state, onStatsOpened)
             },
         )
         HorizontalDivider(color = if (scrolled) t.border else Color.Transparent)
@@ -454,9 +472,15 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
 }
 
 @Composable
-private fun ContextIndicator(state: ChatUiState) {
+private fun ContextIndicator(state: ChatUiState, onStatsOpened: () -> Unit) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
+    LaunchedEffect(state.openStats) {
+        if (state.openStats) {
+            open = true
+            onStatsOpened()
+        }
+    }
     val percent = state.contextPercent
     Box(Modifier.padding(end = 6.dp)) {
         Row(
@@ -683,6 +707,7 @@ private fun Composer(
         if (hasImages && !state.modelSupportsImages && !imageWarningDismissed) {
             ImageWarningBanner(modelName.orEmpty(), onClose = { imageWarningDismissed = true })
         }
+        state.compactResult?.let { CompactResultLine(it) }
         slashMenu()
         Column(
             Modifier
@@ -780,6 +805,26 @@ private fun Composer(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactResultLine(text: String) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(6.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(shape)
+            .background(t.success.copy(alpha = 0.08f))
+            .border(1.dp, t.success.copy(alpha = 0.24f), shape)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PiIcons.Check, contentDescription = null, tint = t.success, modifier = Modifier.size(11.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp), color = t.success)
     }
 }
 
