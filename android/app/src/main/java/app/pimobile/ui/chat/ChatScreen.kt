@@ -97,6 +97,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -201,6 +202,24 @@ fun ChatScreen(
         state.restoredDraft?.let {
             if (draft.text.isBlank()) draft = TextFieldValue(it, TextRange(it.length))
             vm.consumeRestoredDraft()
+        }
+    }
+    LaunchedEffect(state.editDraft) {
+        state.editDraft?.let {
+            draft = TextFieldValue(it, TextRange(it.length))
+            vm.consumeEditDraft()
+        }
+    }
+    // Edit from here rewinds the session, so a confirmation guards it.
+    var editRequest by remember { mutableStateOf<EditRequest?>(null) }
+    val canNavigate = !state.running && !state.commandPending
+    var selectedToolId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(canNavigate) { if (!canNavigate) selectedToolId = null }
+    var showTree by remember { mutableStateOf(false) }
+    LaunchedEffect(state.openTree) {
+        if (state.openTree) {
+            showTree = true
+            vm.consumeTreeRequest()
         }
     }
     LaunchedEffect(pendingInsert) {
@@ -377,7 +396,12 @@ fun ChatScreen(
             }
             items(state.items, key = { it.key }, contentType = { it::class.simpleName }) { item ->
                 when (item) {
-                    is ChatItem.User -> UserBubble(item)
+                    is ChatItem.User -> UserBubble(
+                        item,
+                        onEditFromHere = item.entryId?.takeIf { canNavigate }?.let { id ->
+                            { editRequest = EditRequest(id, item.command ?: item.text) }
+                        },
+                    )
                     is ChatItem.Assistant -> AssistantMessage(
                         item = item,
                         toolResults = state.toolResults,
@@ -390,6 +414,16 @@ fun ChatScreen(
                         cwd = state.cwd,
                         writtenFiles = writtenFiles[item.key].orEmpty(),
                         onOpenFile = onOpenFile,
+                        onEditFromHere = if (canNavigate) {
+                            { id ->
+                                selectedToolId = null
+                                editRequest = EditRequest(id, draft = null)
+                            }
+                        } else null,
+                        selectedToolId = selectedToolId,
+                        onToolLongPress = if (canNavigate) {
+                            { id -> selectedToolId = if (selectedToolId == id) null else id }
+                        } else null,
                     )
                     is ChatItem.Bash -> BashCard(item)
                     is ChatItem.Notice -> NoticeRow(item)
@@ -415,11 +449,69 @@ fun ChatScreen(
         }
     }
 
+    editRequest?.let { request ->
+        EditFromHereDialog(
+            restoresText = request.draft != null,
+            onDismiss = { editRequest = null },
+            onConfirm = {
+                editRequest = null
+                vm.editFromHere(request.targetId, request.draft)
+            },
+        )
+    }
+
+    if (showTree) {
+        TreeSheet(
+            tree = state.tree,
+            leafId = state.leafId,
+            onDismiss = { showTree = false },
+            onSelect = {
+                showTree = false
+                vm.selectBranch(it)
+            },
+        )
+    }
+
     if (showModels) {
         ModelSheet(state, onDismiss = { showModels = false }, onSelect = {
             vm.selectModel(it)
             showModels = false
         })
+    }
+}
+
+/** [draft] replaces the composer content once the session has moved; null leaves the composer alone. */
+private data class EditRequest(val targetId: String, val draft: String?)
+
+@Composable
+private fun EditFromHereDialog(restoresText: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(20.dp)
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .clip(shape)
+                .background(t.background)
+                .border(1.dp, t.border, shape)
+                .padding(20.dp),
+        ) {
+            Text("Edit from here?", style = MaterialTheme.typography.titleMedium, color = t.text)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                (
+                    if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
+                    else "The session goes back to this point. "
+                    ) + "Later messages stay saved as a branch you can reopen with /tree.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = t.textSecondary,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                PiSecondaryButton("Cancel", onClick = onDismiss)
+                Spacer(Modifier.width(8.dp))
+                PiPrimaryButton("Edit from here", onClick = onConfirm)
+            }
+        }
     }
 }
 

@@ -1,9 +1,11 @@
 package app.pimobile.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -53,12 +61,14 @@ import app.pimobile.data.Patch
 import app.pimobile.data.ToolResult
 import app.pimobile.data.arr
 import app.pimobile.data.str
+import app.pimobile.ui.messageTime
 import app.pimobile.ui.markdown.CodeBlock
 import app.pimobile.ui.markdown.Markdown
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.ShimmerText
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -74,13 +84,13 @@ private fun clip(text: String): String =
     else text.take(MAX_OUTPUT_CHARS) + "\n… ${text.length - MAX_OUTPUT_CHARS} more characters"
 
 @Composable
-fun UserBubble(item: ChatItem.User) {
+fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
     val t = Pi.tokens
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .padding(start = 56.dp),
-        horizontalArrangement = Arrangement.End,
+        horizontalAlignment = Alignment.End,
     ) {
         Column(
             Modifier
@@ -104,6 +114,73 @@ fun UserBubble(item: ChatItem.User) {
                 }
             }
         }
+        if (!item.pending) {
+            MessageFooter(
+                copyText = item.command ?: item.text,
+                timestamp = item.timestamp,
+                onEditFromHere = onEditFromHere,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/** Web: MessageView's bottom row — copy, edit from here and the time. Always shown: touch has no hover. */
+@Composable
+fun MessageFooter(
+    copyText: String,
+    timestamp: Long?,
+    onEditFromHere: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val t = Pi.tokens
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500)
+            copied = false
+        }
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (copyText.isNotBlank()) {
+            FooterAction(
+                icon = if (copied) PiIcons.Check else PiIcons.Copy,
+                label = if (copied) "Copied" else "Copy",
+                color = if (copied) t.accent else t.textTertiary,
+            ) {
+                clipboard.setText(AnnotatedString(copyText))
+                copied = true
+            }
+        }
+        onEditFromHere?.let { FooterAction(PiIcons.CornerDownRight, "Edit from here", t.textTertiary, it) }
+        timestamp?.let {
+            Text(
+                messageTime(it),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Normal),
+                color = t.textTertiary,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FooterAction(icon: ImageVector, label: String, color: Color, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal),
+            color = color,
+        )
     }
 }
 
@@ -168,9 +245,21 @@ fun AssistantMessage(
     /** Files this turn wrote, shown as chips under its final message (web: TurnWrittenFiles). */
     writtenFiles: List<String> = emptyList(),
     onOpenFile: ((path: String, diff: Boolean) -> Unit)? = null,
+    /** Null hides "Edit from here" (e.g. while the agent works). */
+    onEditFromHere: ((targetEntryId: String) -> Unit)? = null,
+    /** The tool card whose long-press footer is open. */
+    selectedToolId: String? = null,
+    onToolLongPress: ((callId: String) -> Unit)? = null,
 ) {
     val t = Pi.tokens
     val openLink: ((String) -> Unit)? = onOpenFile?.let { open -> { path: String -> open(path, false) } }
+    // A tool call rewinds to the latest result of its message, so no sibling call is left unanswered.
+    val toolEditTarget = remember(item.blocks, toolResults) {
+        item.blocks.filterIsInstance<Block.ToolCall>()
+            .mapNotNull { call -> toolResults[call.id]?.takeIf { it.entryId != null } }
+            .maxByOrNull { it.position }
+            ?.entryId
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item.blocks.forEach { block ->
             when (block) {
@@ -187,17 +276,32 @@ fun AssistantMessage(
                         onLoad = { item.entryId?.let { onLoadThinking(it, block.blockIndex) } },
                     )
                 }
-                is Block.ToolCall -> ToolCard(
-                    call = block,
-                    result = toolResults[block.id],
-                    live = liveTools[block.id],
-                    pending = running && toolResults[block.id] == null,
-                    startedAt = item.timestamp,
-                    preview = editPreviews[block.id],
-                    onPreview = onPreview,
-                    cwd = cwd,
-                    onOpenFile = onOpenFile,
-                )
+                is Block.ToolCall -> {
+                    val result = toolResults[block.id]
+                    ToolCard(
+                        call = block,
+                        result = result,
+                        live = liveTools[block.id],
+                        pending = running && result == null,
+                        startedAt = item.timestamp,
+                        preview = editPreviews[block.id],
+                        onPreview = onPreview,
+                        cwd = cwd,
+                        onOpenFile = onOpenFile,
+                        selected = selectedToolId == block.id,
+                        onLongPress = if (onToolLongPress != null && result?.entryId != null) {
+                            { onToolLongPress(block.id) }
+                        } else null,
+                    )
+                    if (selectedToolId == block.id && toolEditTarget != null && onEditFromHere != null) {
+                        MessageFooter(
+                            copyText = "",
+                            timestamp = result?.timestamp,
+                            onEditFromHere = { onEditFromHere(toolEditTarget) },
+                            modifier = Modifier.offset(x = (-8).dp),
+                        )
+                    }
+                }
                 is Block.Image -> Text(
                     "[${block.mimeType}]",
                     style = MaterialTheme.typography.labelMedium,
@@ -211,6 +315,15 @@ fun AssistantMessage(
         }
         val error = item.errorMessage
         if (item.stopReason == "error" && !error.isNullOrBlank()) ErrorNote(error)
+        // The agent loop ended here. Native-only: the web shows the footer on user bubbles alone.
+        if (!item.streaming && item.stopReason != "toolUse") {
+            MessageFooter(
+                copyText = item.blocks.filterIsInstance<Block.Text>().joinToString("\n\n") { it.text.trim() }.trim(),
+                timestamp = item.timestamp,
+                onEditFromHere = item.entryId?.let { id -> onEditFromHere?.let { edit -> { edit(id) } } },
+                modifier = Modifier.offset(x = (-8).dp),
+            )
+        }
     }
 }
 
@@ -318,6 +431,7 @@ private fun SectionLabel(text: String) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ToolCard(
     call: Block.ToolCall,
@@ -329,9 +443,13 @@ private fun ToolCard(
     onPreview: (Block.ToolCall) -> Unit,
     cwd: String,
     onOpenFile: ((path: String, diff: Boolean) -> Unit)?,
+    selected: Boolean = false,
+    /** Long-pressing the header opens the "Edit from here" footer. */
+    onLongPress: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable(call.id) { mutableStateOf(false) }
     val t = Pi.tokens
+    val haptics = LocalHapticFeedback.current
     val isError = result?.isError == true
     val generatingInput = call.input == null && call.rawInput.isNotEmpty()
     val isEdit = isEditToolName(call.name)
@@ -346,12 +464,28 @@ private fun ToolCard(
         Modifier
             .fillMaxWidth()
             .clip(CardShape)
-            .border(1.dp, if (isError) t.danger.copy(alpha = 0.35f) else t.border, CardShape),
+            .border(
+                1.dp,
+                when {
+                    isError -> t.danger.copy(alpha = 0.35f)
+                    selected -> t.borderStrong
+                    else -> t.border
+                },
+                CardShape,
+            ),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .combinedClickable(
+                    onClick = { expanded = !expanded },
+                    onLongClick = onLongPress?.let { longPress ->
+                        {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            longPress()
+                        }
+                    },
+                )
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

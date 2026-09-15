@@ -1,7 +1,10 @@
 package app.pimobile.ui
 
+import android.text.format.DateFormat as AndroidDateFormat
 import java.text.DateFormat
+import java.util.Calendar
 import java.util.Date
+import java.util.Locale
 
 private val HOME_PREFIX = Regex("^(/home/[^/]+|/Users/[^/]+)")
 
@@ -26,6 +29,17 @@ fun formatDuration(ms: Long): String {
         seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
         else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
     }
+}
+
+/** Web: MessageView formatTime — the time today, otherwise the date too, with the year only when it differs. */
+fun messageTime(epochMillis: Long, now: Long = System.currentTimeMillis()): String {
+    val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epochMillis))
+    val then = Calendar.getInstance().apply { timeInMillis = epochMillis }
+    val today = Calendar.getInstance().apply { timeInMillis = now }
+    val sameYear = then.get(Calendar.YEAR) == today.get(Calendar.YEAR)
+    if (sameYear && then.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)) return time
+    val pattern = AndroidDateFormat.getBestDateTimePattern(Locale.getDefault(), if (sameYear) "MMMd" else "yMMMd")
+    return "${AndroidDateFormat.format(pattern, epochMillis)} $time"
 }
 
 fun relativeTime(epochMillis: Long, now: Long = System.currentTimeMillis()): String {

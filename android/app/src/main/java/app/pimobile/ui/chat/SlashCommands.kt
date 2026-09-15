@@ -70,6 +70,7 @@ val BUILTIN_SLASH_COMMANDS = listOf(
     SlashCommand("session", "Show session message, token, and cost stats", SlashSource.Builtin, availableWhileStreaming = true),
     SlashCommand("copy", "Copy the last assistant message", SlashSource.Builtin, availableWhileStreaming = true),
     SlashCommand("clone", "Clone the current branch into a new session", SlashSource.Builtin),
+    SlashCommand("tree", "Navigate the session tree and switch branches", SlashSource.Builtin),
 )
 
 private val COMMAND_NAME = Regex("^/(\\S+)(?:\\s|$)")
