@@ -27,6 +27,7 @@ object PiIcons {
             "M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1",
         )
     }
+    val CornerDownRight by lazy { lineIcon("CornerDownRight", "M15 10l5 5-5 5", "M4 4v7a4 4 0 0 0 4 4h12") }
     val Refresh by lazy { lineIcon("Refresh", "M21 12a9 9 0 1 1-3-6.7", "M21 4v5h-5") }
     val Sliders by lazy {
         lineIcon(

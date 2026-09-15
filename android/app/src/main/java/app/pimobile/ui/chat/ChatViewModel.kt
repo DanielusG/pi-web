@@ -15,9 +15,11 @@ import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
 import app.pimobile.data.Messages
 import app.pimobile.data.PiApi
+import app.pimobile.data.SessionTree
 import app.pimobile.data.SlashDisplay
 import app.pimobile.data.StreamingAssembler
 import app.pimobile.data.ToolResult
+import app.pimobile.data.TreeNode
 import app.pimobile.data.arr
 import app.pimobile.data.asObj
 import app.pimobile.data.bool
@@ -138,6 +140,9 @@ data class ChatUiState(
     val contextTokens: Long? = null,
     val contextWindow: Long? = null,
     val stats: SessionStats? = null,
+    /** Web: SessionData tree/leafId — the projected session tree and the active leaf, for /tree. */
+    val tree: List<TreeNode> = emptyList(),
+    val leafId: String? = null,
     val fullThinking: Map<String, String> = emptyMap(),
     val editPreviews: Map<String, EditPreview> = emptyMap(),
     val queued: List<String> = emptyList(),
@@ -145,6 +150,8 @@ data class ChatUiState(
     val error: String? = null,
     val notice: String? = null,
     val restoredDraft: String? = null,
+    /** Edit from here: replaces the composer content, like the web's ChatInput replaceMessage. */
+    val editDraft: String? = null,
     val attachments: List<AttachedImage> = emptyList(),
     /** Picked images still being read and compressed. */
     val pendingImages: Int = 0,
@@ -161,6 +168,7 @@ data class ChatUiState(
     val compactResult: String? = null,
     /** One-shot requests from built-ins, consumed by the screen. */
     val openStats: Boolean = false,
+    val openTree: Boolean = false,
     val clipboard: String? = null,
     val openSession: OpenSession? = null,
 ) {
@@ -478,6 +486,47 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Web: handleNavigate + onEditContent. The SDK moves the leaf to [targetEntryId], or to its
+     * parent for a user message, so the next prompt branches from there; [draft], when given,
+     * replaces the composer content.
+     */
+    fun editFromHere(targetEntryId: String, draft: String?) = navigate(targetEntryId) {
+        if (draft != null) _state.update { it.copy(editDraft = draft) }
+    }
+
+    /** /tree: continue from another branch (web: BranchNavigator onLeafChange). */
+    fun selectBranch(entryId: String) {
+        if (entryId == _state.value.leafId) {
+            _state.update { it.copy(notice = "Already at this point") }
+            return
+        }
+        navigate(entryId) { _state.update { it.copy(notice = "Navigated to selected point") } }
+    }
+
+    private fun navigate(targetEntryId: String, onNavigated: () -> Unit) {
+        val current = _state.value
+        val id = current.sessionId ?: return
+        if (current.running || current.commandPending) return
+        _state.update { it.copy(commandPending = true) }
+        viewModelScope.launch {
+            runCatchingApi {
+                val result = api.command(id, buildJsonObject {
+                    put("type", "navigate_tree")
+                    put("targetId", targetEntryId)
+                }).asObj()
+                if (result?.bool("cancelled") == true) {
+                    _state.update { it.copy(notice = "Navigation cancelled") }
+                } else {
+                    refreshSession(id)
+                    reconcile(id) // context usage follows the branch
+                    onNavigated()
+                }
+            }
+            _state.update { it.copy(commandPending = false) }
+        }
+    }
+
     /** Web: loadSlashCommands. Commands come from the runtime, so a new chat gets an idle one (ensure_session). */
     fun loadSlashCommands() {
         _state.update { it.copy(slashCommandsLoading = true) }
@@ -541,6 +590,7 @@ class ChatViewModel(
                     "session" -> openSessionStats(id)
                     "copy" -> copyLastAssistantText(id)
                     "clone" -> cloneSession(id)
+                    "tree" -> openTree(id)
                     else -> throw IllegalStateException("/${command.name} is not supported")
                 }
             } catch (e: CancellationException) {
@@ -564,8 +614,10 @@ class ChatViewModel(
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
     fun consumeRestoredDraft() = _state.update { it.copy(restoredDraft = null) }
+    fun consumeEditDraft() = _state.update { it.copy(editDraft = null) }
     fun showNotice(message: String) = _state.update { it.copy(notice = message) }
     fun consumeStatsRequest() = _state.update { it.copy(openStats = false) }
+    fun consumeTreeRequest() = _state.update { it.copy(openTree = false) }
     fun consumeClipboard() = _state.update { it.copy(clipboard = null) }
     fun consumeOpenSession() = _state.update { it.copy(openSession = null) }
 
@@ -628,7 +680,14 @@ class ChatViewModel(
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) null else "Copied last assistant message"
     }
 
-    /** Clones up to the current leaf (this client has no branch navigation), then switches to the copy. */
+    /** /tree: the branch sheet, over a freshly loaded tree. */
+    private suspend fun openTree(id: String): String? {
+        refreshSession(id)
+        _state.update { it.copy(openTree = true) }
+        return null // the sheet is the feedback
+    }
+
+    /** Clones up to the current leaf, then switches to the copy. */
     private suspend fun cloneSession(id: String): String? {
         if (_state.value.running) throw IllegalStateException("Cannot clone while the session is running")
         val result = api.command(id, buildJsonObject { put("type", "clone") }).asObj()
@@ -744,6 +803,8 @@ class ChatViewModel(
                     model = context?.obj("model")?.let { modelRef(it, "modelId") } ?: state.model,
                     thinkingLevel = context?.str("thinkingLevel") ?: state.thinkingLevel,
                     stats = body.obj("stats")?.let { parseStats(it, body.long("totalActiveMs")) } ?: state.stats,
+                    tree = SessionTree.parse(body.arr("tree")),
+                    leafId = body.str("leafId"),
                 )
             }
             publishMessages()

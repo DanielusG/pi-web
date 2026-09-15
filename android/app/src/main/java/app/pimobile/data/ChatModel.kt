@@ -25,6 +25,9 @@ data class ToolResult(
     /** Tool-specific payload, e.g. edit's `{diff, patch, firstChangedLine}`. */
     val details: JsonObject? = null,
     val timestamp: Long? = null,
+    val entryId: String? = null,
+    /** Order in the loaded history, to find the latest result of a message. */
+    val position: Int = 0,
 )
 
 sealed interface ChatItem {
@@ -37,6 +40,9 @@ sealed interface ChatItem {
         val pending: Boolean,
         /** `/skill:<name> [args]` when [text] is a skill expansion, shown collapsed as on the web. */
         val command: String? = null,
+        /** Edit from here targets the message itself: the SDK moves the leaf to its parent (none for the first). */
+        val entryId: String? = null,
+        val timestamp: Long? = null,
     ) : ChatItem
 
     data class Assistant(
@@ -117,7 +123,7 @@ object Messages {
     }
 
     fun toolResults(messages: List<LoadedMessage>): Map<String, ToolResult> = buildMap {
-        for (message in messages) {
+        for ((index, message) in messages.withIndex()) {
             val json = message.json
             if (json.str("role") != "toolResult") continue
             val id = json.str("toolCallId") ?: continue
@@ -129,6 +135,8 @@ object Messages {
                     imageCount = imageCount(json["content"]),
                     details = json.obj("details"),
                     timestamp = json.long("timestamp"),
+                    entryId = message.entryId,
+                    position = index,
                 ),
             )
         }
@@ -145,6 +153,8 @@ object Messages {
                     images(json["content"]),
                     message.pending,
                     SlashDisplay.skillExpansionToCommand(text),
+                    entryId = message.entryId,
+                    timestamp = json.long("timestamp"),
                 )
             }
             "assistant" -> ChatItem.Assistant(
