@@ -35,6 +35,8 @@ sealed interface ChatItem {
         val text: String,
         val images: List<ImagePayload>,
         val pending: Boolean,
+        /** `/skill:<name> [args]` when [text] is a skill expansion, shown collapsed as on the web. */
+        val command: String? = null,
     ) : ChatItem
 
     data class Assistant(
@@ -75,6 +77,9 @@ object Messages {
             .joinToString("\n")
         else -> ""
     }
+
+    /** User input as typed: a skill expansion reads as its `/skill:` command. */
+    fun userText(content: JsonElement?): String = SlashDisplay.display(contentText(content))
 
     private fun imageCount(content: JsonElement?): Int =
         (content as? JsonArray)?.count { (it as? JsonObject)?.type == "image" } ?: 0
@@ -133,12 +138,15 @@ object Messages {
     fun item(message: LoadedMessage): ChatItem? {
         val json = message.json
         return when (json.str("role")) {
-            "user" -> ChatItem.User(
-                message.key,
-                contentText(json["content"]),
-                images(json["content"]),
-                message.pending,
-            )
+            "user" -> contentText(json["content"]).let { text ->
+                ChatItem.User(
+                    message.key,
+                    text,
+                    images(json["content"]),
+                    message.pending,
+                    SlashDisplay.skillExpansionToCommand(text),
+                )
+            }
             "assistant" -> ChatItem.Assistant(
                 key = message.key,
                 entryId = message.entryId,

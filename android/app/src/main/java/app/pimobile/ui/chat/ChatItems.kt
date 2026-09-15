@@ -8,6 +8,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -91,12 +93,62 @@ fun UserBubble(item: ChatItem.User) {
                     Modifier.padding(top = 6.dp, bottom = if (item.text.isNotBlank()) 8.dp else 6.dp),
                 )
             }
-            if (item.text.isNotBlank() || item.images.isEmpty()) {
+            val command = item.command
+            if (command != null) {
+                SkillCommand(item.key, command, item.text)
+            } else if (item.text.isNotBlank() || item.images.isEmpty()) {
                 SelectionContainer {
                     Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
                 }
             }
         }
+    }
+}
+
+/** A skill invocation reads as its command; the name toggles the full skill text (web: MessageView). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SkillCommand(key: String, command: String, expansion: String) {
+    val t = Pi.tokens
+    var expanded by rememberSaveable(key) { mutableStateOf(false) }
+    val separator = command.indexOfFirst(Char::isWhitespace)
+    val name = if (separator == -1) command else command.substring(0, separator)
+    val args = if (separator == -1) "" else command.substring(separator + 1)
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = GeistMono, fontSize = 15.sp),
+                color = t.accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                if (expanded) PiIcons.ChevronUp else PiIcons.ChevronDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = t.accent.copy(alpha = 0.75f),
+                modifier = Modifier.size(13.dp),
+            )
+        }
+        if (args.isNotEmpty()) {
+            SelectionContainer {
+                Text(args, style = MaterialTheme.typography.bodyLarge, color = t.text)
+            }
+        }
+    }
+    if (expanded) {
+        Spacer(Modifier.height(6.dp))
+        SelectionContainer { Markdown(expansion) }
     }
 }
 
