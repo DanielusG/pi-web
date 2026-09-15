@@ -28,6 +28,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Lets the user pick Pi Mobile as the default assistant; the system
+                 assistant triggers (corner swipe, long-press power/home) then open it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- Polls the server while a session runs, to notify when it finishes. -->
