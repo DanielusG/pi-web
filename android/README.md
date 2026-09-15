@@ -13,8 +13,10 @@ It has **not yet been tested against a real pi-web with a real model.**
 - **Server setup:** address + `PI_WEB_PASSWORD` (Basic auth), with a connection test
   and clear 401/403 messages.
 - **Sessions:** grouped by project, pull to refresh, a live "running" dot (polls
-  `/api/agent/running` every 3 s, reloads when `sessionListVersion` changes), and
-  "show all" for long projects.
+  `/api/agent/running` every 3 s, reloads when `sessionListVersion` changes),
+  "show all" for long projects, and long-press on a session for rename/delete
+  (bottom sheet: pre-filled rename field with the web's no-op check, delete with
+  inline confirmation).
 - **New session:** pick a recent working directory or type a path (validated by the
   server). The session is created on the first message.
 - **Chat:**
@@ -116,7 +118,7 @@ between SDK releases.
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
 | Images | Sending attachments, and rendering image blocks / tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
-| Session management | Rename, delete, search. |
+| Session management | Search. (Rename and delete ship via the long-press sheet.) |
 | Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |

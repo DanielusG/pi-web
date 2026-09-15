@@ -1,10 +1,12 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package app.pimobile.ui.sessions
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -22,6 +25,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -46,7 +53,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -92,6 +101,7 @@ fun SessionsScreen(
         }
     }
     var showNew by rememberSaveable { mutableStateOf(false) }
+    var sheetRow by remember { mutableStateOf<SessionRow?>(null) }
 
     Scaffold(
         containerColor = t.background,
@@ -140,6 +150,7 @@ fun SessionsScreen(
                             expanded = expanded,
                             running = state.running,
                             onOpen = onOpen,
+                            onLongClick = { sheetRow = it },
                             onToggle = { vm.toggleProject(group.root) },
                         )
                     }
@@ -157,6 +168,15 @@ fun SessionsScreen(
                 showNew = false
                 onNew(cwd)
             },
+        )
+    }
+
+    sheetRow?.let { row ->
+        SessionActionsSheet(
+            row = row,
+            onDismiss = { sheetRow = null },
+            rename = { name -> vm.rename(row.id, name) },
+            delete = { vm.delete(row.id) },
         )
     }
 }
@@ -216,6 +236,7 @@ private fun ProjectGroupView(
     expanded: Boolean,
     running: Set<String>,
     onOpen: (id: String, cwd: String) -> Unit,
+    onLongClick: (SessionRow) -> Unit,
     onToggle: () -> Unit,
 ) {
     val t = Pi.tokens
@@ -251,7 +272,12 @@ private fun ProjectGroupView(
             val visible = if (expanded) group.sessions else group.sessions.take(COLLAPSED_COUNT)
             visible.forEachIndexed { index, row ->
                 if (index > 0) HorizontalDivider(color = t.border)
-                SessionRowView(row, running = row.id in running, onClick = { onOpen(row.id, row.cwd) })
+                SessionRowView(
+                    row,
+                    running = row.id in running,
+                    onClick = { onOpen(row.id, row.cwd) },
+                    onLongClick = { onLongClick(row) },
+                )
             }
             if (group.sessions.size > COLLAPSED_COUNT) {
                 HorizontalDivider(color = t.border)
@@ -270,12 +296,12 @@ private fun ProjectGroupView(
 }
 
 @Composable
-private fun SessionRowView(row: SessionRow, running: Boolean, onClick: () -> Unit) {
+private fun SessionRowView(row: SessionRow, running: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val t = Pi.tokens
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -422,6 +448,150 @@ private fun NewSessionSheet(
                         }
                     },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionActionsSheet(
+    row: SessionRow,
+    onDismiss: () -> Unit,
+    rename: suspend (String) -> String?,
+    delete: suspend () -> String?,
+) {
+    val t = Pi.tokens
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable { mutableStateOf(row.title) }
+    var renameBusy by remember { mutableStateOf(false) }
+    var deleteBusy by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = t.background,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(vertical = 10.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(t.borderStrong),
+            )
+        },
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+        ) {
+            Text(
+                row.title,
+                style = MaterialTheme.typography.titleLarge,
+                color = t.text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${relativeTime(row.modified)}  ·  ${if (row.messageCount == 1) "1 message" else "${row.messageCount} messages"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = t.textSecondary,
+                modifier = Modifier.padding(top = 2.dp, bottom = 20.dp),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(PiIcons.Pencil, null, tint = t.textTertiary, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Rename", style = MaterialTheme.typography.labelLarge, color = t.textTertiary)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it; error = null },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = piTextFieldColors(),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PiPrimaryButton(
+                    "Save",
+                    enabled = name.isNotBlank(),
+                    loading = renameBusy,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        scope.launch {
+                            // No-op check mirroring the web sidebar: the fallback title isn't a
+                            // real stored name, so don't persist it as one.
+                            if (name == row.title || name.trim() == (row.name ?: "")) {
+                                onDismiss()
+                                return@launch
+                            }
+                            renameBusy = true
+                            error = rename(name.trim())
+                            renameBusy = false
+                            if (error == null) onDismiss()
+                        }
+                    },
+                )
+                PiSecondaryButton("Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = t.border)
+            Spacer(Modifier.height(16.dp))
+            if (confirmDelete) {
+                Text(
+                    "Delete “${row.title.take(40)}${if (row.title.length > 40) "…" else ""}”?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.danger,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                deleteBusy = true
+                                error = delete()
+                                deleteBusy = false
+                                if (error == null) onDismiss()
+                            }
+                        },
+                        enabled = !deleteBusy,
+                        modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = t.danger, contentColor = Color.White),
+                    ) {
+                        if (deleteBusy) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        } else {
+                            Text("Delete", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                    PiSecondaryButton("Cancel", onClick = { confirmDelete = false }, modifier = Modifier.weight(1f))
+                }
+            } else {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { confirmDelete = true }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(PiIcons.Trash, null, tint = t.danger, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Delete session", style = MaterialTheme.typography.labelLarge, color = t.danger)
+                }
+            }
+            error?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = t.danger)
             }
         }
     }

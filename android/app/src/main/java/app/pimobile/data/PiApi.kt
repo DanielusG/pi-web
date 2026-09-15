@@ -62,6 +62,12 @@ class PiApi {
             .build(),
     )
 
+    suspend fun patch(path: String, body: JsonObject): JsonElement = execute(
+        request(path)
+            .patch(body.toString().toRequestBody(JSON_MEDIA))
+            .build(),
+    )
+
     suspend fun delete(path: String): JsonElement = execute(request(path).delete().build())
 
     /** POST /api/agent/[id]; returns the `data` field of `{ success, data }`. */
