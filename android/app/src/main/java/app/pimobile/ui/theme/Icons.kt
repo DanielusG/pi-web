@@ -37,6 +37,18 @@ object PiIcons {
     val Folder by lazy {
         lineIcon("Folder", "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")
     }
+    val Image by lazy {
+        lineIcon(
+            "Image",
+            "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+            "M8.5 7a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3",
+            "M21 15l-5-5L5 21",
+        )
+    }
+    val Close by lazy { lineIcon("Close", "M18 6L6 18", "M6 6l12 12") }
+    val Warning by lazy {
+        lineIcon("Warning", "M10.3 2.9L1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01")
+    }
 }
 
 private fun lineIcon(name: String, vararg paths: String): ImageVector {
