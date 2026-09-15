@@ -25,6 +25,7 @@ import java.time.Instant
 data class SessionRow(
     val id: String,
     val title: String,
+    val name: String?,
     val cwd: String,
     val modified: Long,
     val messageCount: Int,
@@ -93,6 +94,28 @@ class SessionsViewModel(
         null
     }
 
+    /** PATCH /api/sessions/[id]; returns an error message, or null on success. */
+    suspend fun rename(id: String, name: String): String? = try {
+        api.patch("/api/sessions/${PiApi.encode(id)}", buildJsonObject { put("name", name) })
+        load(force = false)
+        null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        e.message ?: "Rename failed"
+    }
+
+    /** DELETE /api/sessions/[id]; returns an error message, or null on success. */
+    suspend fun delete(id: String): String? = try {
+        api.delete("/api/sessions/${PiApi.encode(id)}")
+        load(force = false)
+        null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        e.message ?: "Delete failed"
+    }
+
     private suspend fun load(force: Boolean) {
         _state.update { it.copy(refreshing = force && !it.loading) }
         try {
@@ -130,6 +153,7 @@ class SessionsViewModel(
         return SessionRow(
             id = json.str("id").orEmpty(),
             title = json.str("name")?.takeIf { it.isNotBlank() } ?: first ?: "New session",
+            name = json.str("name")?.takeIf { it.isNotBlank() },
             cwd = json.str("cwd").orEmpty(),
             modified = json.str("modified")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L,
             messageCount = json.int("messageCount") ?: 0,
