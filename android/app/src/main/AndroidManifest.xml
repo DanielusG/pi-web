@@ -35,5 +35,16 @@
             android:name=".notify.RunWatcherService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Hands downloaded server files to other apps (share, open with). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

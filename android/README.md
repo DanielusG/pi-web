@@ -81,6 +81,22 @@ It has **not yet been tested against a real pi-web with a real model.**
 - **Context indicator:**
   - A ring in the chat header shows the % of the context window used.
   - Tapping it shows context tokens, input/output, cache read/write, cache hit rate, cost, message counts and active time.
+- **Files:**
+  - The folder button in the chat header opens the session's project. Each project on the session list has a "Files" button too; from there mentions are off, since there is no chat to insert into.
+  - Explorer:
+    - Folder drill-down with a breadcrumb; Back goes up one level.
+    - Search via `/api/file-index`, and a "Recent" list at the root.
+    - A "Changes" tab from `git status`, with M/A/D/R/U/C badges and dots on folders that contain changes. Tapping a change opens its diff.
+    - Pull to refresh; it also refreshes when you return to the screen.
+    - Long-press a row for "Mention in chat", "Copy path", "Share" and "Open with".
+  - Viewer:
+    - Source view with line numbers, wrap toggle and "Load more" for files over 256 KB.
+    - Markdown and HTML preview; HTML runs with scripts and network off.
+    - A git diff view. The default view follows pi-web: preview for markdown/html, diff when opened from a change, diff for deleted files.
+    - Images (pinch zoom), PDF pages, docx preview, audio and video streaming.
+    - Live reload through the `watch` SSE, shown as a green dot.
+  - Mentions: long-press a line, tap another to extend the range, then "Mention" inserts `@path:12-18` into the composer. The @ button mentions the selection or the whole file.
+  - In chat, the path in read/write/edit tool cards opens the file (edits open on the diff). Local markdown links open in the viewer, and chips under a turn's last message list the files it wrote.
 - **Notifications:**
   - pi-web's own push is Web Push, which a native app can't receive. Instead, `notify/RunWatcherService` runs as a foreground service only while a session is running.
   - It polls `/api/agent/running` every 3 s and posts "Task finished." when a session goes idle.
@@ -135,6 +151,8 @@ app/src/main/java/app/pimobile/
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
   ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
   ui/chat/SlashCommands.kt slash palette: filter, ranking, groups, menu
+  data/FilePaths.kt        pi-web's path, link and @mention helpers
+  ui/files/                explorer, viewer (source/preview/diff), media views, share
   ui/markdown/Markdown.kt  small markdown renderer
 ```
 
@@ -152,7 +170,7 @@ between SDK releases.
 | Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
 | Session management | Rename, delete, search. |
-| Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |
+| Files, part 2 | Syntax highlighting in the source view, upload, file tabs, worktrees (`/api/worktrees`). |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
 | `!bash`, tool presets, compaction button | Commands exist (`bash`, `set_tools`, `compact`). |

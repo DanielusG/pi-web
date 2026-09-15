@@ -49,6 +49,31 @@ object PiIcons {
     val Warning by lazy {
         lineIcon("Warning", "M10.3 2.9L1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01")
     }
+    val File by lazy { lineIcon("File", "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z", "M14 3v5h5") }
+    val FileText by lazy {
+        lineIcon("FileText", "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z", "M14 3v5h5", "M9 13h6", "M9 17h6")
+    }
+    val AtSign by lazy {
+        lineIcon("AtSign", "M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.5 7.1")
+    }
+    val Search by lazy { lineIcon("Search", "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14", "M20 20l-4-4") }
+    val More by lazy {
+        lineIcon(
+            "More",
+            "M12 4.5a1 1 0 1 0 0 2a1 1 0 1 0 0-2",
+            "M12 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2",
+            "M12 17.5a1 1 0 1 0 0 2a1 1 0 1 0 0-2",
+        )
+    }
+    val Share by lazy { lineIcon("Share", "M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7", "M16 6l-4-4-4 4", "M12 2v13") }
+    val ExternalLink by lazy {
+        lineIcon("ExternalLink", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", "M15 3h6v6", "M10 14L21 3")
+    }
+    val ChevronRight by lazy { lineIcon("ChevronRight", "M9 18l6-6-6-6") }
+    val WrapText by lazy { lineIcon("WrapText", "M3 6h18", "M3 12h15a3 3 0 1 1 0 6h-4", "M16 16l-2 2 2 2", "M3 18h7") }
+    val Music by lazy {
+        lineIcon("Music", "M9 18V5l12-2v13", "M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6", "M18 13a3 3 0 1 0 0 6a3 3 0 1 0 0-6")
+    }
 }
 
 private fun lineIcon(name: String, vararg paths: String): ImageVector {

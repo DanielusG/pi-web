@@ -42,11 +42,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.FilePaths
 import app.pimobile.data.Patch
 import app.pimobile.data.ToolResult
 import app.pimobile.data.arr
@@ -162,12 +164,19 @@ fun AssistantMessage(
     onLoadThinking: (entryId: String, blockIndex: Int) -> Unit,
     editPreviews: Map<String, EditPreview>,
     onPreview: (Block.ToolCall) -> Unit,
+    cwd: String = "",
+    /** Files this turn wrote, shown as chips under its final message (web: TurnWrittenFiles). */
+    writtenFiles: List<String> = emptyList(),
+    onOpenFile: ((path: String, diff: Boolean) -> Unit)? = null,
 ) {
     val t = Pi.tokens
+    val openLink: ((String) -> Unit)? = onOpenFile?.let { open -> { path: String -> open(path, false) } }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item.blocks.forEach { block ->
             when (block) {
-                is Block.Text -> if (block.text.isNotBlank()) SelectionContainer { Markdown(block.text) }
+                is Block.Text -> if (block.text.isNotBlank()) SelectionContainer {
+                    Markdown(block.text, baseDir = cwd.ifEmpty { null }, onOpenFile = openLink)
+                }
                 is Block.Thinking -> if (block.text.isNotBlank()) {
                     val key = item.entryId?.let { "$it:${block.blockIndex}" }
                     val full = key?.let { fullThinking[it] }
@@ -186,6 +195,8 @@ fun AssistantMessage(
                     startedAt = item.timestamp,
                     preview = editPreviews[block.id],
                     onPreview = onPreview,
+                    cwd = cwd,
+                    onOpenFile = onOpenFile,
                 )
                 is Block.Image -> Text(
                     "[${block.mimeType}]",
@@ -194,11 +205,36 @@ fun AssistantMessage(
                 )
             }
         }
+        if (writtenFiles.isNotEmpty() && openLink != null) TurnWrittenFiles(writtenFiles, openLink)
         if (item.stopReason == "aborted") {
             Text("Stopped", style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
         }
         val error = item.errorMessage
         if (item.stopReason == "error" && !error.isNullOrBlank()) ErrorNote(error)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TurnWrittenFiles(files: List<String>, onOpen: (String) -> Unit) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(8.dp)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        files.forEach { path ->
+            Row(
+                Modifier
+                    .clip(shape)
+                    .background(t.code)
+                    .border(1.dp, t.border, shape)
+                    .clickable { onOpen(path) }
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(PiIcons.FileText, contentDescription = null, tint = t.textSecondary, modifier = Modifier.size(12.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(FilePaths.name(path), style = MonoSmall.copy(fontSize = 12.sp), color = t.text, maxLines = 1)
+            }
+        }
     }
 }
 
@@ -291,6 +327,8 @@ private fun ToolCard(
     startedAt: Long?,
     preview: EditPreview?,
     onPreview: (Block.ToolCall) -> Unit,
+    cwd: String,
+    onOpenFile: ((path: String, diff: Boolean) -> Unit)?,
 ) {
     var expanded by rememberSaveable(call.id) { mutableStateOf(false) }
     val t = Pi.tokens
@@ -333,14 +371,27 @@ private fun ToolCard(
             Spacer(Modifier.width(10.dp))
             Text(call.name.ifBlank { "tool" }, style = MonoSmall.copy(fontWeight = FontWeight.Medium), color = t.text)
             Spacer(Modifier.width(8.dp))
-            Text(
-                if (generatingInput) "Generating input…" else toolSummaryLine(call.name, call.input),
-                style = MonoSmall,
-                color = t.textTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            val summary = if (generatingInput) "Generating input…" else toolSummaryLine(call.name, call.input)
+            val filePath = remember(call.name, call.input, cwd) {
+                if (isFileToolName(call.name)) FilePaths.resolveToolPath(toolInputPath(call.input), cwd.ifEmpty { null }) else null
+            }
+            Box(Modifier.weight(1f)) {
+                if (filePath != null && onOpenFile != null && !generatingInput && summary.isNotEmpty()) {
+                    // The path opens the file; the rest of the header still toggles the card. Edits open on their diff.
+                    Text(
+                        summary,
+                        style = MonoSmall.copy(textDecoration = TextDecoration.Underline),
+                        color = t.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { onOpenFile(filePath, isEdit) },
+                    )
+                } else {
+                    Text(summary, style = MonoSmall, color = t.textTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             resultDiff?.let { files ->
                 Spacer(Modifier.width(8.dp))
                 Text("+${files.sumOf { it.added }}", style = MonoSmall.copy(fontSize = 12.sp), color = t.success)
