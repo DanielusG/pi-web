@@ -102,7 +102,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.FilePaths
 import app.pimobile.data.ImageAttachments
+import app.pimobile.data.ToolResult
 import app.pimobile.notify.AppVisibility
 import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
@@ -127,7 +129,16 @@ import kotlin.math.roundToInt
 private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
 
 @Composable
-fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSession) -> Unit = {}) {
+fun ChatScreen(
+    vm: ChatViewModel,
+    onBack: () -> Unit,
+    onOpenSession: (OpenSession) -> Unit = {},
+    onOpenFiles: () -> Unit = {},
+    onOpenFile: (path: String, diff: Boolean) -> Unit = { _, _ -> },
+    /** A mention from the file screens, inserted at the cursor. */
+    pendingInsert: String? = null,
+    onInsertConsumed: () -> Unit = {},
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
     val snackbar = remember { SnackbarHostState() }
@@ -190,6 +201,15 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSessio
             if (draft.text.isBlank()) draft = TextFieldValue(it, TextRange(it.length))
             vm.consumeRestoredDraft()
         }
+    }
+    LaunchedEffect(pendingInsert) {
+        pendingInsert?.let {
+            draft = insertAtCursor(draft, it)
+            onInsertConsumed()
+        }
+    }
+    val writtenFiles = remember(state.items, state.toolResults, state.cwd) {
+        turnWrittenFiles(state.items, state.toolResults, state.cwd)
     }
 
     // Follow the bottom unless the user scrolled up to read.
@@ -284,6 +304,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSessio
                 scrolled = listState.canScrollBackward,
                 onBack = onBack,
                 onStatsOpened = vm::consumeStatsRequest,
+                onOpenFiles = onOpenFiles,
             )
         },
         snackbarHost = {
@@ -376,6 +397,9 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSessio
                         onLoadThinking = vm::loadFullThinking,
                         editPreviews = state.editPreviews,
                         onPreview = vm::loadEditPreview,
+                        cwd = state.cwd,
+                        writtenFiles = writtenFiles[item.key].orEmpty(),
+                        onOpenFile = onOpenFile,
                     )
                     is ChatItem.Bash -> BashCard(item)
                     is ChatItem.Notice -> NoticeRow(item)
@@ -392,6 +416,8 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSessio
                         onLoadThinking = vm::loadFullThinking,
                         editPreviews = state.editPreviews,
                         onPreview = vm::loadEditPreview,
+                        cwd = state.cwd,
+                        onOpenFile = onOpenFile,
                     )
                 }
             }
@@ -407,8 +433,56 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSession: (OpenSessio
     }
 }
 
+/** Web: ChatInput insertText — at the cursor, separated by a space from the text before it. */
+private fun insertAtCursor(value: TextFieldValue, text: String): TextFieldValue {
+    val start = value.selection.min.coerceIn(0, value.text.length)
+    val end = value.selection.max.coerceIn(start, value.text.length)
+    val before = value.text.substring(0, start)
+    val inserted = if (before.isNotEmpty() && !before.last().isWhitespace()) " $text" else text
+    return TextFieldValue(before + inserted + value.text.substring(end), TextRange(before.length + inserted.length))
+}
+
+/**
+ * Web: extractTurnWrittenFiles per turn, keyed by the turn's last assistant item.
+ * A file counts only when its write/edit call returned without error.
+ */
+private fun turnWrittenFiles(items: List<ChatItem>, results: Map<String, ToolResult>, cwd: String): Map<String, List<String>> {
+    val byItem = HashMap<String, List<String>>()
+    var files = LinkedHashSet<String>()
+    var lastAssistant: String? = null
+    fun endTurn() {
+        val key = lastAssistant
+        if (key != null && files.isNotEmpty()) byItem[key] = files.toList()
+        files = LinkedHashSet()
+        lastAssistant = null
+    }
+    for (item in items) {
+        when (item) {
+            is ChatItem.User -> endTurn()
+            is ChatItem.Assistant -> {
+                lastAssistant = item.key
+                for (block in item.blocks) {
+                    if (block !is Block.ToolCall || !(isWriteToolName(block.name) || isEditToolName(block.name))) continue
+                    val result = results[block.id] ?: continue
+                    if (result.isError) continue
+                    FilePaths.resolveToolPath(toolInputPath(block.input), cwd.ifEmpty { null })?.let(files::add)
+                }
+            }
+            else -> Unit
+        }
+    }
+    endTurn()
+    return byItem
+}
+
 @Composable
-private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit, onStatsOpened: () -> Unit) {
+private fun ChatTopBar(
+    state: ChatUiState,
+    scrolled: Boolean,
+    onBack: () -> Unit,
+    onStatsOpened: () -> Unit,
+    onOpenFiles: () -> Unit,
+) {
     val t = Pi.tokens
     // The idle runtime the slash palette creates (ensure_session) is still a new chat.
     val fresh = state.sessionId == null ||
@@ -463,6 +537,11 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                 }
             },
             actions = {
+                if (state.cwd.isNotBlank()) {
+                    IconButton(onClick = onOpenFiles) {
+                        Icon(PiIcons.Folder, contentDescription = "Files", tint = t.textSecondary, modifier = Modifier.size(20.dp))
+                    }
+                }
                 // /session in a new chat still opens the stats it fetched.
                 if (!fresh || state.stats != null) ContextIndicator(state, onStatsOpened)
             },
