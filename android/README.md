@@ -53,7 +53,17 @@ It has **not yet been tested against a real pi-web with a real model.**
     the session list until a prompt is sent.
   - Extension, prompt and skill commands are sent as prompts. A skill message shows
     as a collapsed `/skill:<name> args` chip that expands to the full skill text.
-  - Built-in: `/name <name>` renames the session.
+  - Built-ins, as in pi-web:
+    - `/compact [instructions]` shows "Compacted 47k -> 12k tokens (35k saved)" above
+      the input for 6 s. Auto-compaction results show there too.
+    - `/reload` reloads the runtime, then history, models and commands.
+    - `/name <name>` renames the session.
+    - `/session` opens the context indicator's stats, fetched with `get_session_stats`.
+    - `/copy` copies the last assistant message.
+    - `/clone` copies the current branch into a new session and switches to it.
+  - While the agent runs, only `/session` and `/copy` run locally; other `/` commands
+    are sent as a steering prompt, as on the web. The input is disabled while a
+    built-in runs.
 - **Resilience on mobile networks:**
   - SSE read timeout of 75 s (the server heartbeat is 30 s), so half-open connections
     are detected.
@@ -145,7 +155,6 @@ between SDK releases.
 | Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
-| Slash commands, part 2 | Built-ins `/compact`, `/reload`, `/session`, `/copy`, `/clone`, following the tested `/name` pattern. |
 | `!bash`, tool presets, compaction button | Commands exist (`bash`, `set_tools`, `compact`). |
 | Security | The password is stored in plain DataStore; move to the Android Keystore. Release signing key. |
 | Tests | Unit tests for `StreamingAssembler`, markdown parser, and run-state transitions. |
