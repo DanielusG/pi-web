@@ -5,7 +5,7 @@ another machine over its existing HTTP + SSE API. It needs no backend changes.
 
 **Status: first working version.** It covers one complete flow and is meant to decide
 the direction before building a full-featured app. It has been tested on an Android 15
-emulator against `tools/mock-pi-web.mjs`, a mock that follows the pi-web wire contract.
+emulator.
 It has **not yet been tested against a real pi-web with a real model.**
 
 ## What works
@@ -83,15 +83,6 @@ Requirements: JDK 17 and the Android SDK at `~/Android/Sdk` (`local.properties` 
 ```bash
 cd android
 ./gradlew assembleRelease      # or assembleDebug
-```
-
-## Try it without a real backend
-
-```bash
-node tools/mock-pi-web.mjs     # port 30150, password "test"
-# emulator: server address 10.0.2.2:30150
-# a prompt containing "confirm" triggers an extension confirm dialog
-# curl -X POST localhost:30150/mock/drop   # kills SSE sockets to test reconnect
 ```
 
 ## Code map
