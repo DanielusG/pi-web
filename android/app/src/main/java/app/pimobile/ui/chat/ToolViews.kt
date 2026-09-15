@@ -45,6 +45,13 @@ fun isEditToolName(name: String): Boolean =
 fun isWriteToolName(name: String): Boolean =
     name == "write" || name.startsWith("write_") || name.endsWith(".write") || name.endsWith("_write")
 
+/** Tools that take a file path the viewer can open. */
+fun isFileToolName(name: String): Boolean = name == "read" || isEditToolName(name) || isWriteToolName(name)
+
+/** Web: readToolPath — `file_path ?? path`, non-empty. */
+fun toolInputPath(input: JsonObject?): String? =
+    (input?.str("file_path") ?: input?.str("path"))?.takeIf { it.isNotEmpty() }
+
 private fun clipText(value: String, max: Int): String = if (value.length > max) value.take(max) + "…" else value
 
 private fun plural(count: Int, noun: String) = if (count == 1) "1 $noun" else "$count ${noun}s"
@@ -97,7 +104,7 @@ private val DiffText = TextStyle(fontFamily = GeistMono, fontSize = 12.sp, lineH
 
 /** Unified diff with line numbers and word-level highlights (pi-web's split view, adapted to phone width). */
 @Composable
-fun DiffView(files: List<DiffFile>, modifier: Modifier = Modifier) {
+fun DiffView(files: List<DiffFile>, modifier: Modifier = Modifier, maxLines: Int = MAX_DIFF_LINES) {
     val t = Pi.tokens
     val shape = RoundedCornerShape(10.dp)
     val digits = files.maxOfOrNull { file ->
@@ -125,14 +132,14 @@ fun DiffView(files: List<DiffFile>, modifier: Modifier = Modifier) {
                 )
             }
             for (line in file.lines) {
-                if (shown >= MAX_DIFF_LINES) break
+                if (shown >= maxLines) break
                 DiffRow(line, gutter)
                 shown++
             }
         }
-        if (total > MAX_DIFF_LINES) {
+        if (total > maxLines) {
             Text(
-                "… ${total - MAX_DIFF_LINES} more lines",
+                "… ${total - maxLines} more lines",
                 style = MaterialTheme.typography.labelSmall,
                 color = t.textTertiary,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),

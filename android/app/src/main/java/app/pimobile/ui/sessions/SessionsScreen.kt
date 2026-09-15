@@ -85,6 +85,7 @@ fun SessionsScreen(
     onOpen: (id: String, cwd: String) -> Unit,
     onNew: (cwd: String) -> Unit,
     onSettings: () -> Unit,
+    onBrowse: (root: String) -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
@@ -152,6 +153,7 @@ fun SessionsScreen(
                             onOpen = onOpen,
                             onLongClick = { sheetRow = it },
                             onToggle = { vm.toggleProject(group.root) },
+                            onBrowse = { onBrowse(group.root) },
                         )
                     }
                 }
@@ -238,6 +240,7 @@ private fun ProjectGroupView(
     onOpen: (id: String, cwd: String) -> Unit,
     onLongClick: (SessionRow) -> Unit,
     onToggle: () -> Unit,
+    onBrowse: () -> Unit,
 ) {
     val t = Pi.tokens
     Column(Modifier.padding(top = 20.dp)) {
@@ -262,6 +265,20 @@ private fun ProjectGroupView(
                 modifier = Modifier.weight(1f),
             )
             Text("${group.sessions.size}", style = MaterialTheme.typography.labelSmall, color = t.textTertiary)
+            if (group.root.isNotEmpty()) {
+                Spacer(Modifier.width(6.dp))
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onBrowse)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(PiIcons.FileText, contentDescription = null, tint = t.textSecondary, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Files", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
+                }
+            }
         }
         Column(
             Modifier
