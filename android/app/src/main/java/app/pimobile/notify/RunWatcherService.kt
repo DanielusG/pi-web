@@ -11,6 +11,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.pimobile.PiApp
 import app.pimobile.data.PiApi
+import app.pimobile.data.SlashDisplay
 import app.pimobile.data.arr
 import app.pimobile.data.asObj
 import app.pimobile.data.str
@@ -114,7 +115,7 @@ class RunWatcherService : Service() {
                 val json = element as? JsonObject ?: return@forEach
                 val id = json.str("id") ?: return@forEach
                 val title = json.str("name")?.takeIf { it.isNotBlank() }
-                    ?: json.str("firstMessage")?.takeUnless { it == "(no messages)" }?.take(80)
+                    ?: json.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)?.take(80)
                     ?: "Session complete"
                 sessions[id] = title to json.str("cwd")
             }
