@@ -2,6 +2,7 @@
 
 package app.pimobile.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -17,12 +18,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -30,8 +33,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -46,7 +50,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -62,11 +65,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -93,7 +101,10 @@ import app.pimobile.ui.theme.PiSecondaryButton
 import app.pimobile.ui.theme.ShimmerText
 import app.pimobile.ui.theme.StatusDot
 import app.pimobile.ui.theme.piTextFieldColors
+import app.pimobile.ui.markdown.Markdown
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
@@ -188,19 +199,25 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
         },
         bottomBar = {
-            Composer(
-                state = state,
-                draft = draft,
-                onDraft = { draft = it },
-                onSend = {
-                    vm.send(draft)
-                    draft = ""
-                    follow = true
-                },
-                onStop = vm::abort,
-                onModels = { showModels = true },
-                onThinking = vm::selectThinking,
-            )
+            val dialog = state.dialog
+            if (dialog != null) {
+                // The extension dialog replaces the input bar in the composer slot, as on the web.
+                ExtensionDialogView(dialog, vm)
+            } else {
+                Composer(
+                    state = state,
+                    draft = draft,
+                    onDraft = { draft = it },
+                    onSend = {
+                        vm.send(draft)
+                        draft = ""
+                        follow = true
+                    },
+                    onStop = vm::abort,
+                    onModels = { showModels = true },
+                    onThinking = vm::selectThinking,
+                )
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -275,7 +292,6 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
             showModels = false
         })
     }
-    state.dialog?.let { dialog -> ExtensionDialogView(dialog, vm) }
 }
 
 @Composable
@@ -756,66 +772,228 @@ private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (Mod
 @Composable
 private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
     val t = Pi.tokens
-    var text by rememberSaveable(dialog.id) { mutableStateOf(dialog.prefill.orEmpty()) }
-    BasicAlertDialog(onDismissRequest = { vm.respondDialog(cancelled = true) }) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = t.background,
-            border = BorderStroke(1.dp, t.border),
-        ) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val typography = MaterialTheme.typography
+    val title = dialog.title.ifBlank { "The agent needs input" }
+    var collapsed by rememberSaveable(dialog.id) { mutableStateOf(false) }
+    var text by rememberSaveable(dialog.id) {
+        mutableStateOf(if (dialog.method == "editor") dialog.prefill.orEmpty() else "")
+    }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(dialog.id) {
+        if (dialog.method == "input" || dialog.method == "editor") focusRequester.requestFocus()
+    }
+
+    // The server closes expired requests via extension_ui_closed.
+    val expiresAt = dialog.expiresAt
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(expiresAt) {
+        if (expiresAt == null) return@LaunchedEffect
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val remainingSeconds = expiresAt?.let { e -> maxOf(0, ceil((e - now) / 1000.0).toInt()) }
+
+    // Back cancels the request while the card is expanded (web: Esc).
+    BackHandler(enabled = !collapsed) { vm.respondDialog(cancelled = true) }
+
+    val configuration = LocalConfiguration.current
+    val maxCardHeight = minOf(360.dp, configuration.screenHeightDp.dp * 0.45f)
+    val maxSummaryWidth = configuration.screenWidthDp.dp * 0.34f
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(t.background)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
+    ) {
+        if (collapsed) {
+            val summary = when (dialog.method) {
+                "select" -> dialog.options.firstOrNull()
+                "confirm" -> dialog.message?.split("\n")?.firstOrNull { it.isNotBlank() }?.trim()
+                else -> null
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, t.accent.mixedWith(t.border, 0.55f), RoundedCornerShape(10.dp))
+                    .background(t.surface)
+                    .clickable { collapsed = false }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusDot(t.accent, pulsing = true, size = 8.dp)
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    dialog.title.ifBlank { "The agent needs input" },
-                    style = MaterialTheme.typography.titleLarge,
+                    title,
+                    style = typography.bodySmall.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
                     color = t.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                dialog.message?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = t.textSecondary)
-                }
-                when (dialog.method) {
-                    "select" -> dialog.options.forEach { option ->
-                        Text(
-                            option,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = t.text,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, t.border, RoundedCornerShape(12.dp))
-                                .clickable { vm.respondDialog(value = option) }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                        )
-                    }
-                    "input", "editor" -> OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        placeholder = { dialog.placeholder?.let { Text(it) } },
-                        singleLine = dialog.method == "input",
-                        minLines = if (dialog.method == "editor") 4 else 1,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = piTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth(),
+                summary?.let {
+                    Text(
+                        it,
+                        style = typography.bodySmall.copy(fontSize = 12.sp),
+                        color = t.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .widthIn(max = maxSummaryWidth)
+                            .padding(start = 8.dp),
                     )
                 }
+                remainingSeconds?.let {
+                    Text(
+                        "expires in ${it}s",
+                        style = typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
+                        color = t.textTertiary,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                Text(
+                    "request",
+                    style = typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
+                    color = t.textTertiary,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+        } else {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxCardHeight)
+                    .shadow(3.dp, RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, t.border, RoundedCornerShape(10.dp))
+                    .background(t.background),
+            ) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            title,
+                            style = typography.bodyLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                            color = t.text,
+                        )
+                        Row(
+                            Modifier.padding(top = 3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                "extension request",
+                                style = typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
+                                color = t.textTertiary,
+                            )
+                            remainingSeconds?.let {
+                                Text(
+                                    "expires in ${it}s",
+                                    style = typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
+                                    color = t.textTertiary,
+                                )
+                            }
+                        }
+                    }
+                    IconButton(
+                        onClick = { collapsed = true },
+                        modifier = Modifier.size(26.dp),
+                    ) {
+                        Icon(
+                            PiIcons.ChevronDown,
+                            contentDescription = "Collapse",
+                            tint = t.textSecondary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+                HorizontalDivider(thickness = 1.dp, color = t.border)
+
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(14.dp),
                 ) {
                     when (dialog.method) {
-                        "confirm" -> {
-                            PiSecondaryButton("No", onClick = { vm.respondDialog(confirmed = false) })
-                            PiPrimaryButton("Yes", onClick = { vm.respondDialog(confirmed = true) })
+                        "confirm" -> dialog.message?.let { Markdown(it) }
+                        "select" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            dialog.options.forEach { option ->
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .border(1.dp, t.border, RoundedCornerShape(9.dp))
+                                        .background(t.surface)
+                                        .clickable { vm.respondDialog(value = option) }
+                                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                                ) {
+                                    Markdown(option)
+                                }
+                            }
                         }
-                        "input", "editor" -> {
-                            PiSecondaryButton("Cancel", onClick = { vm.respondDialog(cancelled = true) })
-                            PiPrimaryButton("OK", onClick = { vm.respondDialog(value = text) })
-                        }
-                        else -> PiSecondaryButton("Cancel", onClick = { vm.respondDialog(cancelled = true) })
+                        "input" -> OutlinedTextField(
+                            value = text,
+                            onValueChange = { text = it },
+                            placeholder = { dialog.placeholder?.let { Text(it) } },
+                            singleLine = true,
+                            shape = RoundedCornerShape(9.dp),
+                            colors = piTextFieldColors(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { vm.respondDialog(value = text) }),
+                        )
+                        "editor" -> OutlinedTextField(
+                            value = text,
+                            onValueChange = { text = it },
+                            placeholder = { dialog.placeholder?.let { Text(it) } },
+                            minLines = 6,
+                            shape = RoundedCornerShape(9.dp),
+                            colors = piTextFieldColors(),
+                            textStyle = typography.bodyMedium.copy(fontFamily = GeistMono, color = t.text),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { vm.respondDialog(value = text) }),
+                        )
+                    }
+                }
+
+                HorizontalDivider(thickness = 1.dp, color = t.border)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(t.surface)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PiSecondaryButton("Cancel", onClick = { vm.respondDialog(cancelled = true) })
+                    when (dialog.method) {
+                        "confirm" -> PiPrimaryButton("Confirm", onClick = { vm.respondDialog(confirmed = true) })
+                        "input", "editor" -> PiPrimaryButton("Submit", onClick = { vm.respondDialog(value = text) })
                     }
                 }
             }
         }
     }
 }
+
+/** Web: `color-mix(in srgb, accent 45%, border)` — Compose 1.7 has no Color.blend. */
+private fun Color.mixedWith(other: Color, fraction: Float): Color = Color(
+    red = red + (other.red - red) * fraction,
+    green = green + (other.green - green) * fraction,
+    blue = blue + (other.blue - blue) * fraction,
+    alpha = alpha + (other.alpha - alpha) * fraction,
+)

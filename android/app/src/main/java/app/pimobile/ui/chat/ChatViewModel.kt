@@ -68,6 +68,7 @@ data class ExtensionDialog(
     val options: List<String>,
     val prefill: String?,
     val placeholder: String?,
+    val expiresAt: Long? = null,
 )
 
 data class SessionStats(
@@ -761,6 +762,7 @@ class ChatViewModel(
                         options = event.arr("options").strings(),
                         prefill = event.str("prefill"),
                         placeholder = event.str("placeholder"),
+                        expiresAt = event.long("expiresAt"),
                     ),
                 )
             }
