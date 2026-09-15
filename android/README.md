@@ -30,6 +30,17 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Model picker, thinking level, context % indicator.
 - **Extension dialogs:** select / confirm / input / editor, so an extension waiting for
   an answer doesn't hang the agent.
+- **Image attachments:**
+  - The image button in the composer opens the system photo picker, which needs no
+    storage permission.
+  - Limits and compression follow pi-web's composer: at most 10 images of 10 MB each.
+    Files over 1 MB (except GIF) are re-encoded as JPEG q85, long side 1024 px, and the
+    original is kept when that isn't smaller.
+  - EXIF orientation is applied. HEIC is always converted to JPEG, because model APIs
+    don't accept it.
+  - Thumbnails with a remove badge. Images are sent with `prompt`, also while steering.
+  - A dismissible warning appears when the selected model doesn't list `image` input.
+  - User messages show their images; tap one for a full-screen preview.
 - **Resilience on mobile networks:**
   - SSE read timeout of 75 s (the server heartbeat is 30 s), so half-open connections
     are detected.
@@ -114,7 +125,7 @@ between SDK releases.
 |---|---|
 | Notifications, part 2 | "Needs your input" (blocking extension dialog) requires holding SSE from the service. Real push (FCM) would need a backend addition. |
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
-| Images | Sending attachments, and rendering image blocks / tool-result images (URL form needs auth). |
+| Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
 | Session management | Rename, delete, search. |
 | Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |

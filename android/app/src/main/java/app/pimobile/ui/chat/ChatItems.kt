@@ -85,15 +85,16 @@ fun UserBubble(item: ChatItem.User) {
                 .background(t.muted)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
-            SelectionContainer {
-                Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
-            }
-            if (item.imageCount > 0) {
-                Text(
-                    if (item.imageCount == 1) "1 image" else "${item.imageCount} images",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = t.textTertiary,
+            if (item.images.isNotEmpty()) {
+                MessageImages(
+                    item.images,
+                    Modifier.padding(top = 6.dp, bottom = if (item.text.isNotBlank()) 8.dp else 6.dp),
                 )
+            }
+            if (item.text.isNotBlank() || item.images.isEmpty()) {
+                SelectionContainer {
+                    Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
+                }
             }
         }
     }
