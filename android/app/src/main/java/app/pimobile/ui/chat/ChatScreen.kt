@@ -43,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -65,7 +66,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -81,6 +81,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -213,27 +214,8 @@ fun ChatScreen(
     }
 
     // Follow the bottom unless the user scrolled up to read.
-    var follow by remember { mutableStateOf(true) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
-            if (!scrolling) follow = !listState.canScrollForward
-        }
-    }
+    val follow = rememberBottomFollow(listState)
     val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
-    val rowCount = listOf(state.loading, state.hasMore, showEmpty, state.streaming != null).count { it } +
-        state.items.size + 1
-    val streamSize = state.streaming?.blocks?.sumOf { block ->
-        when (block) {
-            is Block.Text -> block.text.length
-            is Block.Thinking -> block.text.length
-            is Block.ToolCall -> block.rawInput.length + 1
-            is Block.Image -> 1
-        }
-    } ?: 0
-    val liveOutputSize = state.liveTools.values.sumOf { it.output.length }
-    LaunchedEffect(rowCount, streamSize, liveOutputSize, state.toolResults.size) {
-        if (follow) listState.scrollToItem(rowCount - 1)
-    }
 
     // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
     // the palette until the query changes, like Escape on the web.
@@ -274,7 +256,7 @@ fun ChatScreen(
         if (handled) return
         vm.send(draft.text)
         draft = TextFieldValue()
-        follow = true
+        follow.attach()
     }
 
     // Hardware keyboards: arrows move the highlight, Tab inserts it, Escape closes the palette.
@@ -353,12 +335,20 @@ fun ChatScreen(
                 )
             }
         },
+        floatingActionButton = {
+            JumpToBottomButton(
+                visible = !follow.attached && listState.canScrollForward,
+                onClick = follow::scrollToEnd,
+            )
+        },
+        floatingActionButtonPosition = FabPosition.Center,
     ) { padding ->
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .nestedScroll(follow.connection),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {

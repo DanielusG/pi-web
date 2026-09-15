@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 /** Thin 24px line icons (2px round strokes); tinted by Icon like any vector. */
 object PiIcons {
     val ArrowUp by lazy { lineIcon("ArrowUp", "M12 19V5", "M5 12l7-7 7 7") }
+    val ArrowDown by lazy { lineIcon("ArrowDown", "M12 5v14", "M19 12l-7 7-7-7") }
     val ArrowLeft by lazy { lineIcon("ArrowLeft", "M19 12H5", "M12 19l-7-7 7-7") }
     val ChevronDown by lazy { lineIcon("ChevronDown", "M6 9l6 6 6-6") }
     val ChevronUp by lazy { lineIcon("ChevronUp", "M18 15l-6-6-6 6") }
