@@ -159,6 +159,8 @@ class ChatViewModel(
     private var reconnectAttempt = 0
 
     private var promptPending = false
+    /** Key of the in-flight optimistic user bubble, consumed by its delivered message_end. */
+    private var optimisticKey: String? = null
     private var sdkActive = false
     private var lastSendAt = 0L
     private var foregroundSeen = false
@@ -195,6 +197,7 @@ class ChatViewModel(
                 publishMessages()
                 if (_state.value.title.isBlank()) _state.update { it.copy(title = message.lineSequence().first().take(80)) }
                 promptPending = true
+                optimisticKey = optimistic.key
                 setRunning("Starting…")
             }
             lastSendAt = SystemClock.elapsedRealtime()
@@ -220,6 +223,7 @@ class ChatViewModel(
                         messages = messages - optimistic
                         publishMessages()
                         promptPending = false
+                        optimisticKey = null
                         if (!sdkActive) markIdle()
                     }
                     _state.update { it.copy(error = e.message ?: "Message not sent", restoredDraft = message) }
@@ -403,13 +407,9 @@ class ChatViewModel(
             val context = body.obj("context")
             val info = body.obj("info")
             val fresh = context?.let(::parseContext).orEmpty()
-            // Keep optimistic bubbles the server has not recorded yet.
-            val lastServerUser = fresh.lastOrNull { it.json.str("role") == "user" }
-                ?.let { Messages.contentText(it.json["content"]) }
-            val stillPending = messages.filter {
-                it.pending && promptPending && Messages.contentText(it.json["content"]) != lastServerUser
-            }
-            messages = fresh + stillPending
+            // Server history wins (web parity): a still-unrecorded optimistic bubble
+            // is re-added by the delivered message_end.
+            messages = fresh
             oldestEntryId = context?.str("oldestEntryId")
             _state.update { state ->
                 state.copy(
@@ -542,6 +542,7 @@ class ChatViewModel(
     /** The run is over: drop transient state and reload the authoritative history. */
     private fun settle(id: String) {
         promptPending = false
+        optimisticKey = null
         sdkActive = false
         assembler.clear()
         streamDirty = false
@@ -733,9 +734,18 @@ class ChatViewModel(
         val loaded = LoadedMessage("live-${localCounter++}", null, message)
         when (message.str("role")) {
             "user" -> {
-                val text = Messages.contentText(message["content"])
-                val index = messages.indexOfFirst { it.pending && Messages.contentText(it.json["content"]) == text }
-                messages = if (index >= 0) messages.toMutableList().also { it[index] = loaded } else messages + loaded
+                // Identity-based, like the web client: extensions may rewrite the
+                // delivered text (e.g. the timestamp prefix), so matching the
+                // optimistic bubble by text would never succeed. Replace the
+                // still-adjacent optimistic bubble; later same-text deliveries
+                // (steering/follow-up) append as normal.
+                val last = messages.lastOrNull()
+                if (last != null && last.key == optimisticKey) {
+                    optimisticKey = null
+                    messages = messages.dropLast(1) + loaded
+                } else {
+                    messages = messages + loaded
+                }
             }
             "assistant" -> {
                 assembler.clear()
