@@ -182,7 +182,6 @@ private fun FieldLabel(text: String) {
         text,
         style = MaterialTheme.typography.labelMedium,
         color = Pi.tokens.textSecondary,
-        modifier = Modifier.padding(bottom = -6.dp.coerceAtLeast(0.dp)),
     )
 }
 
