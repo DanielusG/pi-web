@@ -87,6 +87,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -141,6 +142,8 @@ fun ChatScreen(
     /** A mention from the file screens, inserted at the cursor. */
     pendingInsert: String? = null,
     onInsertConsumed: () -> Unit = {},
+    /** Fresh-session launches from the assistant trigger: focus the composer and raise the keyboard. */
+    autoFocusComposer: Boolean = false,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
@@ -148,6 +151,14 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     // A TextFieldValue, so inserting a slash command can put the cursor after it.
     var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
+    val composerFocus = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(autoFocusComposer, keyboardController) {
+        if (!autoFocusComposer || keyboardController == null) return@LaunchedEffect
+        delay(150) // let the window settle after the hardware-trigger launch
+        composerFocus.requestFocus()
+        keyboardController.show()
+    }
     var showModels by remember { mutableStateOf(false) }
     // System photo picker: no storage permission; falls back to the document picker on old devices.
     val resolver = LocalContext.current.applicationContext.contentResolver
@@ -352,6 +363,7 @@ fun ChatScreen(
                         imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                     onRemoveImage = vm::removeImage,
+                    focusRequester = composerFocus,
                 )
             }
         },
@@ -833,6 +845,7 @@ private fun Composer(
     onThinking: (String) -> Unit,
     onAttach: () -> Unit,
     onRemoveImage: (Long) -> Unit,
+    focusRequester: FocusRequester,
 ) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
@@ -889,6 +902,7 @@ private fun Composer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(end = 10.dp)
+                    .focusRequester(focusRequester)
                     .onFocusChanged { focused = it.isFocused }
                     .onPreviewKeyEvent(onKey),
                 textStyle = typography.bodyLarge.copy(color = t.text),

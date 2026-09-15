@@ -20,10 +20,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -40,13 +42,18 @@ import app.pimobile.ui.sessions.SessionsScreen
 import app.pimobile.ui.sessions.SessionsViewModel
 import app.pimobile.ui.settings.SettingsScreen
 import app.pimobile.ui.theme.PiTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /** A session to open, from a notification tap. */
 data class OpenRequest(val sessionId: String, val cwd: String)
 
 class MainActivity : ComponentActivity() {
     private val openRequests = MutableStateFlow<OpenRequest?>(null)
+    /** Cwd for a fresh session from the system assistant trigger; empty = pick via sheet. */
+    private val assistCwds = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -56,7 +63,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             PiTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    PiNavHost(app, openRequests)
+                    PiNavHost(app, openRequests, assistCwds)
                 }
             }
         }
@@ -68,15 +75,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        val sessionId = intent?.getStringExtra(Notifications.EXTRA_SESSION_ID) ?: return
-        openRequests.value = OpenRequest(sessionId, intent.getStringExtra(Notifications.EXTRA_CWD).orEmpty())
+        when (intent?.action) {
+            // System assistant trigger (corner swipe, long-press power/home): always a fresh session.
+            Intent.ACTION_ASSIST -> {
+                val app = application as PiApp
+                // Tiny preferences read, served from cache after first emission; needed
+                // synchronously to pick the fresh session's cwd.
+                assistCwds.value = runBlocking { app.settings.lastCwd.first() }
+            }
+            else -> {
+                val sessionId = intent?.getStringExtra(Notifications.EXTRA_SESSION_ID) ?: return
+                openRequests.value = OpenRequest(sessionId, intent.getStringExtra(Notifications.EXTRA_CWD).orEmpty())
+            }
+        }
     }
 }
 
-private fun chatRoute(id: String?, cwd: String): String =
-    if (id == null) "chat?cwd=${Uri.encode(cwd)}" else "chat?id=${Uri.encode(id)}&cwd=${Uri.encode(cwd)}"
+private fun chatRoute(id: String?, cwd: String, focus: Boolean = false): String =
+    if (id == null) "chat?cwd=${Uri.encode(cwd)}&focus=$focus"
+    else "chat?id=${Uri.encode(id)}&cwd=${Uri.encode(cwd)}&focus=$focus"
 
-private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}"
+private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}&focus={focus}"
 
 /** savedStateHandle key: text a file screen asks the chat composer to insert. */
 private const val INSERT_KEY = "insert"
@@ -89,8 +108,9 @@ private fun fileRoute(path: String, root: String, sessionId: String?, diff: Bool
         "&diff=$diff&mention=$mention"
 
 @Composable
-private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) {
+private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, assistCwds: MutableStateFlow<String?>) {
     val nav = rememberNavController()
+    val navScope = rememberCoroutineScope()
     val start = if (app.api.config.isConfigured) "sessions" else "settings"
     // A notice for the next chat screen, when a chat replaces itself (/clone).
     var carriedNotice by remember { mutableStateOf<String?>(null) }
@@ -101,6 +121,26 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
         openRequests.value = null
         if (app.api.config.isConfigured) {
             nav.navigate(chatRoute(open.sessionId, open.cwd)) { launchSingleTop = true }
+        }
+    }
+
+    val assistCwd by assistCwds.collectAsState()
+    LaunchedEffect(assistCwd) {
+        val cwd = assistCwd ?: return@LaunchedEffect
+        assistCwds.value = null
+        if (!app.api.config.isConfigured) return@LaunchedEffect
+        val startId = nav.graph.findStartDestination().id
+        if (cwd.isNotBlank()) {
+            // Fresh session above the session list: Back returns to the list,
+            // never to the previous chats (they are popped, the list is kept).
+            nav.navigate(chatRoute(null, cwd, focus = true)) {
+                popUpTo(startId) { inclusive = false }
+            }
+        } else {
+            // No remembered cwd: replace the list with one that opens the sheet.
+            nav.navigate("sessions?newSheet=true") {
+                popUpTo(startId) { inclusive = true }
+            }
         }
     }
 
@@ -117,7 +157,8 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
                 },
             )
         }
-        composable("sessions") {
+        composable("sessions?newSheet={newSheet}") { entry ->
+            val newSheet = entry.arguments?.getBoolean("newSheet") ?: false
             AskNotificationPermissionOnce()
             val vm = viewModel { SessionsViewModel(app.api, app::onRunActive) }
             SessionsScreen(
@@ -128,6 +169,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
                 onSettings = { nav.navigate("settings") },
                 // No chat to mention into from here.
                 onBrowse = { root -> nav.navigate(filesRoute(root, null, mention = false)) },
+                startWithNewSheet = newSheet,
             )
         }
         composable(
@@ -135,11 +177,17 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
             arguments = listOf(
                 navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("cwd") { type = NavType.StringType; defaultValue = "" },
+                navArgument("focus") { type = NavType.BoolType; defaultValue = false },
             ),
         ) { entry ->
             val id = entry.arguments?.getString("id")
             val cwd = entry.arguments?.getString("cwd").orEmpty()
-            val vm = viewModel { ChatViewModel(app.api, id, cwd, app::onRunActive) }
+            val focus = entry.arguments?.getBoolean("focus") ?: false
+            val vm = viewModel {
+                ChatViewModel(app.api, id, cwd, app::onRunActive) { last ->
+                    navScope.launch { app.settings.saveLastCwd(last) }
+                }
+            }
             LaunchedEffect(vm) {
                 carriedNotice?.let(vm::showNotice)
                 carriedNotice = null
@@ -165,6 +213,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
                 },
                 pendingInsert = insert,
                 onInsertConsumed = { entry.savedStateHandle[INSERT_KEY] = null },
+                autoFocusComposer = focus,
             )
         }
         // Back to the chat below, with the mention for its composer.

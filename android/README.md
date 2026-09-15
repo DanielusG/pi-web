@@ -19,6 +19,22 @@ It has **not yet been tested against a real pi-web with a real model.**
   inline confirmation).
 - **New session:** pick a recent working directory or type a path (validated by the
   server). The session is created on the first message.
+- **System assistant trigger:** the app declares `android.intent.action.ASSIST`, so on
+  devices where the user can choose the default assistant (Settings > Apps > Default
+  apps > Assistant app) Pi Mobile can be picked. The system triggers — swipe up from
+  the bottom corner (gesture nav), long-press power (if enabled), long-press home
+  (3-button nav) — then open a **fresh session** in the last used working directory,
+  with the composer focused and the keyboard up. With no remembered cwd yet, the
+  new-session sheet opens instead. Note: on OnePlus the Plus Key (AI key) has fixed
+  options and cannot be mapped to a third-party app.
+  - **Known bug (back navigation):** in a chat opened from an assistant trigger the
+    in-app back arrow (top left) does nothing, and the system back key exits the app
+    — the back stack ends up with only the current entry. Reproduce: set Pi Mobile as
+    the default assistant, fire the corner swipe (or long-press power), then tap the
+    back arrow in the new chat. Suspected cause: the `popUpTo(startDestination)`
+    navigation option used by the assist launch (MainActivity) corrupts the back
+    stack in navigation-compose 2.8.5. The same arrow works in chats opened from the
+    session list. Workaround: leave the app via the app switcher.
 - **Chat:**
   - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
   - Collapsible thinking; deferred thinking loads its full text on tap.
