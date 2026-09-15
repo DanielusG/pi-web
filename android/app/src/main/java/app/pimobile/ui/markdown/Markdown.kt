@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pimobile.data.FilePaths
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
@@ -163,7 +164,17 @@ private fun splitRow(row: String): List<String> =
 
 private val SmallerEm = TextUnit(0.9f, TextUnitType.Em)
 
-fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): AnnotatedString =
+/**
+ * [localFile] maps a link target to a local file path (or null); such links call
+ * [onOpenFile] instead of opening a browser, like pi-web's MarkdownBody.
+ */
+fun inlineMarkdown(
+    text: String,
+    codeBackground: Color,
+    linkColor: Color,
+    localFile: ((String) -> String?)? = null,
+    onOpenFile: ((String) -> Unit)? = null,
+): AnnotatedString =
     buildAnnotatedString {
         var i = 0
         while (i < text.length) {
@@ -184,7 +195,7 @@ fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): Annot
                     val end = text.indexOf("**", i + 2)
                     if (end > i + 2) {
                         withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                            append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor))
+                            append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor, localFile, onOpenFile))
                         }
                         i = end + 2
                     } else { append("**"); i += 2 }
@@ -202,7 +213,13 @@ fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): Annot
                     if (close > i && paren > close && !text.substring(i + 1, close).contains('\n')) {
                         val url = text.substring(close + 2, paren)
                         val linkStyle = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
-                        withLink(LinkAnnotation.Url(url, TextLinkStyles(linkStyle))) {
+                        val filePath = if (onOpenFile != null) localFile?.invoke(url) else null
+                        val link = if (filePath != null && onOpenFile != null) {
+                            LinkAnnotation.Clickable(filePath, TextLinkStyles(linkStyle)) { onOpenFile(filePath) }
+                        } else {
+                            LinkAnnotation.Url(url, TextLinkStyles(linkStyle))
+                        }
+                        withLink(link) {
                             append(text.substring(i + 1, close))
                         }
                         i = paren + 1
@@ -214,11 +231,20 @@ fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): Annot
     }
 
 @Composable
-fun Markdown(text: String, modifier: Modifier = Modifier) {
+fun Markdown(
+    text: String,
+    modifier: Modifier = Modifier,
+    /** Directory that relative links resolve against. */
+    baseDir: String? = null,
+    /** Relative links must stay inside this directory. */
+    relativeRoot: String? = baseDir,
+    onOpenFile: ((String) -> Unit)? = null,
+) {
     val blocks = remember(text) { parseMarkdown(text) }
     val t = Pi.tokens
     val typography = MaterialTheme.typography
-    val inline = { s: String -> inlineMarkdown(s, t.muted, t.accent) }
+    val localFile = { href: String -> FilePaths.resolveHref(href, baseDir, relativeRoot) }
+    val inline = { s: String -> inlineMarkdown(s, t.muted, t.accent, localFile, onOpenFile) }
     val body = typography.bodyLarge.copy(color = t.text)
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
