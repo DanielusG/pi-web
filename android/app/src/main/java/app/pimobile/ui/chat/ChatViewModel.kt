@@ -14,6 +14,7 @@ import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
 import app.pimobile.data.Messages
 import app.pimobile.data.PiApi
+import app.pimobile.data.SlashDisplay
 import app.pimobile.data.StreamingAssembler
 import app.pimobile.data.ToolResult
 import app.pimobile.data.arr
@@ -38,8 +39,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -138,6 +142,13 @@ data class ChatUiState(
     val attachments: List<AttachedImage> = emptyList(),
     /** Picked images still being read and compressed. */
     val pendingImages: Int = 0,
+    /** Extension, prompt and skill commands from `get_commands`; built-ins are local. */
+    val slashCommands: List<SlashCommand> = emptyList(),
+    val slashCommandsLoading: Boolean = false,
+    /** Skill name -> disable-model-invocation, from /api/skills. */
+    val skillDormancy: Map<String, Boolean> = emptyMap(),
+    /** A built-in slash command is in flight; the composer is disabled meanwhile. */
+    val commandPending: Boolean = false,
 ) {
     /** Web: modelSupportsImageInput — unknown modality info never warns. */
     val modelSupportsImages: Boolean
@@ -171,6 +182,7 @@ class ChatViewModel(
 
     private var messages: List<LoadedMessage> = emptyList()
     private var oldestEntryId: String? = null
+    private val sessionMutex = Mutex()
     private var localCounter = 0
 
     private val assembler = StreamingAssembler()
@@ -232,12 +244,12 @@ class ChatViewModel(
                     _state.update { it.copy(title = message.lineSequence().first().take(80)) }
                 }
                 promptPending = true
-                setRunning("Starting…")
+                setRunning(if (images.isEmpty() && message.startsWith("/")) "Running command…" else "Starting…")
             }
             lastSendAt = SystemClock.elapsedRealtime()
             var sessionId = _state.value.sessionId
             try {
-                if (sessionId == null) sessionId = createSession()
+                if (sessionId == null) sessionId = ensureSession()
                 ensureEvents(sessionId)
                 withTimeoutOrNull(60_000) { connected.first { it } }
                     ?: throw IOException("Could not open the event stream")
@@ -451,13 +463,118 @@ class ChatViewModel(
         }
     }
 
+    /** Web: loadSlashCommands. Commands come from the runtime, so a new chat gets an idle one (ensure_session). */
+    fun loadSlashCommands() {
+        _state.update { it.copy(slashCommandsLoading = true) }
+        viewModelScope.launch {
+            val commands = try {
+                val id = ensureSession()
+                api.command(id, buildJsonObject { put("type", "get_commands") })
+                    .asObj()?.arr("commands").orEmpty()
+                    .mapNotNull(::slashCommandOf)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList() // as on the web: the palette falls back to the built-ins
+            }
+            _state.update { it.copy(slashCommands = commands, slashCommandsLoading = false) }
+        }
+    }
+
+    /** Refetched each time the palette opens, so skill toggles show up; failures leave skills unannotated. */
+    fun loadSkillDormancy() {
+        val cwd = _state.value.cwd
+        if (cwd.isBlank()) return
+        _state.update { it.copy(skillDormancy = emptyMap()) }
+        viewModelScope.launch {
+            val dormancy = try {
+                api.get("/api/skills?cwd=${PiApi.encode(cwd)}").asObj()?.arr("skills").orEmpty()
+                    .mapNotNull { element ->
+                        val skill = element as? JsonObject ?: return@mapNotNull null
+                        val name = skill.str("name") ?: return@mapNotNull null
+                        name to (skill.bool("disableModelInvocation") == true)
+                    }
+                    .toMap()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            _state.update { it.copy(skillDormancy = dormancy) }
+        }
+    }
+
+    /**
+     * Web: handleBuiltinSlashCommand. Returns false when [text] is not a built-in
+     * this client runs, so the caller sends it as a prompt (extension, prompt and
+     * skill commands run on the server). [onSettled] reports whether it succeeded.
+     */
+    fun runBuiltinCommand(text: String, onSettled: (succeeded: Boolean) -> Unit): Boolean {
+        val current = _state.value
+        val command = builtinSlashCommand(text) ?: return false
+        // Images make it a prompt; while running, only streaming-safe built-ins run here.
+        if (current.attachments.isNotEmpty() || (current.running && !command.availableWhileStreaming)) return false
+        if (current.commandPending) return true
+        val args = text.trim().substringAfter("/${command.name}").trim()
+        _state.update { it.copy(commandPending = true) }
+        viewModelScope.launch {
+            var message: String? = null
+            var failure: String? = null
+            try {
+                val id = ensureSession()
+                message = when (command.name) {
+                    "name" -> nameSession(id, args)
+                    else -> throw IllegalStateException("/${command.name} is not supported")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = e.message ?: e.toString()
+            }
+            _state.update { it.copy(commandPending = false, error = failure ?: it.error, notice = message ?: it.notice) }
+            onSettled(failure == null)
+        }
+        return true
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
     fun consumeRestoredDraft() = _state.update { it.copy(restoredDraft = null) }
 
     // endregion
 
+    // region slash commands
+
+    private suspend fun nameSession(id: String, name: String): String {
+        if (name.isEmpty()) throw IllegalArgumentException("Usage: /name <name>")
+        api.command(id, buildJsonObject {
+            put("type", "set_session_name")
+            put("name", name)
+        })
+        refreshSession(id)
+        return "Session renamed to $name"
+    }
+
+    private fun slashCommandOf(element: JsonElement): SlashCommand? {
+        val json = element as? JsonObject ?: return null
+        val name = json.str("name") ?: return null
+        val source = when (json.str("source")) {
+            "extension" -> SlashSource.Extension
+            "prompt" -> SlashSource.Prompt
+            "skill" -> SlashSource.Skill
+            else -> return null
+        }
+        return SlashCommand(name, json.str("description").orEmpty(), source)
+    }
+
+    // endregion
+
     // region loading
+
+    /** The palette and a send can both need a runtime for a new chat: create it once. */
+    private suspend fun ensureSession(): String = sessionMutex.withLock {
+        _state.value.sessionId ?: createSession()
+    }
 
     private suspend fun createSession(): String {
         val current = _state.value
@@ -490,9 +607,9 @@ class ChatViewModel(
             val fresh = context?.let(::parseContext).orEmpty()
             // Keep optimistic bubbles the server has not recorded yet.
             val lastServerUser = fresh.lastOrNull { it.json.str("role") == "user" }
-                ?.let { Messages.contentText(it.json["content"]) }
+                ?.let { Messages.userText(it.json["content"]) }
             val stillPending = messages.filter {
-                it.pending && promptPending && Messages.contentText(it.json["content"]) != lastServerUser
+                it.pending && promptPending && Messages.userText(it.json["content"]) != lastServerUser
             }
             messages = fresh + stillPending
             oldestEntryId = context?.str("oldestEntryId")
@@ -818,8 +935,8 @@ class ChatViewModel(
         val loaded = LoadedMessage("live-${localCounter++}", null, message)
         when (message.str("role")) {
             "user" -> {
-                val text = Messages.contentText(message["content"])
-                val index = messages.indexOfFirst { it.pending && Messages.contentText(it.json["content"]) == text }
+                val text = Messages.userText(message["content"])
+                val index = messages.indexOfFirst { it.pending && Messages.userText(it.json["content"]) == text }
                 messages = if (index >= 0) messages.toMutableList().also { it[index] = loaded } else messages + loaded
             }
             "assistant" -> {
@@ -910,6 +1027,6 @@ class ChatViewModel(
 
     private fun titleOf(info: JsonObject): String =
         info.str("name")?.takeIf { it.isNotBlank() }
-            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }
+            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)
             ?: "New session"
 }

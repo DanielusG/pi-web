@@ -60,6 +60,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -67,19 +68,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -120,7 +130,8 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
     val t = Pi.tokens
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
-    var draft by rememberSaveable { mutableStateOf("") }
+    // A TextFieldValue, so inserting a slash command can put the cursor after it.
+    var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var showModels by remember { mutableStateOf(false) }
     // System photo picker: no storage permission; falls back to the document picker on old devices.
     val resolver = LocalContext.current.applicationContext.contentResolver
@@ -161,7 +172,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
     }
     LaunchedEffect(state.restoredDraft) {
         state.restoredDraft?.let {
-            if (draft.isBlank()) draft = it
+            if (draft.text.isBlank()) draft = TextFieldValue(it, TextRange(it.length))
             vm.consumeRestoredDraft()
         }
     }
@@ -187,6 +198,67 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
     val liveOutputSize = state.liveTools.values.sumOf { it.output.length }
     LaunchedEffect(rowCount, streamSize, liveOutputSize, state.toolResults.size) {
         if (follow) listState.scrollToItem(rowCount - 1)
+    }
+
+    // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
+    // the palette until the query changes, like Escape on the web.
+    val slashQuery = slashQuery(draft.text)
+    var slashDismissed by remember { mutableStateOf(false) }
+    var slashActive by remember { mutableIntStateOf(0) }
+    LaunchedEffect(slashQuery) {
+        slashDismissed = false
+        slashActive = 0
+    }
+    LaunchedEffect(slashQuery != null) {
+        if (slashQuery != null) vm.loadSlashCommands()
+    }
+    val slashMenuOpen = slashQuery != null && !slashDismissed && state.dialog == null
+    LaunchedEffect(slashMenuOpen) {
+        if (slashMenuOpen) vm.loadSkillDormancy()
+    }
+    val slashMatches = remember(slashQuery, state.running, state.slashCommands) {
+        slashQuery?.let { filterSlashCommands(it, state.running, state.slashCommands) }.orEmpty()
+    }
+    val slashGroups = remember(slashMatches, state.skillDormancy) { slashCommandLayout(slashMatches, state.skillDormancy) }
+    val slashDisplayed = remember(slashGroups) { slashGroups.flatMap { it.commands } }
+    val activeIndex = slashActive.coerceIn(0, maxOf(0, slashDisplayed.lastIndex))
+    BackHandler(enabled = slashMenuOpen) { slashDismissed = true }
+
+    fun applySlashCommand(command: SlashCommand) {
+        val text = "/${command.name} "
+        draft = TextFieldValue(text, TextRange(text.length))
+    }
+
+    // Web: handleSend. A built-in runs here and clears the input only when it
+    // succeeded and the input still holds what was submitted.
+    fun submit() {
+        val message = draft.text.trim()
+        val handled = vm.runBuiltinCommand(message) { succeeded ->
+            if (succeeded && draft.text.trim() == message) draft = TextFieldValue()
+        }
+        if (handled) return
+        vm.send(draft.text)
+        draft = TextFieldValue()
+        follow = true
+    }
+
+    // Hardware keyboards: arrows move the highlight, Tab inserts it, Escape closes the palette.
+    val onComposerKey: (KeyEvent) -> Boolean = handler@{ event ->
+        if (!slashMenuOpen) return@handler false
+        val consumed = when (event.key) {
+            Key.DirectionDown, Key.DirectionRight, Key.DirectionUp, Key.DirectionLeft, Key.Escape -> true
+            Key.Tab -> slashDisplayed.isNotEmpty()
+            else -> false
+        }
+        if (consumed && event.type == KeyEventType.KeyDown) {
+            when (event.key) {
+                Key.DirectionDown, Key.DirectionRight -> slashActive = minOf(slashDisplayed.lastIndex, activeIndex + 1)
+                Key.DirectionUp, Key.DirectionLeft -> slashActive = maxOf(0, activeIndex - 1)
+                Key.Escape -> slashDismissed = true
+                Key.Tab -> applySlashCommand(slashDisplayed[activeIndex])
+            }
+        }
+        consumed
     }
 
     Scaffold(
@@ -218,10 +290,21 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     state = state,
                     draft = draft,
                     onDraft = { draft = it },
-                    onSend = {
-                        vm.send(draft)
-                        draft = ""
-                        follow = true
+                    onSend = { submit() },
+                    onKey = onComposerKey,
+                    slashMenu = {
+                        if (slashMenuOpen) {
+                            SlashCommandMenu(
+                                groups = slashGroups,
+                                matchCount = slashMatches.size,
+                                filtering = !slashQuery.isNullOrEmpty(),
+                                loading = state.slashCommandsLoading,
+                                dormancy = state.skillDormancy,
+                                active = activeIndex,
+                                onSelect = { applySlashCommand(it) },
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
                     },
                     onStop = vm::abort,
                     onModels = { showModels = true },
@@ -311,6 +394,9 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
 @Composable
 private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit) {
     val t = Pi.tokens
+    // The idle runtime the slash palette creates (ensure_session) is still a new chat.
+    val fresh = state.sessionId == null ||
+        (!state.loading && !state.running && state.items.isEmpty() && state.streaming == null)
     Column(Modifier.background(t.background)) {
         TopAppBar(
             colors = TopAppBarDefaults.topAppBarColors(
@@ -325,7 +411,7 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
             title = {
                 Column {
                     Text(
-                        state.title.ifBlank { if (state.sessionId == null) "New session" else "Session" },
+                        state.title.ifBlank { if (fresh) "New session" else "Session" },
                         style = MaterialTheme.typography.titleMedium,
                         color = t.text,
                         maxLines = 1,
@@ -360,7 +446,7 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                 }
             },
             actions = {
-                if (state.sessionId != null) ContextIndicator(state)
+                if (!fresh) ContextIndicator(state)
             },
         )
         HorizontalDivider(color = if (scrolled) t.border else Color.Transparent)
@@ -551,9 +637,11 @@ private fun EmptyChat(cwd: String) {
 @Composable
 private fun Composer(
     state: ChatUiState,
-    draft: String,
-    onDraft: (String) -> Unit,
+    draft: TextFieldValue,
+    onDraft: (TextFieldValue) -> Unit,
     onSend: () -> Unit,
+    onKey: (KeyEvent) -> Boolean,
+    slashMenu: @Composable () -> Unit,
     onStop: () -> Unit,
     onModels: () -> Unit,
     onThinking: (String) -> Unit,
@@ -565,6 +653,8 @@ private fun Composer(
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(26.dp)
     val hasImages = state.attachments.isNotEmpty()
+    // Web: the composer fieldset is disabled and dimmed while a built-in command runs.
+    val pending = state.commandPending
     val model = state.model
     val modelName = model?.let { ref ->
         state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
@@ -577,7 +667,8 @@ private fun Composer(
             .background(t.background)
             .navigationBarsPadding()
             .imePadding()
-            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
+            .alpha(if (pending) 0.5f else 1f),
     ) {
         if (state.queued.isNotEmpty()) {
             Text(
@@ -592,6 +683,7 @@ private fun Composer(
         if (hasImages && !state.modelSupportsImages && !imageWarningDismissed) {
             ImageWarningBanner(modelName.orEmpty(), onClose = { imageWarningDismissed = true })
         }
+        slashMenu()
         Column(
             Modifier
                 .fillMaxWidth()
@@ -606,17 +698,19 @@ private fun Composer(
             BasicTextField(
                 value = draft,
                 onValueChange = onDraft,
+                enabled = !pending,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(end = 10.dp)
-                    .onFocusChanged { focused = it.isFocused },
+                    .onFocusChanged { focused = it.isFocused }
+                    .onPreviewKeyEvent(onKey),
                 textStyle = typography.bodyLarge.copy(color = t.text),
                 cursorBrush = SolidColor(t.text),
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 decorationBox = { field ->
                     Box {
-                        if (draft.isEmpty()) {
+                        if (draft.text.isEmpty()) {
                             Text(
                                 if (state.running) "Steer the agent…" else "Ask pi anything…",
                                 style = typography.bodyLarge,
@@ -644,7 +738,7 @@ private fun Composer(
                         Modifier
                             .size(34.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onAttach),
+                            .clickable(enabled = !pending, onClick = onAttach),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -654,13 +748,13 @@ private fun Composer(
                             modifier = Modifier.size(18.dp),
                         )
                     }
-                    GhostChip(modelName ?: "Model", onClick = onModels)
-                    ThinkingChip(state, onThinking)
+                    GhostChip(modelName ?: "Model", onClick = onModels, enabled = !pending)
+                    ThinkingChip(state, onThinking, enabled = !pending)
                 }
-                val hasContent = draft.isNotBlank() || hasImages
+                val hasContent = draft.text.isNotBlank() || hasImages
                 val stopping = state.running && !hasContent
                 // Wait for picked images to finish reading, so none is silently left behind.
-                val enabled = stopping || (hasContent && state.pendingImages == 0)
+                val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0))
                 Box(
                     Modifier
                         .size(36.dp)
@@ -690,12 +784,12 @@ private fun Composer(
 }
 
 @Composable
-private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val t = Pi.tokens
     Row(
         modifier
             .clip(RoundedCornerShape(50))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -706,12 +800,12 @@ private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = M
 }
 
 @Composable
-private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit) {
+private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabled: Boolean = true) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
     val levels = state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
     Box {
-        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true })
+        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true }, enabled = enabled)
         DropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
