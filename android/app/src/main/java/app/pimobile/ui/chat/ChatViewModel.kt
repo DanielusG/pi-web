@@ -191,6 +191,9 @@ private const val LEASE_RENEW_MS = 30_000L
  * SSE is opened before a prompt and kept for a grace window afterwards; a run
  * ends on `prompt_done`/`agent_settled`, never on the first `agent_end`; state
  * polling and a refetch after every reconnect cover events lost while offline.
+ * The context indicator additionally reconciles on every turn boundary
+ * (assistant `message_end`, `tool_execution_end`, `compaction_end`) so it
+ * tracks usage per turn instead of waiting for the 15s poll.
  */
 class ChatViewModel(
     private val api: PiApi,
@@ -1058,7 +1061,13 @@ class ChatViewModel(
                     )
                 }
             }
-            "message_end" -> onMessageEnd(event.obj("message"))
+            "message_end" -> {
+                val message = event.obj("message")
+                onMessageEnd(message)
+                // The completed turn's usage is recorded: refresh the context
+                // indicator now instead of waiting for the next 15s poll.
+                if (message?.str("role") == "assistant") viewModelScope.launch { reconcile(id) }
+            }
             "tool_execution_start" -> {
                 val toolId = event.str("toolCallId") ?: return
                 val name = event.str("toolName").orEmpty()
@@ -1077,6 +1086,8 @@ class ChatViewModel(
                 val toolId = event.str("toolCallId") ?: return
                 _state.update { it.copy(liveTools = it.liveTools - toolId) }
                 if (_state.value.liveTools.isEmpty()) setStatus("Waiting for model…")
+                // The tool result is appended to the context: estimate grew.
+                viewModelScope.launch { reconcile(id) }
             }
             "agent_end" -> viewModelScope.launch { refreshSession(id) } // not final: retries/queues may follow
             "agent_settled" -> {
@@ -1106,7 +1117,10 @@ class ChatViewModel(
                     _state.update { it.copy(error = "Compaction failed: $error") }
                 } else if (event.bool("aborted") != true) {
                     showCompactResult(event.obj("result"), event.str("reason") ?: "auto")
-                    viewModelScope.launch { refreshSession(id) }
+                    viewModelScope.launch {
+                        refreshSession(id)
+                        reconcile(id) // context shrank; the indicator reads null until the next usage
+                    }
                 }
                 setStatus("Waiting for model…")
             }
