@@ -41,6 +41,19 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Thumbnails with a remove badge. Images are sent with `prompt`, also while steering.
   - A dismissible warning appears when the selected model doesn't list `image` input.
   - User messages show their images; tap one for a full-screen preview.
+- **Slash commands:**
+  - Typing `/` opens pi-web's command palette above the input: built-in, extension,
+    prompt and skill commands from `get_commands`, grouped with counts and filtered as
+    you type, ranked the way pi-web ranks them.
+  - Skills with `disable-model-invocation` are listed last, marked `dormant`
+    (from `/api/skills`).
+  - Tapping a command inserts `/name `; Back closes the palette. On a hardware
+    keyboard, the arrow keys move the highlight, Tab inserts and Escape closes.
+  - A new chat gets an idle runtime (`ensure_session`) to load commands; it stays out of
+    the session list until a prompt is sent.
+  - Extension, prompt and skill commands are sent as prompts. A skill message shows
+    as a collapsed `/skill:<name> args` chip that expands to the full skill text.
+  - Built-in: `/name <name>` renames the session.
 - **Resilience on mobile networks:**
   - SSE read timeout of 75 s (the server heartbeat is 30 s), so half-open connections
     are detected.
@@ -111,6 +124,7 @@ app/src/main/java/app/pimobile/
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
   ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
+  ui/chat/SlashCommands.kt slash palette: filter, ranking, groups, menu
   ui/markdown/Markdown.kt  small markdown renderer
 ```
 
@@ -131,6 +145,7 @@ between SDK releases.
 | Files, git diff, worktrees | `/api/files`, `/api/git/*`, `/api/worktrees`. |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
-| Slash commands, `!bash`, tool presets, compaction button | Commands exist (`get_commands`, `bash`, `set_tools`, `compact`). |
+| Slash commands, part 2 | Built-ins `/compact`, `/reload`, `/session`, `/copy`, `/clone`, following the tested `/name` pattern. |
+| `!bash`, tool presets, compaction button | Commands exist (`bash`, `set_tools`, `compact`). |
 | Security | The password is stored in plain DataStore; move to the Android Keystore. Release signing key. |
 | Tests | Unit tests for `StreamingAssembler`, markdown parser, and run-state transitions. |
