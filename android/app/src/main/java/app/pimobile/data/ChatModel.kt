@@ -33,7 +33,7 @@ sealed interface ChatItem {
     data class User(
         override val key: String,
         val text: String,
-        val imageCount: Int,
+        val images: List<ImagePayload>,
         val pending: Boolean,
     ) : ChatItem
 
@@ -78,6 +78,15 @@ object Messages {
 
     private fun imageCount(content: JsonElement?): Int =
         (content as? JsonArray)?.count { (it as? JsonObject)?.type == "image" } ?: 0
+
+    /** Base64 image blocks, in both the flat pi-ai `{data, mimeType}` and nested `{source}` spellings. */
+    fun images(content: JsonElement?): List<ImagePayload> =
+        (content as? JsonArray).orEmpty().mapNotNull { element ->
+            val block = (element as? JsonObject)?.takeIf { it.type == "image" } ?: return@mapNotNull null
+            val source = block.obj("source")?.takeIf { it.type == "base64" }
+            val data = source?.str("data") ?: block.str("data") ?: return@mapNotNull null
+            ImagePayload(data, source?.str("media_type") ?: block.str("mimeType") ?: "image/png")
+        }
 
     /**
      * Tool calls arrive as `{toolCallId, toolName, input}` from session history
@@ -127,7 +136,7 @@ object Messages {
             "user" -> ChatItem.User(
                 message.key,
                 contentText(json["content"]),
-                imageCount(json["content"]),
+                images(json["content"]),
                 message.pending,
             )
             "assistant" -> ChatItem.Assistant(

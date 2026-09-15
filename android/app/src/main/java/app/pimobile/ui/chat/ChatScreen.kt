@@ -3,6 +3,9 @@
 package app.pimobile.ui.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -73,6 +76,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -86,6 +90,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.ImageAttachments
 import app.pimobile.notify.AppVisibility
 import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
@@ -117,6 +122,11 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     var draft by rememberSaveable { mutableStateOf("") }
     var showModels by remember { mutableStateOf(false) }
+    // System photo picker: no storage permission; falls back to the document picker on old devices.
+    val resolver = LocalContext.current.applicationContext.contentResolver
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(ImageAttachments.MAX_IMAGES),
+    ) { uris -> vm.addImages(resolver, uris) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
@@ -216,6 +226,10 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     onStop = vm::abort,
                     onModels = { showModels = true },
                     onThinking = vm::selectThinking,
+                    onAttach = {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onRemoveImage = vm::removeImage,
                 )
             }
         },
@@ -543,11 +557,20 @@ private fun Composer(
     onStop: () -> Unit,
     onModels: () -> Unit,
     onThinking: (String) -> Unit,
+    onAttach: () -> Unit,
+    onRemoveImage: (Long) -> Unit,
 ) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(26.dp)
+    val hasImages = state.attachments.isNotEmpty()
+    val model = state.model
+    val modelName = model?.let { ref ->
+        state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
+    }
+    var imageWarningDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(hasImages) { if (!hasImages) imageWarningDismissed = false }
     Column(
         Modifier
             .fillMaxWidth()
@@ -566,6 +589,9 @@ private fun Composer(
                 modifier = Modifier.padding(start = 10.dp, bottom = 8.dp),
             )
         }
+        if (hasImages && !state.modelSupportsImages && !imageWarningDismissed) {
+            ImageWarningBanner(modelName.orEmpty(), onClose = { imageWarningDismissed = true })
+        }
         Column(
             Modifier
                 .fillMaxWidth()
@@ -574,6 +600,9 @@ private fun Composer(
                 .border(1.dp, if (focused) t.borderStrong else t.border, shape)
                 .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 8.dp),
         ) {
+            if (hasImages || state.pendingImages > 0) {
+                AttachmentStrip(state.attachments, state.pendingImages, onRemoveImage)
+            }
             BasicTextField(
                 value = draft,
                 onValueChange = onDraft,
@@ -611,15 +640,27 @@ private fun Composer(
                         .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val model = state.model
-                    val modelName = model?.let { ref ->
-                        state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
-                    } ?: "Model"
-                    GhostChip(modelName, onClick = onModels)
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onAttach),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            PiIcons.Image,
+                            contentDescription = "Attach image",
+                            tint = if (hasImages) t.accent else t.textSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    GhostChip(modelName ?: "Model", onClick = onModels)
                     ThinkingChip(state, onThinking)
                 }
-                val stopping = state.running && draft.isBlank()
-                val enabled = stopping || draft.isNotBlank()
+                val hasContent = draft.isNotBlank() || hasImages
+                val stopping = state.running && !hasContent
+                // Wait for picked images to finish reading, so none is silently left behind.
+                val enabled = stopping || (hasContent && state.pendingImages == 0)
                 Box(
                     Modifier
                         .size(36.dp)

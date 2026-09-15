@@ -1,11 +1,16 @@
 package app.pimobile.ui.chat
 
+import android.content.ContentResolver
+import android.net.Uri
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pimobile.data.ApiException
+import app.pimobile.data.AttachedImage
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.ImageAttachments
+import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
 import app.pimobile.data.Messages
 import app.pimobile.data.PiApi
@@ -22,6 +27,7 @@ import app.pimobile.data.str
 import app.pimobile.data.strings
 import app.pimobile.data.type
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -32,10 +38,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -47,7 +56,13 @@ data class ModelRef(val provider: String, val modelId: String) {
     val key: String get() = "$provider:$modelId"
 }
 
-data class ModelOption(val provider: String, val id: String, val name: String) {
+data class ModelOption(
+    val provider: String,
+    val id: String,
+    val name: String,
+    /** Input modalities from /api/models, e.g. ["text", "image"]; null when unknown. */
+    val input: List<String>? = null,
+) {
     val key: String get() = "$provider:$id"
 }
 
@@ -120,7 +135,18 @@ data class ChatUiState(
     val error: String? = null,
     val notice: String? = null,
     val restoredDraft: String? = null,
-)
+    val attachments: List<AttachedImage> = emptyList(),
+    /** Picked images still being read and compressed. */
+    val pendingImages: Int = 0,
+) {
+    /** Web: modelSupportsImageInput — unknown modality info never warns. */
+    val modelSupportsImages: Boolean
+        get() {
+            val ref = model ?: return true
+            val input = models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.input ?: return true
+            return "image" in input
+        }
+}
 
 private val DEFAULT_TOOLS = listOf("read", "bash", "edit", "write")
 private const val STATE_POLL_MS = 15_000L
@@ -178,7 +204,9 @@ class ChatViewModel(
 
     fun send(text: String) {
         val message = text.trim()
-        if (message.isEmpty()) return
+        val images = _state.value.attachments
+        if (message.isEmpty() && images.isEmpty()) return
+        _state.update { it.copy(attachments = emptyList()) }
         viewModelScope.launch {
             val steering = _state.value.running
             val optimistic = LoadedMessage(
@@ -186,14 +214,23 @@ class ChatViewModel(
                 entryId = null,
                 json = buildJsonObject {
                     put("role", "user")
-                    put("content", message)
+                    if (images.isEmpty()) {
+                        put("content", message)
+                    } else {
+                        putJsonArray("content") {
+                            if (message.isNotEmpty()) addJsonObject { put("type", "text"); put("text", message) }
+                            images.forEach { addJsonObject { putImage(it.payload) } }
+                        }
+                    }
                 },
                 pending = true,
             )
             if (!steering) {
                 messages = messages + optimistic
                 publishMessages()
-                if (_state.value.title.isBlank()) _state.update { it.copy(title = message.lineSequence().first().take(80)) }
+                if (_state.value.title.isBlank() && message.isNotEmpty()) {
+                    _state.update { it.copy(title = message.lineSequence().first().take(80)) }
+                }
                 promptPending = true
                 setRunning("Starting…")
             }
@@ -207,6 +244,9 @@ class ChatViewModel(
                 api.command(sessionId, buildJsonObject {
                     put("type", "prompt")
                     put("message", message)
+                    if (images.isNotEmpty()) {
+                        putJsonArray("images") { images.forEach { addJsonObject { putImage(it.payload) } } }
+                    }
                     if (steering) put("streamingBehavior", "steer")
                 })
                 if (steering) _state.update { it.copy(notice = "Steering message sent") }
@@ -222,7 +262,13 @@ class ChatViewModel(
                         promptPending = false
                         if (!sdkActive) markIdle()
                     }
-                    _state.update { it.copy(error = e.message ?: "Message not sent", restoredDraft = message) }
+                    _state.update {
+                        it.copy(
+                            error = e.message ?: "Message not sent",
+                            restoredDraft = message.ifEmpty { null },
+                            attachments = (images + it.attachments).take(ImageAttachments.MAX_IMAGES),
+                        )
+                    }
                 } else {
                     // Ambiguous failure: the prompt may be running. Ask the server.
                     _state.update { it.copy(error = "Connection problem: ${e.message}. Checking…") }
@@ -230,6 +276,45 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /** Reads picked images off the main thread; extras past the per-message limit are dropped, as on the web. */
+    fun addImages(resolver: ContentResolver, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val current = _state.value
+        val room = (ImageAttachments.MAX_IMAGES - current.attachments.size - current.pendingImages).coerceAtLeast(0)
+        val accepted = uris.take(room)
+        if (accepted.size < uris.size) {
+            _state.update { it.copy(notice = "A message can include at most ${ImageAttachments.MAX_IMAGES} images") }
+        }
+        if (accepted.isEmpty()) return
+        _state.update { it.copy(pendingImages = it.pendingImages + accepted.size) }
+        viewModelScope.launch {
+            val failures = mutableListOf<String>()
+            for (uri in accepted) {
+                val id = localCounter++.toLong()
+                val image = try {
+                    withContext(Dispatchers.IO) { ImageAttachments.load(resolver, uri, id) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failures += e.message ?: "Could not read the image"
+                    null
+                }
+                _state.update { state ->
+                    val added = image?.takeIf { state.attachments.size < ImageAttachments.MAX_IMAGES }
+                    state.copy(
+                        attachments = if (added != null) state.attachments + added else state.attachments,
+                        pendingImages = (state.pendingImages - 1).coerceAtLeast(0),
+                    )
+                }
+            }
+            failures.distinct().firstOrNull()?.let { message -> _state.update { it.copy(error = message) } }
+        }
+    }
+
+    fun removeImage(id: Long) = _state.update { state ->
+        state.copy(attachments = state.attachments.filterNot { it.id == id })
     }
 
     fun abort() {
@@ -465,7 +550,7 @@ class ChatViewModel(
                 val json = element as? JsonObject ?: return@mapNotNull null
                 val provider = json.str("provider") ?: return@mapNotNull null
                 val id = json.str("id") ?: return@mapNotNull null
-                ModelOption(provider, id, json.str("name") ?: id)
+                ModelOption(provider, id, json.str("name") ?: id, json.arr("input")?.strings())
             }
             val levels = body.obj("thinkingLevels")?.mapValues { (_, value) ->
                 (value as? kotlinx.serialization.json.JsonArray).strings()
@@ -815,6 +900,12 @@ class ChatViewModel(
         val provider = json.str("provider") ?: return null
         val id = json.str(idKey) ?: return null
         return ModelRef(provider, id)
+    }
+
+    private fun JsonObjectBuilder.putImage(image: ImagePayload) {
+        put("type", "image")
+        put("data", image.data)
+        put("mimeType", image.mimeType)
     }
 
     private fun titleOf(info: JsonObject): String =
