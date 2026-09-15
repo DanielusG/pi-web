@@ -201,6 +201,8 @@ class ChatViewModel(
     cwd: String,
     /** Lets the app start its background run watcher (completion notifications). */
     private val onRunActive: () -> Unit = {},
+    /** Remembers the last chat cwd for fresh-session launches (assistant trigger). */
+    private val saveLastCwd: (String) -> Unit = {},
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatUiState(sessionId = sessionId, cwd = cwd, loading = sessionId != null))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -230,6 +232,7 @@ class ChatViewModel(
     private var foregroundSeen = false
 
     init {
+        if (cwd.isNotBlank()) saveLastCwd(cwd)
         viewModelScope.launch { streamFlushLoop() }
         viewModelScope.launch { loadModels() }
         if (sessionId != null) {

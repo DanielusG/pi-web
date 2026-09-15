@@ -86,6 +86,8 @@ fun SessionsScreen(
     onNew: (cwd: String) -> Unit,
     onSettings: () -> Unit,
     onBrowse: (root: String) -> Unit = {},
+    /** Assistant trigger with no remembered cwd: open the new-session sheet directly. */
+    startWithNewSheet: Boolean = false,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
@@ -101,7 +103,7 @@ fun SessionsScreen(
             vm.clearError()
         }
     }
-    var showNew by rememberSaveable { mutableStateOf(false) }
+    var showNew by rememberSaveable { mutableStateOf(startWithNewSheet) }
     var sheetRow by remember { mutableStateOf<SessionRow?>(null) }
 
     Scaffold(
