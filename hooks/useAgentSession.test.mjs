@@ -149,9 +149,9 @@ test("first user messages expose both branch actions and edit before their own e
     source.indexOf("  const handleLeafChange = useCallback"),
   );
 
-  assert.match(chatWindowSource, /onFork=\{sessionBusy \|\| isNew \|\| \(idx === 0 && msg\.role === "user"\) \? undefined : handleFork\}/);
-  assert.match(chatWindowSource, /idx === 0 && msg\.role === "user"/);
-  assert.match(chatWindowSource, /prevAssistantEntryId/);
+  assert.match(chatWindowSource, /onFork=\{sessionBusy \|\| isNew \? undefined : handleFork\}/);
+  assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user"/);
+  assert.doesNotMatch(chatWindowSource, /prevAssistantEntryId/);
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
   assert.match(navigateSource, /await loadSession\(sid\)/);
 });
