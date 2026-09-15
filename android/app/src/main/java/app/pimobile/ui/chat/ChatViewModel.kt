@@ -2,6 +2,7 @@ package app.pimobile.ui.chat
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -53,6 +54,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.io.IOException
+import java.util.Locale
+import kotlin.math.roundToLong
 
 enum class LinkState { Idle, Connecting, Live, Reconnecting }
 
@@ -89,6 +92,9 @@ data class ExtensionDialog(
     val placeholder: String?,
     val expiresAt: Long? = null,
 )
+
+/** Another session the screen should switch to, e.g. the result of /clone. */
+data class OpenSession(val sessionId: String, val cwd: String, val notice: String?)
 
 data class SessionStats(
     val userMessages: Int,
@@ -149,6 +155,14 @@ data class ChatUiState(
     val skillDormancy: Map<String, Boolean> = emptyMap(),
     /** A built-in slash command is in flight; the composer is disabled meanwhile. */
     val commandPending: Boolean = false,
+    /** Title-bar status while a built-in runs outside an agent run, e.g. compaction. */
+    val commandStatus: String? = null,
+    /** Web: the compact result line above the composer, e.g. "Compacted 47k -> 12k tokens (35k saved)". */
+    val compactResult: String? = null,
+    /** One-shot requests from built-ins, consumed by the screen. */
+    val openStats: Boolean = false,
+    val clipboard: String? = null,
+    val openSession: OpenSession? = null,
 ) {
     /** Web: modelSupportsImageInput — unknown modality info never warns. */
     val modelSupportsImages: Boolean
@@ -183,6 +197,7 @@ class ChatViewModel(
     private var messages: List<LoadedMessage> = emptyList()
     private var oldestEntryId: String? = null
     private val sessionMutex = Mutex()
+    private var compactResultJob: Job? = null
     private var localCounter = 0
 
     private val assembler = StreamingAssembler()
@@ -467,17 +482,14 @@ class ChatViewModel(
     fun loadSlashCommands() {
         _state.update { it.copy(slashCommandsLoading = true) }
         viewModelScope.launch {
-            val commands = try {
-                val id = ensureSession()
-                api.command(id, buildJsonObject { put("type", "get_commands") })
-                    .asObj()?.arr("commands").orEmpty()
-                    .mapNotNull(::slashCommandOf)
+            val id = try {
+                ensureSession()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                emptyList() // as on the web: the palette falls back to the built-ins
+                null
             }
-            _state.update { it.copy(slashCommands = commands, slashCommandsLoading = false) }
+            fetchSlashCommands(id)
         }
     }
 
@@ -523,7 +535,12 @@ class ChatViewModel(
             try {
                 val id = ensureSession()
                 message = when (command.name) {
+                    "compact" -> compact(id, args)
+                    "reload" -> reload(id)
                     "name" -> nameSession(id, args)
+                    "session" -> openSessionStats(id)
+                    "copy" -> copyLastAssistantText(id)
+                    "clone" -> cloneSession(id)
                     else -> throw IllegalStateException("/${command.name} is not supported")
                 }
             } catch (e: CancellationException) {
@@ -531,7 +548,14 @@ class ChatViewModel(
             } catch (e: Exception) {
                 failure = e.message ?: e.toString()
             }
-            _state.update { it.copy(commandPending = false, error = failure ?: it.error, notice = message ?: it.notice) }
+            _state.update {
+                it.copy(
+                    commandPending = false,
+                    commandStatus = null,
+                    error = failure ?: it.error,
+                    notice = message ?: it.notice,
+                )
+            }
             onSettled(failure == null)
         }
         return true
@@ -540,6 +564,10 @@ class ChatViewModel(
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
     fun consumeRestoredDraft() = _state.update { it.copy(restoredDraft = null) }
+    fun showNotice(message: String) = _state.update { it.copy(notice = message) }
+    fun consumeStatsRequest() = _state.update { it.copy(openStats = false) }
+    fun consumeClipboard() = _state.update { it.copy(clipboard = null) }
+    fun consumeOpenSession() = _state.update { it.copy(openSession = null) }
 
     // endregion
 
@@ -553,6 +581,100 @@ class ChatViewModel(
         })
         refreshSession(id)
         return "Session renamed to $name"
+    }
+
+    private suspend fun compact(id: String, instructions: String): String {
+        _state.update { it.copy(commandStatus = "Compacting context…", compactResult = null) }
+        val result = api.command(id, buildJsonObject {
+            put("type", "compact")
+            if (instructions.isNotEmpty()) put("customInstructions", instructions)
+        }).asObj()
+        showCompactResult(result, "manual")
+        refreshSession(id)
+        reconcile(id) // context usage dropped
+        return "Compacted context"
+    }
+
+    private suspend fun reload(id: String): String {
+        api.command(id, buildJsonObject { put("type", "reload") })
+        refreshSession(id)
+        loadModels()
+        fetchSlashCommands(id)
+        return "Reloaded session resources"
+    }
+
+    /** Web: /session opens the stats panel; here that is the context indicator's details. */
+    private suspend fun openSessionStats(id: String): String? {
+        val stats = api.command(id, buildJsonObject { put("type", "get_session_stats") }).asObj()
+        _state.update { state ->
+            val usage = stats?.obj("contextUsage")
+            state.copy(
+                stats = stats?.let { parseStats(it, it.long("totalActiveMs")) } ?: state.stats,
+                contextPercent = usage?.double("percent") ?: state.contextPercent,
+                contextTokens = usage?.long("tokens") ?: state.contextTokens,
+                contextWindow = usage?.long("contextWindow") ?: state.contextWindow,
+                openStats = true,
+            )
+        }
+        return null // the panel is the feedback, as on the web
+    }
+
+    private suspend fun copyLastAssistantText(id: String): String? {
+        val text = api.command(id, buildJsonObject { put("type", "get_last_assistant_text") })
+            .asObj()?.str("text").orEmpty()
+        if (text.isEmpty()) throw IllegalStateException("No assistant message to copy")
+        _state.update { it.copy(clipboard = text) }
+        // Android 13+ confirms clipboard writes itself; a second confirmation is discouraged.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) null else "Copied last assistant message"
+    }
+
+    /** Clones up to the current leaf (this client has no branch navigation), then switches to the copy. */
+    private suspend fun cloneSession(id: String): String? {
+        if (_state.value.running) throw IllegalStateException("Cannot clone while the session is running")
+        val result = api.command(id, buildJsonObject { put("type", "clone") }).asObj()
+        val newId = result?.str("newSessionId")
+        if (result?.bool("cancelled") == true || newId == null) {
+            throw IllegalStateException("Cannot clone an empty or unsaved session")
+        }
+        // The notice travels with the switch: this screen is replaced right away.
+        _state.update { it.copy(openSession = OpenSession(newId, it.cwd, "Cloned current session branch")) }
+        return null
+    }
+
+    private suspend fun fetchSlashCommands(id: String?) {
+        _state.update { it.copy(slashCommandsLoading = true) }
+        val commands = try {
+            id?.let { api.command(it, buildJsonObject { put("type", "get_commands") }).asObj() }
+                ?.arr("commands").orEmpty()
+                .mapNotNull(::slashCommandOf)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList() // as on the web: the palette falls back to the built-ins
+        }
+        _state.update { it.copy(slashCommands = commands, slashCommandsLoading = false) }
+    }
+
+    /** Web: readCompactResult plus the result line above the composer, cleared after 6 s. */
+    private fun showCompactResult(result: JsonObject?, reason: String) {
+        result ?: return
+        val before = result.double("tokensBefore")?.toLong() ?: return
+        val after = result.double("estimatedTokensAfter")?.toLong() ?: return
+        val label = if (reason.isNotEmpty() && reason != "manual") reason.replaceFirstChar { it.uppercaseChar() } else "Compacted"
+        val text = "$label ${tokenCount(before)} -> ${tokenCount(after)} tokens (${tokenCount(maxOf(0, before - after))} saved)"
+        compactResultJob?.cancel()
+        _state.update { it.copy(compactResult = text) }
+        compactResultJob = viewModelScope.launch {
+            delay(6_000)
+            _state.update { it.copy(compactResult = null) }
+        }
+    }
+
+    /** Web: ChatInput's formatTokenCount. */
+    private fun tokenCount(tokens: Long): String = when {
+        tokens >= 1_000_000 -> String.format(Locale.US, "%.1fM", tokens / 1_000_000.0)
+        tokens >= 1_000 -> "${(tokens / 1_000.0).roundToLong()}k"
+        else -> tokens.toString()
     }
 
     private fun slashCommandOf(element: JsonElement): SlashCommand? {
@@ -621,7 +743,7 @@ class ChatViewModel(
                     title = info?.let { titleOf(it) } ?: state.title,
                     model = context?.obj("model")?.let { modelRef(it, "modelId") } ?: state.model,
                     thinkingLevel = context?.str("thinkingLevel") ?: state.thinkingLevel,
-                    stats = parseStats(body) ?: state.stats,
+                    stats = body.obj("stats")?.let { parseStats(it, body.long("totalActiveMs")) } ?: state.stats,
                 )
             }
             publishMessages()
@@ -632,8 +754,7 @@ class ChatViewModel(
         }
     }
 
-    private fun parseStats(body: JsonObject): SessionStats? {
-        val stats = body.obj("stats") ?: return null
+    private fun parseStats(stats: JsonObject, activeMs: Long?): SessionStats {
         val tokens = stats.obj("tokens")
         return SessionStats(
             userMessages = stats.int("userMessages") ?: 0,
@@ -645,7 +766,7 @@ class ChatViewModel(
             cacheWrite = tokens?.long("cacheWrite") ?: 0,
             totalTokens = tokens?.long("total") ?: 0,
             cost = stats.double("cost") ?: 0.0,
-            activeMs = body.long("totalActiveMs") ?: 0,
+            activeMs = activeMs ?: 0,
         )
     }
 
@@ -913,11 +1034,18 @@ class ChatViewModel(
                 "Retrying (${event.int("attempt") ?: "?"}/${event.int("maxAttempts") ?: "?"}): ${event.str("errorMessage").orEmpty()}",
             )
             "auto_retry_end" -> setStatus("Waiting for model…")
-            "compaction_start", "auto_compaction_start" -> setStatus("Compacting context…")
+            "compaction_start", "auto_compaction_start" -> {
+                _state.update { it.copy(compactResult = null) }
+                setStatus("Compacting context…")
+            }
             "compaction_end", "auto_compaction_end" -> {
                 val error = event.str("errorMessage")
-                if (error != null) _state.update { it.copy(error = "Compaction failed: $error") }
-                else if (event.bool("aborted") != true) viewModelScope.launch { refreshSession(id) }
+                if (error != null) {
+                    _state.update { it.copy(error = "Compaction failed: $error") }
+                } else if (event.bool("aborted") != true) {
+                    showCompactResult(event.obj("result"), event.str("reason") ?: "auto")
+                    viewModelScope.launch { refreshSession(id) }
+                }
                 setStatus("Waiting for model…")
             }
             "extension_ui_request" -> onExtensionRequest(event)

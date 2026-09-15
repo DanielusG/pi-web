@@ -18,6 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -73,6 +76,8 @@ private fun chatRoute(id: String?, cwd: String): String =
 private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) {
     val nav = rememberNavController()
     val start = if (app.api.config.isConfigured) "sessions" else "settings"
+    // A notice for the next chat screen, when a chat replaces itself (/clone).
+    var carriedNotice by remember { mutableStateOf<String?>(null) }
 
     val request by openRequests.collectAsState()
     LaunchedEffect(request) {
@@ -117,7 +122,21 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>) 
             val id = entry.arguments?.getString("id")
             val cwd = entry.arguments?.getString("cwd").orEmpty()
             val vm = viewModel { ChatViewModel(app.api, id, cwd, app::onRunActive) }
-            ChatScreen(vm, onBack = { nav.popBackStack() })
+            LaunchedEffect(vm) {
+                carriedNotice?.let(vm::showNotice)
+                carriedNotice = null
+            }
+            ChatScreen(
+                vm,
+                onBack = { nav.popBackStack() },
+                onOpenSession = { target ->
+                    // Replace this chat (web: /clone switches the active session).
+                    carriedNotice = target.notice
+                    nav.navigate(chatRoute(target.sessionId, target.cwd)) {
+                        popUpTo(entry.destination.id) { inclusive = true }
+                    }
+                },
+            )
         }
     }
 }
