@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -615,7 +616,7 @@ private fun Composer(
                     val modelName = model?.let { ref ->
                         state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
                     } ?: "Model"
-                    GhostChip(modelName, onClick = onModels)
+                    GhostChip(modelName, onClick = onModels, style = MaterialTheme.typography.labelSmall)
                     ThinkingChip(state, onThinking)
                 }
                 val stopping = state.running && draft.isBlank()
@@ -649,7 +650,7 @@ private fun Composer(
 }
 
 @Composable
-private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = MaterialTheme.typography.labelMedium, modifier: Modifier = Modifier) {
     val t = Pi.tokens
     Row(
         modifier
@@ -658,7 +659,7 @@ private fun GhostChip(label: String, onClick: () -> Unit, modifier: Modifier = M
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = t.textSecondary, maxLines = 1)
+        Text(label, style = style, color = t.textSecondary, maxLines = 1)
         Spacer(Modifier.width(3.dp))
         Icon(PiIcons.ChevronDown, null, tint = t.textTertiary, modifier = Modifier.size(13.dp))
     }
