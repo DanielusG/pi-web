@@ -81,7 +81,7 @@ import app.pimobile.data.FileKind
 import app.pimobile.data.FilePaths
 import app.pimobile.ui.baseName
 import app.pimobile.ui.chat.DiffView
-import app.pimobile.ui.markdown.Markdown
+import app.pimobile.ui.markdown.LazyMarkdown
 import app.pimobile.ui.shortPath
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
@@ -259,16 +259,13 @@ fun FileViewerScreen(
                     FileKind.Text -> when {
                         state.mode == ViewMode.Preview && FilePaths.isHtml(vm.path) ->
                             HtmlDocument(state.content, Modifier.fillMaxSize(), scripts = true)
-                        state.mode == ViewMode.Preview -> Column(
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 20.dp, vertical = 16.dp),
-                        ) {
+                        state.mode == ViewMode.Preview -> {
                             val directory = FilePaths.parent(vm.path)
                             SelectionContainer {
-                                Markdown(
+                                LazyMarkdown(
                                     state.content,
+                                    Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                                     baseDir = directory,
                                     relativeRoot = state.root.ifEmpty { directory },
                                     onOpenFile = onOpenFile,
