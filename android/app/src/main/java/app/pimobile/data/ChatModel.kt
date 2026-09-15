@@ -25,6 +25,9 @@ data class ToolResult(
     /** Tool-specific payload, e.g. edit's `{diff, patch, firstChangedLine}`. */
     val details: JsonObject? = null,
     val timestamp: Long? = null,
+    val entryId: String? = null,
+    /** Order in the loaded history, to find the latest result of a message. */
+    val position: Int = 0,
 )
 
 sealed interface ChatItem {
@@ -33,8 +36,13 @@ sealed interface ChatItem {
     data class User(
         override val key: String,
         val text: String,
-        val imageCount: Int,
+        val images: List<ImagePayload>,
         val pending: Boolean,
+        /** `/skill:<name> [args]` when [text] is a skill expansion, shown collapsed as on the web. */
+        val command: String? = null,
+        /** Edit from here targets the message itself: the SDK moves the leaf to its parent (none for the first). */
+        val entryId: String? = null,
+        val timestamp: Long? = null,
     ) : ChatItem
 
     data class Assistant(
@@ -76,8 +84,20 @@ object Messages {
         else -> ""
     }
 
+    /** User input as typed: a skill expansion reads as its `/skill:` command. */
+    fun userText(content: JsonElement?): String = SlashDisplay.display(contentText(content))
+
     private fun imageCount(content: JsonElement?): Int =
         (content as? JsonArray)?.count { (it as? JsonObject)?.type == "image" } ?: 0
+
+    /** Base64 image blocks, in both the flat pi-ai `{data, mimeType}` and nested `{source}` spellings. */
+    fun images(content: JsonElement?): List<ImagePayload> =
+        (content as? JsonArray).orEmpty().mapNotNull { element ->
+            val block = (element as? JsonObject)?.takeIf { it.type == "image" } ?: return@mapNotNull null
+            val source = block.obj("source")?.takeIf { it.type == "base64" }
+            val data = source?.str("data") ?: block.str("data") ?: return@mapNotNull null
+            ImagePayload(data, source?.str("media_type") ?: block.str("mimeType") ?: "image/png")
+        }
 
     /**
      * Tool calls arrive as `{toolCallId, toolName, input}` from session history
@@ -103,7 +123,7 @@ object Messages {
     }
 
     fun toolResults(messages: List<LoadedMessage>): Map<String, ToolResult> = buildMap {
-        for (message in messages) {
+        for ((index, message) in messages.withIndex()) {
             val json = message.json
             if (json.str("role") != "toolResult") continue
             val id = json.str("toolCallId") ?: continue
@@ -115,6 +135,8 @@ object Messages {
                     imageCount = imageCount(json["content"]),
                     details = json.obj("details"),
                     timestamp = json.long("timestamp"),
+                    entryId = message.entryId,
+                    position = index,
                 ),
             )
         }
@@ -124,12 +146,17 @@ object Messages {
     fun item(message: LoadedMessage): ChatItem? {
         val json = message.json
         return when (json.str("role")) {
-            "user" -> ChatItem.User(
-                message.key,
-                contentText(json["content"]),
-                imageCount(json["content"]),
-                message.pending,
-            )
+            "user" -> contentText(json["content"]).let { text ->
+                ChatItem.User(
+                    message.key,
+                    text,
+                    images(json["content"]),
+                    message.pending,
+                    SlashDisplay.skillExpansionToCommand(text),
+                    entryId = message.entryId,
+                    timestamp = json.long("timestamp"),
+                )
+            }
             "assistant" -> ChatItem.Assistant(
                 key = message.key,
                 entryId = message.entryId,

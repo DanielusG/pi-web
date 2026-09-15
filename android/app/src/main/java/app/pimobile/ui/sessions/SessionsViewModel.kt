@@ -3,6 +3,7 @@ package app.pimobile.ui.sessions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pimobile.data.PiApi
+import app.pimobile.data.SlashDisplay
 import app.pimobile.data.arr
 import app.pimobile.data.asObj
 import app.pimobile.data.int
@@ -149,7 +150,7 @@ class SessionsViewModel(
     }
 
     private fun toRow(json: JsonObject): SessionRow {
-        val first = json.str("firstMessage")?.takeUnless { it == "(no messages)" }
+        val first = json.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)
         return SessionRow(
             id = json.str("id").orEmpty(),
             title = json.str("name")?.takeIf { it.isNotBlank() } ?: first ?: "New session",

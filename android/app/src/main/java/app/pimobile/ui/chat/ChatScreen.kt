@@ -3,6 +3,9 @@
 package app.pimobile.ui.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -40,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,36 +61,53 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.FilePaths
+import app.pimobile.data.ImageAttachments
+import app.pimobile.data.ToolResult
 import app.pimobile.notify.AppVisibility
 import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
@@ -111,13 +132,28 @@ import kotlin.math.roundToInt
 private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
 
 @Composable
-fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
+fun ChatScreen(
+    vm: ChatViewModel,
+    onBack: () -> Unit,
+    onOpenSession: (OpenSession) -> Unit = {},
+    onOpenFiles: () -> Unit = {},
+    onOpenFile: (path: String, diff: Boolean) -> Unit = { _, _ -> },
+    /** A mention from the file screens, inserted at the cursor. */
+    pendingInsert: String? = null,
+    onInsertConsumed: () -> Unit = {},
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
-    var draft by rememberSaveable { mutableStateOf("") }
+    // A TextFieldValue, so inserting a slash command can put the cursor after it.
+    var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var showModels by remember { mutableStateOf(false) }
+    // System photo picker: no storage permission; falls back to the document picker on old devices.
+    val resolver = LocalContext.current.applicationContext.contentResolver
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(ImageAttachments.MAX_IMAGES),
+    ) { uris -> vm.addImages(resolver, uris) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
@@ -150,34 +186,116 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
             vm.clearNotice()
         }
     }
+    val clipboard = LocalClipboardManager.current
+    LaunchedEffect(state.clipboard) {
+        state.clipboard?.let {
+            clipboard.setText(AnnotatedString(it))
+            vm.consumeClipboard()
+        }
+    }
+    LaunchedEffect(state.openSession) {
+        state.openSession?.let {
+            vm.consumeOpenSession()
+            onOpenSession(it)
+        }
+    }
     LaunchedEffect(state.restoredDraft) {
         state.restoredDraft?.let {
-            if (draft.isBlank()) draft = it
+            if (draft.text.isBlank()) draft = TextFieldValue(it, TextRange(it.length))
             vm.consumeRestoredDraft()
         }
     }
-
-    // Follow the bottom unless the user scrolled up to read.
-    var follow by remember { mutableStateOf(true) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
-            if (!scrolling) follow = !listState.canScrollForward
+    LaunchedEffect(state.editDraft) {
+        state.editDraft?.let {
+            draft = TextFieldValue(it, TextRange(it.length))
+            vm.consumeEditDraft()
         }
     }
-    val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
-    val rowCount = listOf(state.loading, state.hasMore, showEmpty, state.streaming != null).count { it } +
-        state.items.size + 1
-    val streamSize = state.streaming?.blocks?.sumOf { block ->
-        when (block) {
-            is Block.Text -> block.text.length
-            is Block.Thinking -> block.text.length
-            is Block.ToolCall -> block.rawInput.length + 1
-            is Block.Image -> 1
+    // Edit from here rewinds the session, so a confirmation guards it.
+    var editRequest by remember { mutableStateOf<EditRequest?>(null) }
+    val canNavigate = !state.running && !state.commandPending
+    var selectedToolId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(canNavigate) { if (!canNavigate) selectedToolId = null }
+    var showTree by remember { mutableStateOf(false) }
+    LaunchedEffect(state.openTree) {
+        if (state.openTree) {
+            showTree = true
+            vm.consumeTreeRequest()
         }
-    } ?: 0
-    val liveOutputSize = state.liveTools.values.sumOf { it.output.length }
-    LaunchedEffect(rowCount, streamSize, liveOutputSize, state.toolResults.size) {
-        if (follow) listState.scrollToItem(rowCount - 1)
+    }
+    LaunchedEffect(pendingInsert) {
+        pendingInsert?.let {
+            draft = insertAtCursor(draft, it)
+            onInsertConsumed()
+        }
+    }
+    val writtenFiles = remember(state.items, state.toolResults, state.cwd) {
+        turnWrittenFiles(state.items, state.toolResults, state.cwd)
+    }
+
+    // Follow the bottom unless the user scrolled up to read.
+    val follow = rememberBottomFollow(listState)
+    val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
+
+    // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
+    // the palette until the query changes, like Escape on the web.
+    val slashQuery = slashQuery(draft.text)
+    var slashDismissed by remember { mutableStateOf(false) }
+    var slashActive by remember { mutableIntStateOf(0) }
+    LaunchedEffect(slashQuery) {
+        slashDismissed = false
+        slashActive = 0
+    }
+    LaunchedEffect(slashQuery != null) {
+        if (slashQuery != null) vm.loadSlashCommands()
+    }
+    val slashMenuOpen = slashQuery != null && !slashDismissed && state.dialog == null
+    LaunchedEffect(slashMenuOpen) {
+        if (slashMenuOpen) vm.loadSkillDormancy()
+    }
+    val slashMatches = remember(slashQuery, state.running, state.slashCommands) {
+        slashQuery?.let { filterSlashCommands(it, state.running, state.slashCommands) }.orEmpty()
+    }
+    val slashGroups = remember(slashMatches, state.skillDormancy) { slashCommandLayout(slashMatches, state.skillDormancy) }
+    val slashDisplayed = remember(slashGroups) { slashGroups.flatMap { it.commands } }
+    val activeIndex = slashActive.coerceIn(0, maxOf(0, slashDisplayed.lastIndex))
+    BackHandler(enabled = slashMenuOpen) { slashDismissed = true }
+
+    fun applySlashCommand(command: SlashCommand) {
+        val text = "/${command.name} "
+        draft = TextFieldValue(text, TextRange(text.length))
+    }
+
+    // Web: handleSend. A built-in runs here and clears the input only when it
+    // succeeded and the input still holds what was submitted.
+    fun submit() {
+        val message = draft.text.trim()
+        val handled = vm.runBuiltinCommand(message) { succeeded ->
+            if (succeeded && draft.text.trim() == message) draft = TextFieldValue()
+        }
+        if (handled) return
+        vm.send(draft.text)
+        draft = TextFieldValue()
+        follow.attach()
+    }
+
+    // Hardware keyboards: arrows move the highlight, Tab inserts it, Escape closes the palette.
+    val onComposerKey: (KeyEvent) -> Boolean = handler@{ event ->
+        if (!slashMenuOpen) return@handler false
+        val consumed = when (event.key) {
+            Key.DirectionDown, Key.DirectionRight, Key.DirectionUp, Key.DirectionLeft, Key.Escape -> true
+            Key.Tab -> slashDisplayed.isNotEmpty()
+            else -> false
+        }
+        if (consumed && event.type == KeyEventType.KeyDown) {
+            when (event.key) {
+                Key.DirectionDown, Key.DirectionRight -> slashActive = minOf(slashDisplayed.lastIndex, activeIndex + 1)
+                Key.DirectionUp, Key.DirectionLeft -> slashActive = maxOf(0, activeIndex - 1)
+                Key.Escape -> slashDismissed = true
+                Key.Tab -> applySlashCommand(slashDisplayed[activeIndex])
+            }
+        }
+        consumed
     }
 
     Scaffold(
@@ -187,6 +305,8 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 state = state,
                 scrolled = listState.canScrollBackward,
                 onBack = onBack,
+                onStatsOpened = vm::consumeStatsRequest,
+                onOpenFiles = onOpenFiles,
             )
         },
         snackbarHost = {
@@ -209,23 +329,46 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     state = state,
                     draft = draft,
                     onDraft = { draft = it },
-                    onSend = {
-                        vm.send(draft)
-                        draft = ""
-                        follow = true
+                    onSend = { submit() },
+                    onKey = onComposerKey,
+                    slashMenu = {
+                        if (slashMenuOpen) {
+                            SlashCommandMenu(
+                                groups = slashGroups,
+                                matchCount = slashMatches.size,
+                                filtering = !slashQuery.isNullOrEmpty(),
+                                loading = state.slashCommandsLoading,
+                                dormancy = state.skillDormancy,
+                                active = activeIndex,
+                                onSelect = { applySlashCommand(it) },
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
                     },
                     onStop = vm::abort,
                     onModels = { showModels = true },
                     onThinking = vm::selectThinking,
+                    onAttach = {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onRemoveImage = vm::removeImage,
                 )
             }
         },
+        floatingActionButton = {
+            JumpToBottomButton(
+                visible = !follow.attached && listState.canScrollForward,
+                onClick = follow::scrollToEnd,
+            )
+        },
+        floatingActionButtonPosition = FabPosition.Center,
     ) { padding ->
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .nestedScroll(follow.connection),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -254,7 +397,12 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
             items(state.items, key = { it.key }, contentType = { it::class.simpleName }) { item ->
                 when (item) {
-                    is ChatItem.User -> UserBubble(item)
+                    is ChatItem.User -> UserBubble(
+                        item,
+                        onEditFromHere = item.entryId?.takeIf { canNavigate }?.let { id ->
+                            { editRequest = EditRequest(id, item.command ?: item.text) }
+                        },
+                    )
                     is ChatItem.Assistant -> AssistantMessage(
                         item = item,
                         toolResults = state.toolResults,
@@ -264,6 +412,19 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                         onLoadThinking = vm::loadFullThinking,
                         editPreviews = state.editPreviews,
                         onPreview = vm::loadEditPreview,
+                        cwd = state.cwd,
+                        writtenFiles = writtenFiles[item.key].orEmpty(),
+                        onOpenFile = onOpenFile,
+                        onEditFromHere = if (canNavigate) {
+                            { id ->
+                                selectedToolId = null
+                                editRequest = EditRequest(id, draft = null)
+                            }
+                        } else null,
+                        selectedToolId = selectedToolId,
+                        onToolLongPress = if (canNavigate) {
+                            { id -> selectedToolId = if (selectedToolId == id) null else id }
+                        } else null,
                     )
                     is ChatItem.Bash -> BashCard(item)
                     is ChatItem.Notice -> NoticeRow(item)
@@ -280,11 +441,36 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
                         onLoadThinking = vm::loadFullThinking,
                         editPreviews = state.editPreviews,
                         onPreview = vm::loadEditPreview,
+                        cwd = state.cwd,
+                        onOpenFile = onOpenFile,
                     )
                 }
             }
             item("bottom") { Spacer(Modifier.height(4.dp)) }
         }
+    }
+
+    editRequest?.let { request ->
+        EditFromHereDialog(
+            restoresText = request.draft != null,
+            onDismiss = { editRequest = null },
+            onConfirm = {
+                editRequest = null
+                vm.editFromHere(request.targetId, request.draft)
+            },
+        )
+    }
+
+    if (showTree) {
+        TreeSheet(
+            tree = state.tree,
+            leafId = state.leafId,
+            onDismiss = { showTree = false },
+            onSelect = {
+                showTree = false
+                vm.selectBranch(it)
+            },
+        )
     }
 
     if (showModels) {
@@ -295,9 +481,95 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit) {
     }
 }
 
+/** [draft] replaces the composer content once the session has moved; null leaves the composer alone. */
+private data class EditRequest(val targetId: String, val draft: String?)
+
 @Composable
-private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit) {
+private fun EditFromHereDialog(restoresText: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     val t = Pi.tokens
+    val shape = RoundedCornerShape(20.dp)
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .clip(shape)
+                .background(t.background)
+                .border(1.dp, t.border, shape)
+                .padding(20.dp),
+        ) {
+            Text("Edit from here?", style = MaterialTheme.typography.titleMedium, color = t.text)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                (
+                    if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
+                    else "The session goes back to this point. "
+                    ) + "Later messages stay saved as a branch you can reopen with /tree.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = t.textSecondary,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                PiSecondaryButton("Cancel", onClick = onDismiss)
+                Spacer(Modifier.width(8.dp))
+                PiPrimaryButton("Edit from here", onClick = onConfirm)
+            }
+        }
+    }
+}
+
+/** Web: ChatInput insertText — at the cursor, separated by a space from the text before it. */
+private fun insertAtCursor(value: TextFieldValue, text: String): TextFieldValue {
+    val start = value.selection.min.coerceIn(0, value.text.length)
+    val end = value.selection.max.coerceIn(start, value.text.length)
+    val before = value.text.substring(0, start)
+    val inserted = if (before.isNotEmpty() && !before.last().isWhitespace()) " $text" else text
+    return TextFieldValue(before + inserted + value.text.substring(end), TextRange(before.length + inserted.length))
+}
+
+/**
+ * Web: extractTurnWrittenFiles per turn, keyed by the turn's last assistant item.
+ * A file counts only when its write/edit call returned without error.
+ */
+private fun turnWrittenFiles(items: List<ChatItem>, results: Map<String, ToolResult>, cwd: String): Map<String, List<String>> {
+    val byItem = HashMap<String, List<String>>()
+    var files = LinkedHashSet<String>()
+    var lastAssistant: String? = null
+    fun endTurn() {
+        val key = lastAssistant
+        if (key != null && files.isNotEmpty()) byItem[key] = files.toList()
+        files = LinkedHashSet()
+        lastAssistant = null
+    }
+    for (item in items) {
+        when (item) {
+            is ChatItem.User -> endTurn()
+            is ChatItem.Assistant -> {
+                lastAssistant = item.key
+                for (block in item.blocks) {
+                    if (block !is Block.ToolCall || !(isWriteToolName(block.name) || isEditToolName(block.name))) continue
+                    val result = results[block.id] ?: continue
+                    if (result.isError) continue
+                    FilePaths.resolveToolPath(toolInputPath(block.input), cwd.ifEmpty { null })?.let(files::add)
+                }
+            }
+            else -> Unit
+        }
+    }
+    endTurn()
+    return byItem
+}
+
+@Composable
+private fun ChatTopBar(
+    state: ChatUiState,
+    scrolled: Boolean,
+    onBack: () -> Unit,
+    onStatsOpened: () -> Unit,
+    onOpenFiles: () -> Unit,
+) {
+    val t = Pi.tokens
+    // The idle runtime the slash palette creates (ensure_session) is still a new chat.
+    val fresh = state.sessionId == null ||
+        (!state.loading && !state.running && state.items.isEmpty() && state.streaming == null)
     Column(Modifier.background(t.background)) {
         TopAppBar(
             colors = TopAppBarDefaults.topAppBarColors(
@@ -312,7 +584,7 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
             title = {
                 Column {
                     Text(
-                        state.title.ifBlank { if (state.sessionId == null) "New session" else "Session" },
+                        state.title.ifBlank { if (fresh) "New session" else "Session" },
                         style = MaterialTheme.typography.titleMedium,
                         color = t.text,
                         maxLines = 1,
@@ -329,6 +601,7 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                         val (dot, label) = when {
                             state.link == LinkState.Reconnecting -> t.danger to "Reconnecting…"
                             state.running -> t.success to (state.status ?: "Working…")
+                            state.commandStatus != null -> t.success to state.commandStatus
                             else -> null to null
                         }
                         if (dot != null && label != null) {
@@ -347,7 +620,13 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
                 }
             },
             actions = {
-                if (state.sessionId != null) ContextIndicator(state)
+                if (state.cwd.isNotBlank()) {
+                    IconButton(onClick = onOpenFiles) {
+                        Icon(PiIcons.Folder, contentDescription = "Files", tint = t.textSecondary, modifier = Modifier.size(20.dp))
+                    }
+                }
+                // /session in a new chat still opens the stats it fetched.
+                if (!fresh || state.stats != null) ContextIndicator(state, onStatsOpened)
             },
         )
         HorizontalDivider(color = if (scrolled) t.border else Color.Transparent)
@@ -355,9 +634,15 @@ private fun ChatTopBar(state: ChatUiState, scrolled: Boolean, onBack: () -> Unit
 }
 
 @Composable
-private fun ContextIndicator(state: ChatUiState) {
+private fun ContextIndicator(state: ChatUiState, onStatsOpened: () -> Unit) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
+    LaunchedEffect(state.openStats) {
+        if (state.openStats) {
+            open = true
+            onStatsOpened()
+        }
+    }
     val percent = state.contextPercent
     Box(Modifier.padding(end = 6.dp)) {
         Row(
@@ -538,24 +823,38 @@ private fun EmptyChat(cwd: String) {
 @Composable
 private fun Composer(
     state: ChatUiState,
-    draft: String,
-    onDraft: (String) -> Unit,
+    draft: TextFieldValue,
+    onDraft: (TextFieldValue) -> Unit,
     onSend: () -> Unit,
+    onKey: (KeyEvent) -> Boolean,
+    slashMenu: @Composable () -> Unit,
     onStop: () -> Unit,
     onModels: () -> Unit,
     onThinking: (String) -> Unit,
+    onAttach: () -> Unit,
+    onRemoveImage: (Long) -> Unit,
 ) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(26.dp)
+    val hasImages = state.attachments.isNotEmpty()
+    // Web: the composer fieldset is disabled and dimmed while a built-in command runs.
+    val pending = state.commandPending
+    val model = state.model
+    val modelName = model?.let { ref ->
+        state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
+    }
+    var imageWarningDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(hasImages) { if (!hasImages) imageWarningDismissed = false }
     Column(
         Modifier
             .fillMaxWidth()
             .background(t.background)
             .navigationBarsPadding()
             .imePadding()
-            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
+            .alpha(if (pending) 0.5f else 1f),
     ) {
         if (state.queued.isNotEmpty()) {
             Text(
@@ -567,6 +866,11 @@ private fun Composer(
                 modifier = Modifier.padding(start = 10.dp, bottom = 8.dp),
             )
         }
+        if (hasImages && !state.modelSupportsImages && !imageWarningDismissed) {
+            ImageWarningBanner(modelName.orEmpty(), onClose = { imageWarningDismissed = true })
+        }
+        state.compactResult?.let { CompactResultLine(it) }
+        slashMenu()
         Column(
             Modifier
                 .fillMaxWidth()
@@ -575,20 +879,25 @@ private fun Composer(
                 .border(1.dp, if (focused) t.borderStrong else t.border, shape)
                 .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 8.dp),
         ) {
+            if (hasImages || state.pendingImages > 0) {
+                AttachmentStrip(state.attachments, state.pendingImages, onRemoveImage)
+            }
             BasicTextField(
                 value = draft,
                 onValueChange = onDraft,
+                enabled = !pending,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(end = 10.dp)
-                    .onFocusChanged { focused = it.isFocused },
+                    .onFocusChanged { focused = it.isFocused }
+                    .onPreviewKeyEvent(onKey),
                 textStyle = typography.bodyLarge.copy(color = t.text),
                 cursorBrush = SolidColor(t.text),
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 decorationBox = { field ->
                     Box {
-                        if (draft.isEmpty()) {
+                        if (draft.text.isEmpty()) {
                             Text(
                                 if (state.running) "Steer the agent…" else "Ask pi anything…",
                                 style = typography.bodyLarge,
@@ -612,15 +921,27 @@ private fun Composer(
                         .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val model = state.model
-                    val modelName = model?.let { ref ->
-                        state.models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.name ?: ref.modelId
-                    } ?: "Model"
-                    GhostChip(modelName, onClick = onModels, style = MaterialTheme.typography.labelSmall)
-                    ThinkingChip(state, onThinking)
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(enabled = !pending, onClick = onAttach),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            PiIcons.Image,
+                            contentDescription = "Attach image",
+                            tint = if (hasImages) t.accent else t.textSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    GhostChip(modelName ?: "Model", onClick = onModels, style = MaterialTheme.typography.labelSmall, enabled = !pending)
+                    ThinkingChip(state, onThinking, enabled = !pending)
                 }
-                val stopping = state.running && draft.isBlank()
-                val enabled = stopping || draft.isNotBlank()
+                val hasContent = draft.text.isNotBlank() || hasImages
+                val stopping = state.running && !hasContent
+                // Wait for picked images to finish reading, so none is silently left behind.
+                val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0))
                 Box(
                     Modifier
                         .size(36.dp)
@@ -650,12 +971,32 @@ private fun Composer(
 }
 
 @Composable
-private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = MaterialTheme.typography.labelMedium, modifier: Modifier = Modifier) {
+private fun CompactResultLine(text: String) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(6.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(shape)
+            .background(t.success.copy(alpha = 0.08f))
+            .border(1.dp, t.success.copy(alpha = 0.24f), shape)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PiIcons.Check, contentDescription = null, tint = t.success, modifier = Modifier.size(11.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp), color = t.success)
+    }
+}
+
+@Composable
+private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = MaterialTheme.typography.labelMedium, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val t = Pi.tokens
     Row(
         modifier
             .clip(RoundedCornerShape(50))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -666,12 +1007,12 @@ private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = Mat
 }
 
 @Composable
-private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit) {
+private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabled: Boolean = true) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
     val levels = state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
     Box {
-        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true })
+        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true }, enabled = enabled)
         DropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },

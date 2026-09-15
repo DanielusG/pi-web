@@ -1,16 +1,25 @@
 package app.pimobile.ui.chat
 
+import android.content.ContentResolver
+import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pimobile.data.ApiException
+import app.pimobile.data.AttachedImage
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.ImageAttachments
+import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
 import app.pimobile.data.Messages
 import app.pimobile.data.PiApi
+import app.pimobile.data.SessionTree
+import app.pimobile.data.SlashDisplay
 import app.pimobile.data.StreamingAssembler
 import app.pimobile.data.ToolResult
+import app.pimobile.data.TreeNode
 import app.pimobile.data.arr
 import app.pimobile.data.asObj
 import app.pimobile.data.bool
@@ -22,6 +31,7 @@ import app.pimobile.data.str
 import app.pimobile.data.strings
 import app.pimobile.data.type
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -32,14 +42,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.io.IOException
+import java.util.Locale
+import kotlin.math.roundToLong
 
 enum class LinkState { Idle, Connecting, Live, Reconnecting }
 
@@ -47,7 +65,13 @@ data class ModelRef(val provider: String, val modelId: String) {
     val key: String get() = "$provider:$modelId"
 }
 
-data class ModelOption(val provider: String, val id: String, val name: String) {
+data class ModelOption(
+    val provider: String,
+    val id: String,
+    val name: String,
+    /** Input modalities from /api/models, e.g. ["text", "image"]; null when unknown. */
+    val input: List<String>? = null,
+) {
     val key: String get() = "$provider:$id"
 }
 
@@ -70,6 +94,9 @@ data class ExtensionDialog(
     val placeholder: String?,
     val expiresAt: Long? = null,
 )
+
+/** Another session the screen should switch to, e.g. the result of /clone. */
+data class OpenSession(val sessionId: String, val cwd: String, val notice: String?)
 
 data class SessionStats(
     val userMessages: Int,
@@ -113,6 +140,9 @@ data class ChatUiState(
     val contextTokens: Long? = null,
     val contextWindow: Long? = null,
     val stats: SessionStats? = null,
+    /** Web: SessionData tree/leafId — the projected session tree and the active leaf, for /tree. */
+    val tree: List<TreeNode> = emptyList(),
+    val leafId: String? = null,
     val fullThinking: Map<String, String> = emptyMap(),
     val editPreviews: Map<String, EditPreview> = emptyMap(),
     val queued: List<String> = emptyList(),
@@ -120,7 +150,36 @@ data class ChatUiState(
     val error: String? = null,
     val notice: String? = null,
     val restoredDraft: String? = null,
-)
+    /** Edit from here: replaces the composer content, like the web's ChatInput replaceMessage. */
+    val editDraft: String? = null,
+    val attachments: List<AttachedImage> = emptyList(),
+    /** Picked images still being read and compressed. */
+    val pendingImages: Int = 0,
+    /** Extension, prompt and skill commands from `get_commands`; built-ins are local. */
+    val slashCommands: List<SlashCommand> = emptyList(),
+    val slashCommandsLoading: Boolean = false,
+    /** Skill name -> disable-model-invocation, from /api/skills. */
+    val skillDormancy: Map<String, Boolean> = emptyMap(),
+    /** A built-in slash command is in flight; the composer is disabled meanwhile. */
+    val commandPending: Boolean = false,
+    /** Title-bar status while a built-in runs outside an agent run, e.g. compaction. */
+    val commandStatus: String? = null,
+    /** Web: the compact result line above the composer, e.g. "Compacted 47k -> 12k tokens (35k saved)". */
+    val compactResult: String? = null,
+    /** One-shot requests from built-ins, consumed by the screen. */
+    val openStats: Boolean = false,
+    val openTree: Boolean = false,
+    val clipboard: String? = null,
+    val openSession: OpenSession? = null,
+) {
+    /** Web: modelSupportsImageInput — unknown modality info never warns. */
+    val modelSupportsImages: Boolean
+        get() {
+            val ref = model ?: return true
+            val input = models.firstOrNull { it.provider == ref.provider && it.id == ref.modelId }?.input ?: return true
+            return "image" in input
+        }
+}
 
 private val DEFAULT_TOOLS = listOf("read", "bash", "edit", "write")
 private const val STATE_POLL_MS = 15_000L
@@ -145,6 +204,8 @@ class ChatViewModel(
 
     private var messages: List<LoadedMessage> = emptyList()
     private var oldestEntryId: String? = null
+    private val sessionMutex = Mutex()
+    private var compactResultJob: Job? = null
     private var localCounter = 0
 
     private val assembler = StreamingAssembler()
@@ -180,7 +241,9 @@ class ChatViewModel(
 
     fun send(text: String) {
         val message = text.trim()
-        if (message.isEmpty()) return
+        val images = _state.value.attachments
+        if (message.isEmpty() && images.isEmpty()) return
+        _state.update { it.copy(attachments = emptyList()) }
         viewModelScope.launch {
             val steering = _state.value.running
             val optimistic = LoadedMessage(
@@ -188,28 +251,40 @@ class ChatViewModel(
                 entryId = null,
                 json = buildJsonObject {
                     put("role", "user")
-                    put("content", message)
+                    if (images.isEmpty()) {
+                        put("content", message)
+                    } else {
+                        putJsonArray("content") {
+                            if (message.isNotEmpty()) addJsonObject { put("type", "text"); put("text", message) }
+                            images.forEach { addJsonObject { putImage(it.payload) } }
+                        }
+                    }
                 },
                 pending = true,
             )
             if (!steering) {
                 messages = messages + optimistic
                 publishMessages()
-                if (_state.value.title.isBlank()) _state.update { it.copy(title = message.lineSequence().first().take(80)) }
+                if (_state.value.title.isBlank() && message.isNotEmpty()) {
+                    _state.update { it.copy(title = message.lineSequence().first().take(80)) }
+                }
                 promptPending = true
                 optimisticKey = optimistic.key
-                setRunning("Starting…")
+                setRunning(if (images.isEmpty() && message.startsWith("/")) "Running command…" else "Starting…")
             }
             lastSendAt = SystemClock.elapsedRealtime()
             var sessionId = _state.value.sessionId
             try {
-                if (sessionId == null) sessionId = createSession()
+                if (sessionId == null) sessionId = ensureSession()
                 ensureEvents(sessionId)
                 withTimeoutOrNull(60_000) { connected.first { it } }
                     ?: throw IOException("Could not open the event stream")
                 api.command(sessionId, buildJsonObject {
                     put("type", "prompt")
                     put("message", message)
+                    if (images.isNotEmpty()) {
+                        putJsonArray("images") { images.forEach { addJsonObject { putImage(it.payload) } } }
+                    }
                     if (steering) put("streamingBehavior", "steer")
                 })
                 if (steering) _state.update { it.copy(notice = "Steering message sent") }
@@ -226,7 +301,13 @@ class ChatViewModel(
                         optimisticKey = null
                         if (!sdkActive) markIdle()
                     }
-                    _state.update { it.copy(error = e.message ?: "Message not sent", restoredDraft = message) }
+                    _state.update {
+                        it.copy(
+                            error = e.message ?: "Message not sent",
+                            restoredDraft = message.ifEmpty { null },
+                            attachments = (images + it.attachments).take(ImageAttachments.MAX_IMAGES),
+                        )
+                    }
                 } else {
                     // Ambiguous failure: the prompt may be running. Ask the server.
                     _state.update { it.copy(error = "Connection problem: ${e.message}. Checking…") }
@@ -234,6 +315,45 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /** Reads picked images off the main thread; extras past the per-message limit are dropped, as on the web. */
+    fun addImages(resolver: ContentResolver, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val current = _state.value
+        val room = (ImageAttachments.MAX_IMAGES - current.attachments.size - current.pendingImages).coerceAtLeast(0)
+        val accepted = uris.take(room)
+        if (accepted.size < uris.size) {
+            _state.update { it.copy(notice = "A message can include at most ${ImageAttachments.MAX_IMAGES} images") }
+        }
+        if (accepted.isEmpty()) return
+        _state.update { it.copy(pendingImages = it.pendingImages + accepted.size) }
+        viewModelScope.launch {
+            val failures = mutableListOf<String>()
+            for (uri in accepted) {
+                val id = localCounter++.toLong()
+                val image = try {
+                    withContext(Dispatchers.IO) { ImageAttachments.load(resolver, uri, id) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failures += e.message ?: "Could not read the image"
+                    null
+                }
+                _state.update { state ->
+                    val added = image?.takeIf { state.attachments.size < ImageAttachments.MAX_IMAGES }
+                    state.copy(
+                        attachments = if (added != null) state.attachments + added else state.attachments,
+                        pendingImages = (state.pendingImages - 1).coerceAtLeast(0),
+                    )
+                }
+            }
+            failures.distinct().firstOrNull()?.let { message -> _state.update { it.copy(error = message) } }
+        }
+    }
+
+    fun removeImage(id: Long) = _state.update { state ->
+        state.copy(attachments = state.attachments.filterNot { it.id == id })
     }
 
     fun abort() {
@@ -370,13 +490,276 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Web: handleNavigate + onEditContent. The SDK moves the leaf to [targetEntryId], or to its
+     * parent for a user message, so the next prompt branches from there; [draft], when given,
+     * replaces the composer content.
+     */
+    fun editFromHere(targetEntryId: String, draft: String?) = navigate(targetEntryId) {
+        if (draft != null) _state.update { it.copy(editDraft = draft) }
+    }
+
+    /** /tree: continue from another branch (web: BranchNavigator onLeafChange). */
+    fun selectBranch(entryId: String) {
+        if (entryId == _state.value.leafId) {
+            _state.update { it.copy(notice = "Already at this point") }
+            return
+        }
+        navigate(entryId) { _state.update { it.copy(notice = "Navigated to selected point") } }
+    }
+
+    private fun navigate(targetEntryId: String, onNavigated: () -> Unit) {
+        val current = _state.value
+        val id = current.sessionId ?: return
+        if (current.running || current.commandPending) return
+        _state.update { it.copy(commandPending = true) }
+        viewModelScope.launch {
+            runCatchingApi {
+                val result = api.command(id, buildJsonObject {
+                    put("type", "navigate_tree")
+                    put("targetId", targetEntryId)
+                }).asObj()
+                if (result?.bool("cancelled") == true) {
+                    _state.update { it.copy(notice = "Navigation cancelled") }
+                } else {
+                    refreshSession(id)
+                    reconcile(id) // context usage follows the branch
+                    onNavigated()
+                }
+            }
+            _state.update { it.copy(commandPending = false) }
+        }
+    }
+
+    /** Web: loadSlashCommands. Commands come from the runtime, so a new chat gets an idle one (ensure_session). */
+    fun loadSlashCommands() {
+        _state.update { it.copy(slashCommandsLoading = true) }
+        viewModelScope.launch {
+            val id = try {
+                ensureSession()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            fetchSlashCommands(id)
+        }
+    }
+
+    /** Refetched each time the palette opens, so skill toggles show up; failures leave skills unannotated. */
+    fun loadSkillDormancy() {
+        val cwd = _state.value.cwd
+        if (cwd.isBlank()) return
+        _state.update { it.copy(skillDormancy = emptyMap()) }
+        viewModelScope.launch {
+            val dormancy = try {
+                api.get("/api/skills?cwd=${PiApi.encode(cwd)}").asObj()?.arr("skills").orEmpty()
+                    .mapNotNull { element ->
+                        val skill = element as? JsonObject ?: return@mapNotNull null
+                        val name = skill.str("name") ?: return@mapNotNull null
+                        name to (skill.bool("disableModelInvocation") == true)
+                    }
+                    .toMap()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            _state.update { it.copy(skillDormancy = dormancy) }
+        }
+    }
+
+    /**
+     * Web: handleBuiltinSlashCommand. Returns false when [text] is not a built-in
+     * this client runs, so the caller sends it as a prompt (extension, prompt and
+     * skill commands run on the server). [onSettled] reports whether it succeeded.
+     */
+    fun runBuiltinCommand(text: String, onSettled: (succeeded: Boolean) -> Unit): Boolean {
+        val current = _state.value
+        val command = builtinSlashCommand(text) ?: return false
+        // Images make it a prompt; while running, only streaming-safe built-ins run here.
+        if (current.attachments.isNotEmpty() || (current.running && !command.availableWhileStreaming)) return false
+        if (current.commandPending) return true
+        val args = text.trim().substringAfter("/${command.name}").trim()
+        _state.update { it.copy(commandPending = true) }
+        viewModelScope.launch {
+            var message: String? = null
+            var failure: String? = null
+            try {
+                val id = ensureSession()
+                message = when (command.name) {
+                    "compact" -> compact(id, args)
+                    "reload" -> reload(id)
+                    "name" -> nameSession(id, args)
+                    "session" -> openSessionStats(id)
+                    "copy" -> copyLastAssistantText(id)
+                    "clone" -> cloneSession(id)
+                    "tree" -> openTree(id)
+                    else -> throw IllegalStateException("/${command.name} is not supported")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = e.message ?: e.toString()
+            }
+            _state.update {
+                it.copy(
+                    commandPending = false,
+                    commandStatus = null,
+                    error = failure ?: it.error,
+                    notice = message ?: it.notice,
+                )
+            }
+            onSettled(failure == null)
+        }
+        return true
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
     fun consumeRestoredDraft() = _state.update { it.copy(restoredDraft = null) }
+    fun consumeEditDraft() = _state.update { it.copy(editDraft = null) }
+    fun showNotice(message: String) = _state.update { it.copy(notice = message) }
+    fun consumeStatsRequest() = _state.update { it.copy(openStats = false) }
+    fun consumeTreeRequest() = _state.update { it.copy(openTree = false) }
+    fun consumeClipboard() = _state.update { it.copy(clipboard = null) }
+    fun consumeOpenSession() = _state.update { it.copy(openSession = null) }
+
+    // endregion
+
+    // region slash commands
+
+    private suspend fun nameSession(id: String, name: String): String {
+        if (name.isEmpty()) throw IllegalArgumentException("Usage: /name <name>")
+        api.command(id, buildJsonObject {
+            put("type", "set_session_name")
+            put("name", name)
+        })
+        refreshSession(id)
+        return "Session renamed to $name"
+    }
+
+    private suspend fun compact(id: String, instructions: String): String {
+        _state.update { it.copy(commandStatus = "Compacting context…", compactResult = null) }
+        val result = api.command(id, buildJsonObject {
+            put("type", "compact")
+            if (instructions.isNotEmpty()) put("customInstructions", instructions)
+        }).asObj()
+        showCompactResult(result, "manual")
+        refreshSession(id)
+        reconcile(id) // context usage dropped
+        return "Compacted context"
+    }
+
+    private suspend fun reload(id: String): String {
+        api.command(id, buildJsonObject { put("type", "reload") })
+        refreshSession(id)
+        loadModels()
+        fetchSlashCommands(id)
+        return "Reloaded session resources"
+    }
+
+    /** Web: /session opens the stats panel; here that is the context indicator's details. */
+    private suspend fun openSessionStats(id: String): String? {
+        val stats = api.command(id, buildJsonObject { put("type", "get_session_stats") }).asObj()
+        _state.update { state ->
+            val usage = stats?.obj("contextUsage")
+            state.copy(
+                stats = stats?.let { parseStats(it, it.long("totalActiveMs")) } ?: state.stats,
+                contextPercent = usage?.double("percent") ?: state.contextPercent,
+                contextTokens = usage?.long("tokens") ?: state.contextTokens,
+                contextWindow = usage?.long("contextWindow") ?: state.contextWindow,
+                openStats = true,
+            )
+        }
+        return null // the panel is the feedback, as on the web
+    }
+
+    private suspend fun copyLastAssistantText(id: String): String? {
+        val text = api.command(id, buildJsonObject { put("type", "get_last_assistant_text") })
+            .asObj()?.str("text").orEmpty()
+        if (text.isEmpty()) throw IllegalStateException("No assistant message to copy")
+        _state.update { it.copy(clipboard = text) }
+        // Android 13+ confirms clipboard writes itself; a second confirmation is discouraged.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) null else "Copied last assistant message"
+    }
+
+    /** /tree: the branch sheet, over a freshly loaded tree. */
+    private suspend fun openTree(id: String): String? {
+        refreshSession(id)
+        _state.update { it.copy(openTree = true) }
+        return null // the sheet is the feedback
+    }
+
+    /** Clones up to the current leaf, then switches to the copy. */
+    private suspend fun cloneSession(id: String): String? {
+        if (_state.value.running) throw IllegalStateException("Cannot clone while the session is running")
+        val result = api.command(id, buildJsonObject { put("type", "clone") }).asObj()
+        val newId = result?.str("newSessionId")
+        if (result?.bool("cancelled") == true || newId == null) {
+            throw IllegalStateException("Cannot clone an empty or unsaved session")
+        }
+        // The notice travels with the switch: this screen is replaced right away.
+        _state.update { it.copy(openSession = OpenSession(newId, it.cwd, "Cloned current session branch")) }
+        return null
+    }
+
+    private suspend fun fetchSlashCommands(id: String?) {
+        _state.update { it.copy(slashCommandsLoading = true) }
+        val commands = try {
+            id?.let { api.command(it, buildJsonObject { put("type", "get_commands") }).asObj() }
+                ?.arr("commands").orEmpty()
+                .mapNotNull(::slashCommandOf)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList() // as on the web: the palette falls back to the built-ins
+        }
+        _state.update { it.copy(slashCommands = commands, slashCommandsLoading = false) }
+    }
+
+    /** Web: readCompactResult plus the result line above the composer, cleared after 6 s. */
+    private fun showCompactResult(result: JsonObject?, reason: String) {
+        result ?: return
+        val before = result.double("tokensBefore")?.toLong() ?: return
+        val after = result.double("estimatedTokensAfter")?.toLong() ?: return
+        val label = if (reason.isNotEmpty() && reason != "manual") reason.replaceFirstChar { it.uppercaseChar() } else "Compacted"
+        val text = "$label ${tokenCount(before)} -> ${tokenCount(after)} tokens (${tokenCount(maxOf(0, before - after))} saved)"
+        compactResultJob?.cancel()
+        _state.update { it.copy(compactResult = text) }
+        compactResultJob = viewModelScope.launch {
+            delay(6_000)
+            _state.update { it.copy(compactResult = null) }
+        }
+    }
+
+    /** Web: ChatInput's formatTokenCount. */
+    private fun tokenCount(tokens: Long): String = when {
+        tokens >= 1_000_000 -> String.format(Locale.US, "%.1fM", tokens / 1_000_000.0)
+        tokens >= 1_000 -> "${(tokens / 1_000.0).roundToLong()}k"
+        else -> tokens.toString()
+    }
+
+    private fun slashCommandOf(element: JsonElement): SlashCommand? {
+        val json = element as? JsonObject ?: return null
+        val name = json.str("name") ?: return null
+        val source = when (json.str("source")) {
+            "extension" -> SlashSource.Extension
+            "prompt" -> SlashSource.Prompt
+            "skill" -> SlashSource.Skill
+            else -> return null
+        }
+        return SlashCommand(name, json.str("description").orEmpty(), source)
+    }
 
     // endregion
 
     // region loading
+
+    /** The palette and a send can both need a runtime for a new chat: create it once. */
+    private suspend fun ensureSession(): String = sessionMutex.withLock {
+        _state.value.sessionId ?: createSession()
+    }
 
     private suspend fun createSession(): String {
         val current = _state.value
@@ -419,7 +802,9 @@ class ChatViewModel(
                     title = info?.let { titleOf(it) } ?: state.title,
                     model = context?.obj("model")?.let { modelRef(it, "modelId") } ?: state.model,
                     thinkingLevel = context?.str("thinkingLevel") ?: state.thinkingLevel,
-                    stats = parseStats(body) ?: state.stats,
+                    stats = body.obj("stats")?.let { parseStats(it, body.long("totalActiveMs")) } ?: state.stats,
+                    tree = SessionTree.parse(body.arr("tree")),
+                    leafId = body.str("leafId"),
                 )
             }
             publishMessages()
@@ -430,8 +815,7 @@ class ChatViewModel(
         }
     }
 
-    private fun parseStats(body: JsonObject): SessionStats? {
-        val stats = body.obj("stats") ?: return null
+    private fun parseStats(stats: JsonObject, activeMs: Long?): SessionStats {
         val tokens = stats.obj("tokens")
         return SessionStats(
             userMessages = stats.int("userMessages") ?: 0,
@@ -443,7 +827,7 @@ class ChatViewModel(
             cacheWrite = tokens?.long("cacheWrite") ?: 0,
             totalTokens = tokens?.long("total") ?: 0,
             cost = stats.double("cost") ?: 0.0,
-            activeMs = body.long("totalActiveMs") ?: 0,
+            activeMs = activeMs ?: 0,
         )
     }
 
@@ -465,7 +849,7 @@ class ChatViewModel(
                 val json = element as? JsonObject ?: return@mapNotNull null
                 val provider = json.str("provider") ?: return@mapNotNull null
                 val id = json.str("id") ?: return@mapNotNull null
-                ModelOption(provider, id, json.str("name") ?: id)
+                ModelOption(provider, id, json.str("name") ?: id, json.arr("input")?.strings())
             }
             val levels = body.obj("thinkingLevels")?.mapValues { (_, value) ->
                 (value as? kotlinx.serialization.json.JsonArray).strings()
@@ -712,11 +1096,18 @@ class ChatViewModel(
                 "Retrying (${event.int("attempt") ?: "?"}/${event.int("maxAttempts") ?: "?"}): ${event.str("errorMessage").orEmpty()}",
             )
             "auto_retry_end" -> setStatus("Waiting for model…")
-            "compaction_start", "auto_compaction_start" -> setStatus("Compacting context…")
+            "compaction_start", "auto_compaction_start" -> {
+                _state.update { it.copy(compactResult = null) }
+                setStatus("Compacting context…")
+            }
             "compaction_end", "auto_compaction_end" -> {
                 val error = event.str("errorMessage")
-                if (error != null) _state.update { it.copy(error = "Compaction failed: $error") }
-                else if (event.bool("aborted") != true) viewModelScope.launch { refreshSession(id) }
+                if (error != null) {
+                    _state.update { it.copy(error = "Compaction failed: $error") }
+                } else if (event.bool("aborted") != true) {
+                    showCompactResult(event.obj("result"), event.str("reason") ?: "auto")
+                    viewModelScope.launch { refreshSession(id) }
+                }
                 setStatus("Waiting for model…")
             }
             "extension_ui_request" -> onExtensionRequest(event)
@@ -827,8 +1218,14 @@ class ChatViewModel(
         return ModelRef(provider, id)
     }
 
+    private fun JsonObjectBuilder.putImage(image: ImagePayload) {
+        put("type", "image")
+        put("data", image.data)
+        put("mimeType", image.mimeType)
+    }
+
     private fun titleOf(info: JsonObject): String =
         info.str("name")?.takeIf { it.isNotBlank() }
-            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }
+            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)
             ?: "New session"
 }

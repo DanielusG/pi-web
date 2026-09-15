@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -20,11 +21,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.buffer
+import okio.sink
+import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+/** One server-sent event: its `event:` name ("message" when absent) and joined `data:` lines. */
+data class SseEvent(val name: String, val data: String)
 
 class ApiException(
     message: String,
@@ -81,9 +88,15 @@ class PiApi {
      * completes when the server ends the stream and fails on network errors;
      * reconnect policy belongs to the caller.
      */
-    fun events(sessionId: String): Flow<JsonObject> = callbackFlow {
+    fun events(sessionId: String): Flow<JsonObject> =
+        sse("/api/agent/${encode(sessionId)}/events").mapNotNull { event ->
+            runCatching { json.parseToJsonElement(event.data).jsonObject }.getOrNull()
+        }
+
+    /** Any SSE endpoint as a cold flow of events; same completion rules as [events]. */
+    fun sse(path: String): Flow<SseEvent> = callbackFlow {
         val call = sseHttp.newCall(
-            request("/api/agent/${encode(sessionId)}/events")
+            request(path)
                 .header("Accept", "text/event-stream")
                 .get()
                 .build(),
@@ -93,17 +106,18 @@ class PiApi {
                 call.execute().use { response ->
                     if (!response.isSuccessful) throw response.toApiException()
                     val source = response.body!!.source()
+                    var name = ""
                     val data = StringBuilder()
                     while (true) {
                         val line = source.readUtf8Line() ?: break
                         when {
-                            line.isEmpty() -> if (data.isNotEmpty()) {
-                                val payload = data.toString()
+                            line.isEmpty() -> {
+                                if (data.isNotEmpty()) send(SseEvent(name.ifEmpty { "message" }, data.toString()))
                                 data.clear()
-                                runCatching { json.parseToJsonElement(payload).jsonObject }
-                                    .onSuccess { send(it) }
+                                name = ""
                             }
                             line.startsWith(":") -> Unit // heartbeat / comment
+                            line.startsWith("event:") -> name = line.removePrefix("event:").trim()
                             line.startsWith("data:") -> {
                                 if (data.isNotEmpty()) data.append('\n')
                                 data.append(line.removePrefix("data:").removePrefix(" "))
@@ -120,6 +134,43 @@ class PiApi {
             call.cancel()
             reader.cancel()
         }
+    }
+
+    /** GET as plain text, e.g. the HTML of a docx preview. */
+    suspend fun text(path: String): String = withContext(Dispatchers.IO) {
+        http.newCall(request(path).get().build()).await().use { response ->
+            if (!response.isSuccessful) throw response.toApiException()
+            response.body?.string().orEmpty()
+        }
+    }
+
+    suspend fun bytes(path: String): ByteArray = withContext(Dispatchers.IO) {
+        http.newCall(request(path).get().build()).await().use { response ->
+            if (!response.isSuccessful) throw response.toApiException()
+            response.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
+    /** Streams the body to [dest] through a temporary file, so a failed download never leaves a partial file. */
+    suspend fun download(path: String, dest: File) = withContext(Dispatchers.IO) {
+        http.newCall(request(path).get().build()).await().use { response ->
+            if (!response.isSuccessful) throw response.toApiException()
+            dest.parentFile?.mkdirs()
+            val partial = File(dest.path + ".part")
+            partial.sink().buffer().use { sink -> sink.writeAll(response.body!!.source()) }
+            if (!partial.renameTo(dest)) {
+                partial.delete()
+                throw IOException("Could not save ${dest.name}")
+            }
+        }
+    }
+
+    /** For players that do their own HTTP (VideoView). */
+    fun absoluteUrl(path: String): String = config.baseUrl + path
+
+    fun authHeaders(): Map<String, String> {
+        val password = config.password
+        return if (password.isEmpty()) emptyMap() else mapOf("Authorization" to Credentials.basic("pi", password))
     }
 
     private fun request(path: String): Request.Builder {
