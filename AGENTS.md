@@ -116,6 +116,9 @@ hooks/
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
   useTheme.ts         theme state
+android/
+  Native Kotlin + Jetpack Compose client (standalone, talks to the same HTTP + SSE API)
+  README.md           source of truth for the app — features, build, install
 ```
 
 ---
@@ -160,7 +163,7 @@ On `ChatWindow` mount, `GET /api/agent/[id]` is called. If `state.isStreaming ==
 Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `auto_compaction_start` / `auto_compaction_end`. `handleAgentEvent` accepts both sets to keep `isCompacting` in sync. Manual compact is a blocking POST — the button stays disabled until the response returns.
 
 ### Extension dialog replaces the input bar (fork deviation from upstream)
-Upstream renders the extension `ExtensionDialog` as a non-blocking overlay over the message area (expanded card bottom-anchored, collapsed pill top-anchored, pointer-events pass-through so input/stop stay alive). This fork intentionally restores the pre-v0.9.0 layout: the dialog is rendered **inline in the composer slot, replacing the input bar** — `{extensionDialogElement ?? chatInputElement}` — in both states: expanded card (`maxHeight: min(45vh, 360px)`) and collapsed pill (pulsing dot). The input bar unmounts while a blocking request is open; dialog state (`value`/`collapsed`) resets via `useEffect` on `[request]`. `ExtensionCustomPanel` (method `custom`) is NOT part of this: it stays upstream's overlay confined to the content region above the composer. Do not "fix" the dialog back to the upstream overlay when merging upstream — the fork layout is intentional. `ChatAppearance.test.mjs` expects 3 uses of `var(--chat-content-max-width, 820px)` in `ChatWindow.tsx` (the third is the dialog wrapper, which must not use a literal `maxWidth: 820`).
+Upstream renders the extension `ExtensionDialog` as a non-blocking overlay over the message area (expanded card bottom-anchored, collapsed pill top-anchored, pointer-events pass-through so input/stop stay alive). This fork intentionally restores the pre-v0.9.0 layout: the dialog is rendered **inline in the composer slot, replacing the input bar** — `{extensionDialogElement ?? chatInputElement}` — in both states: expanded card (`maxHeight: min(45vh, 360px)`) and collapsed pill (pulsing dot). The input bar unmounts while a blocking request is open; dialog state (`value`/`collapsed`) resets via `useEffect` on `[request]`. `ExtensionCustomPanel` (method `custom`) is NOT part of this: it stays upstream's overlay confined to the content region above the composer. Do not "fix" the dialog back to the upstream overlay when merging upstream — the fork layout is intentional. `ChatAppearance.test.mjs` expects 3 uses of `var(--chat-content-max-width, 820px)` in `ChatWindow.tsx` (the third is the dialog wrapper, which must not use a literal `maxWidth: 820`). The native Android client mirrors the same fork layout: its extension dialog renders inline in the composer slot (`android/app/src/main/java/app/pimobile/ui/chat/ChatScreen.kt`), not the upstream overlay — do not "fix" it either when merging upstream.
 
 ### Running state polling + reconciliation
 - The sidebar polls `/api/agent/running` every 2.5 seconds while the tab is visible and pauses polling in background tabs. The session-list response remains the initial fallback.
