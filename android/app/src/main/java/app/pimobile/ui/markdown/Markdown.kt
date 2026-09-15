@@ -1,5 +1,6 @@
 package app.pimobile.ui.markdown
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -7,43 +8,46 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withLink
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
@@ -52,184 +56,83 @@ import app.pimobile.data.FilePaths
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
+import com.hrm.latex.renderer.Latex
+import com.hrm.latex.renderer.measure.LatexMeasurerState
+import com.hrm.latex.renderer.measure.rememberLatexMeasurer
+import com.hrm.latex.renderer.model.LatexConfig
+import com.hrm.latex.renderer.model.LatexTheme
+import com.mikepenz.markdown.annotator.annotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
+import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
+import com.mikepenz.markdown.compose.LocalMarkdownComponents
+import com.mikepenz.markdown.compose.LocalMarkdownInlineContent
+import com.mikepenz.markdown.compose.LocalMarkdownTypography
+import com.mikepenz.markdown.compose.MarkdownElement
+import com.mikepenz.markdown.compose.components.MarkdownComponentModel
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownBulletList
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownHeader
+import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
+import com.mikepenz.markdown.compose.elements.MarkdownText
+import com.mikepenz.markdown.compose.elements.listDepth
+import com.mikepenz.markdown.model.DefaultMarkdownColors
+import com.mikepenz.markdown.model.DefaultMarkdownTypography
+import com.mikepenz.markdown.model.MarkdownAnnotator
+import com.mikepenz.markdown.model.State
+import com.mikepenz.markdown.model.markdownAnimations
+import com.mikepenz.markdown.model.markdownAnnotator
+import com.mikepenz.markdown.model.markdownInlineContent
+import com.mikepenz.markdown.model.markdownPadding
 import kotlinx.coroutines.delay
+import org.intellij.markdown.IElementType
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.getTextInNode
+import org.intellij.markdown.flavours.gfm.GFMElementTypes
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import org.intellij.markdown.parser.MarkdownParser
+import com.mikepenz.markdown.compose.Markdown as LibraryMarkdown
 
-sealed interface MdBlock {
-    data class Heading(val level: Int, val text: String) : MdBlock
-    data class Paragraph(val text: String) : MdBlock
-    data class Code(val lang: String, val code: String) : MdBlock
-    data class Items(val ordered: Boolean, val start: Int, val items: List<String>) : MdBlock
-    data class Quote(val text: String) : MdBlock
-    data class Table(val rows: List<List<String>>) : MdBlock
-    data object Rule : MdBlock
-}
+/** Inline-content key of a formula: this prefix followed by the formula. */
+private const val MATH_KEY = "math:"
 
-private val HEADING = Regex("^(#{1,6})\\s+(.*)$")
-private val RULE = Regex("^([-*_])(\\s*\\1){2,}\\s*$")
-private val BULLET = Regex("^\\s*[-*+]\\s+(.*)$")
-private val ORDERED = Regex("^\\s*(\\d+)[.)]\\s+(.*)$")
-private val TABLE_SEPARATOR = Regex("^\\s*\\|?\\s*:?-{2,}:?\\s*(\\|\\s*:?-{2,}:?\\s*)*\\|?\\s*$")
+private val InlineCodeSize = TextUnit(0.9f, TextUnitType.Em)
 
-/** Small block parser covering what coding-agent replies actually use. */
-fun parseMarkdown(source: String): List<MdBlock> {
-    val lines = source.replace("\r\n", "\n").split('\n')
-    val blocks = mutableListOf<MdBlock>()
-    val paragraph = StringBuilder()
-    fun flush() {
-        if (paragraph.isNotBlank()) blocks += MdBlock.Paragraph(paragraph.toString().trim())
-        paragraph.clear()
-    }
-
-    var i = 0
-    while (i < lines.size) {
-        val line = lines[i]
-        val trimmed = line.trimStart()
-        when {
-            trimmed.startsWith("```") || trimmed.startsWith("~~~") -> {
-                flush()
-                val fence = trimmed.take(3)
-                val lang = trimmed.drop(3).trim()
-                val code = StringBuilder()
-                i++
-                while (i < lines.size && !lines[i].trimStart().startsWith(fence)) {
-                    if (code.isNotEmpty()) code.append('\n')
-                    code.append(lines[i])
-                    i++
-                }
-                blocks += MdBlock.Code(lang, code.toString())
-                i++ // skip closing fence (or run past the end while streaming)
-            }
-            trimmed.isEmpty() -> { flush(); i++ }
-            HEADING.matches(trimmed) -> {
-                flush()
-                val m = HEADING.find(trimmed)!!
-                blocks += MdBlock.Heading(m.groupValues[1].length, m.groupValues[2].trimEnd('#', ' '))
-                i++
-            }
-            RULE.matches(trimmed) -> { flush(); blocks += MdBlock.Rule; i++ }
-            trimmed.startsWith(">") -> {
-                flush()
-                val quote = StringBuilder()
-                while (i < lines.size && lines[i].trimStart().startsWith(">")) {
-                    if (quote.isNotEmpty()) quote.append('\n')
-                    quote.append(lines[i].trimStart().removePrefix(">").removePrefix(" "))
-                    i++
-                }
-                blocks += MdBlock.Quote(quote.toString())
-            }
-            trimmed.startsWith("|") && i + 1 < lines.size && TABLE_SEPARATOR.matches(lines[i + 1]) -> {
-                flush()
-                val rows = mutableListOf(splitRow(trimmed))
-                i += 2
-                while (i < lines.size && lines[i].trimStart().startsWith("|")) {
-                    rows += splitRow(lines[i].trim())
-                    i++
-                }
-                blocks += MdBlock.Table(rows)
-            }
-            BULLET.matches(line) || ORDERED.matches(line) -> {
-                flush()
-                val ordered = ORDERED.matches(line)
-                val start = if (ordered) ORDERED.find(line)!!.groupValues[1].toIntOrNull() ?: 1 else 1
-                val items = mutableListOf<String>()
-                while (i < lines.size) {
-                    val current = lines[i]
-                    val bullet = BULLET.find(current)
-                    val number = ORDERED.find(current)
-                    when {
-                        !ordered && bullet != null -> items += bullet.groupValues[1]
-                        ordered && number != null -> items += number.groupValues[2]
-                        // indented continuation of the previous item
-                        current.startsWith("  ") && current.isNotBlank() && items.isNotEmpty() ->
-                            items[items.lastIndex] = items.last() + "\n" + current.trim()
-                        else -> break
-                    }
-                    i++
-                }
-                blocks += MdBlock.Items(ordered, start, items)
-            }
-            else -> {
-                if (paragraph.isNotEmpty()) paragraph.append('\n')
-                paragraph.append(line)
-                i++
-            }
-        }
-    }
-    flush()
-    return blocks
-}
-
-private fun splitRow(row: String): List<String> =
-    row.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
-
-private val SmallerEm = TextUnit(0.9f, TextUnitType.Em)
+private val QuoteMarkup = setOf(MarkdownTokenTypes.BLOCK_QUOTE, MarkdownTokenTypes.EOL, MarkdownTokenTypes.WHITE_SPACE)
 
 /**
- * [localFile] maps a link target to a local file path (or null); such links call
- * [onOpenFile] instead of opening a browser, like pi-web's MarkdownBody.
+ * Turns off the LaTeX renderer's precise glyph bounds. On Android they write the whole font file to
+ * disk and reload it for every glyph run, with no cache (GlyphBoundsProvider.android.kt in
+ * huarangmeng/latex 1.5.4): a document with a few dozen formulas took seconds to open. The renderer
+ * then uses text-layout metrics, as it does until its font bytes have loaded.
+ *
+ * Sets the library's private "bytes already loaded" flag, so it must run before the first formula is
+ * composed; proguard-rules.pro keeps the field.
  */
-fun inlineMarkdown(
-    text: String,
-    codeBackground: Color,
-    linkColor: Color,
-    localFile: ((String) -> String?)? = null,
-    onOpenFile: ((String) -> Unit)? = null,
-): AnnotatedString =
-    buildAnnotatedString {
-        var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            when {
-                c == '`' -> {
-                    val end = text.indexOf('`', i + 1)
-                    if (end > i) {
-                        withStyle(SpanStyle(fontFamily = GeistMono, background = codeBackground, fontSize = SmallerEm)) {
-                            append(" ")
-                            append(text, i + 1, end)
-                            append(" ")
-                        }
-                        i = end + 1
-                    } else { append(c); i++ }
-                }
-                text.startsWith("**", i) -> {
-                    val end = text.indexOf("**", i + 2)
-                    if (end > i + 2) {
-                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                            append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor, localFile, onOpenFile))
-                        }
-                        i = end + 2
-                    } else { append("**"); i += 2 }
-                }
-                c == '*' && i + 1 < text.length && !text[i + 1].isWhitespace() -> {
-                    val end = text.indexOf('*', i + 1)
-                    if (end > i + 1) {
-                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(text, i + 1, end) }
-                        i = end + 1
-                    } else { append(c); i++ }
-                }
-                c == '[' -> {
-                    val close = text.indexOf("](", i)
-                    val paren = if (close > i) text.indexOf(')', close + 2) else -1
-                    if (close > i && paren > close && !text.substring(i + 1, close).contains('\n')) {
-                        val url = text.substring(close + 2, paren)
-                        val linkStyle = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
-                        val filePath = if (onOpenFile != null) localFile?.invoke(url) else null
-                        val link = if (filePath != null && onOpenFile != null) {
-                            LinkAnnotation.Clickable(filePath, TextLinkStyles(linkStyle)) { onOpenFile(filePath) }
-                        } else {
-                            LinkAnnotation.Url(url, TextLinkStyles(linkStyle))
-                        }
-                        withLink(link) {
-                            append(text.substring(i + 1, close))
-                        }
-                        i = paren + 1
-                    } else { append(c); i++ }
-                }
-                else -> { append(c); i++ }
-            }
-        }
+fun disablePreciseGlyphBounds() {
+    try {
+        Class.forName("com.hrm.latex.renderer.model.LatexFontFamilyKt")
+            .getDeclaredField("fontBytesLoaded")
+            .apply { isAccessible = true }
+            .setBoolean(null, true)
+    } catch (e: ReflectiveOperationException) {
+        // A library update renamed the flag: formulas still render, only slower.
+        Log.w("Markdown", "Could not disable precise glyph bounds", e)
     }
+}
 
+/**
+ * GitHub-flavored Markdown with LaTeX math, like pi-web's MarkdownBody: parsed by the JetBrains
+ * parser and drawn by multiplatform-markdown-renderer, formulas drawn natively by huarangmeng/latex.
+ * `$…$` and `\(…\)` render inline, `$$…$$` and `\[…\]` as centered blocks.
+ *
+ * Links resolving to a local file (see [FilePaths.resolveHref]) call [onOpenFile] instead of
+ * opening a browser.
+ */
 @Composable
 fun Markdown(
     text: String,
@@ -240,58 +143,267 @@ fun Markdown(
     relativeRoot: String? = baseDir,
     onOpenFile: ((String) -> Unit)? = null,
 ) {
-    val blocks = remember(text) { parseMarkdown(text) }
+    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile) { blocks, block ->
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            blocks.forEach { block(it) }
+        }
+    }
+}
+
+/** [Markdown] for whole documents: only the blocks on screen are composed and their formulas measured. */
+@Composable
+fun LazyMarkdown(
+    text: String,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
+    baseDir: String? = null,
+    relativeRoot: String? = baseDir,
+    onOpenFile: ((String) -> Unit)? = null,
+) {
+    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile) { blocks, block ->
+        LazyColumn(modifier, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(blocks) { block(it) }
+        }
+    }
+}
+
+/** Parses [text] and sets up styles, links and math; [layout] places the top-level blocks. */
+@Composable
+private fun MarkdownDocument(
+    text: String,
+    baseDir: String?,
+    relativeRoot: String?,
+    onOpenFile: ((String) -> Unit)?,
+    layout: @Composable (blocks: List<ASTNode>, block: @Composable (ASTNode) -> Unit) -> Unit,
+) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
-    val localFile = { href: String -> FilePaths.resolveHref(href, baseDir, relativeRoot) }
-    val inline = { s: String -> inlineMarkdown(s, t.muted, t.accent, localFile, onOpenFile) }
     val body = typography.bodyLarge.copy(color = t.text)
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        for (block in blocks) {
-            when (block) {
-                is MdBlock.Paragraph -> Text(inline(block.text), style = body)
-                is MdBlock.Heading -> Text(
-                    inline(block.text),
-                    style = when (block.level) {
-                        1 -> typography.titleLarge
-                        2 -> typography.titleMedium.copy(fontSize = 17.sp)
-                        else -> typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
-                    },
-                    color = t.text,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                is MdBlock.Code -> CodeBlock(block.lang, block.code)
-                is MdBlock.Items -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    block.items.forEachIndexed { index, item ->
-                        Row {
-                            Text(
-                                if (block.ordered) "${block.start + index}." else "•",
-                                style = body,
-                                color = t.textTertiary,
-                                modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),
-                            )
-                            Text(inline(item), style = body)
-                        }
-                    }
-                }
-                is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
-                    Box(
-                        Modifier
-                            .width(2.dp)
-                            .fillMaxHeight()
-                            .background(t.borderStrong),
-                    )
-                    Text(
-                        inline(block.text),
-                        style = body.copy(color = t.textSecondary),
-                        modifier = Modifier.padding(start = 14.dp),
-                    )
-                }
-                is MdBlock.Table -> TableBlock(block.rows, inline)
-                MdBlock.Rule -> HorizontalDivider(color = t.border)
+    // Parsed synchronously: the library's async parse leaves the item empty for a frame (the chat
+    // list jumps) and would flash on every streamed chunk.
+    val parser = remember { MarkdownParser(GFMFlavourDescriptor()) }
+    val state = remember(text) {
+        val source = prepareMathMarkdown(text)
+        State.Success(parser.buildMarkdownTreeFromString(source), source, linksLookedUp = false)
+    }
+
+    val inlineMath = remember(t.text, body.fontSize) {
+        LatexConfig(fontSize = body.fontSize, theme = LatexTheme.light(color = t.text))
+    }
+    val displayMath = remember(inlineMath) { inlineMath.copy(fontSize = body.fontSize * 1.15f) }
+    val measurer = rememberLatexMeasurer(inlineMath)
+
+    val currentOpenFile by rememberUpdatedState(onOpenFile)
+    val systemUriHandler = LocalUriHandler.current
+    val uriHandler = remember(systemUriHandler, baseDir, relativeRoot) {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                val openFile = currentOpenFile
+                val path = if (openFile != null) FilePaths.resolveHref(uri, baseDir, relativeRoot) else null
+                if (openFile != null && path != null) openFile(path) else systemUriHandler.openUri(uri)
             }
         }
+    }
+
+    val colors = remember(t) {
+        DefaultMarkdownColors(
+            text = t.text,
+            codeBackground = t.code,
+            inlineCodeBackground = t.muted,
+            dividerColor = t.border,
+            tableBackground = t.code,
+        )
+    }
+    val markdownTypography = remember(t, typography) {
+        val heading = typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, color = t.text)
+        val marker = body.copy(color = t.textTertiary)
+        DefaultMarkdownTypography(
+            h1 = typography.titleLarge.copy(color = t.text),
+            h2 = typography.titleMedium.copy(fontSize = 17.sp, color = t.text),
+            h3 = heading,
+            h4 = heading,
+            h5 = heading,
+            h6 = heading,
+            text = body,
+            code = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 20.sp, color = t.text),
+            inlineCode = TextStyle(fontFamily = GeistMono, fontSize = InlineCodeSize),
+            quote = body.copy(color = t.textSecondary),
+            paragraph = body,
+            ordered = marker,
+            bullet = marker,
+            list = body,
+            textLink = TextLinkStyles(SpanStyle(color = t.accent, textDecoration = TextDecoration.Underline)),
+            table = typography.bodyMedium.copy(color = t.text),
+        )
+    }
+
+    val components = remember(t, displayMath) {
+        markdownComponents(
+            codeFence = { model ->
+                MarkdownCodeFence(model.content, model.node) { code, language, _ ->
+                    if (language.equals("math", ignoreCase = true)) DisplayMath(code, displayMath)
+                    else CodeBlock(language.orEmpty(), code)
+                }
+            },
+            codeBlock = { model ->
+                MarkdownCodeBlock(model.content, model.node) { code, language, _ -> CodeBlock(language.orEmpty(), code) }
+            },
+            heading1 = { Heading(it, it.typography.h1) },
+            heading2 = { Heading(it, it.typography.h2) },
+            heading3 = { Heading(it, it.typography.h3) },
+            heading4 = { Heading(it, it.typography.h4) },
+            heading5 = { Heading(it, it.typography.h5) },
+            heading6 = { Heading(it, it.typography.h6) },
+            setextHeading1 = { Heading(it, it.typography.h1, MarkdownTokenTypes.SETEXT_CONTENT) },
+            setextHeading2 = { Heading(it, it.typography.h2, MarkdownTokenTypes.SETEXT_CONTENT) },
+            blockQuote = { BlockQuote(it, t.borderStrong) },
+            orderedList = {
+                MarkdownOrderedList(it.content, it.node, depth = it.listDepth, markerModifier = { Modifier.widthIn(min = 24.dp) })
+            },
+            unorderedList = {
+                MarkdownBulletList(it.content, it.node, depth = it.listDepth, markerModifier = { Modifier.widthIn(min = 16.dp) })
+            },
+            horizontalRule = { HorizontalDivider(color = t.border) },
+            table = { TableBlock(it.content, it.node) },
+            // Raw HTML blocks are shown as source.
+            custom = { type, model ->
+                if (type == MarkdownElementTypes.HTML_BLOCK) {
+                    MarkdownText(model.node.getTextInNode(model.content).toString(), style = model.typography.paragraph)
+                }
+            },
+        )
+    }
+
+    CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+        LibraryMarkdown(
+            state = state,
+            colors = colors,
+            typography = markdownTypography,
+            padding = markdownPadding(block = 0.dp, list = 0.dp, listItemTop = 3.dp, listItemBottom = 3.dp, listIndent = 0.dp),
+            components = components,
+            // Streaming grows the text on every chunk; the default size animation fights the auto-scroll.
+            animations = markdownAnimations(animateTextSize = { this }),
+            success = { success, blockComponents, _ ->
+                val blocks = remember(success) { success.node.children.filter { it.type != MarkdownTokenTypes.EOL } }
+                layout(blocks) { node ->
+                    MathScope(success.content, node, measurer, inlineMath) {
+                        MarkdownElement(node, blockComponents, success.content, includeSpacer = false)
+                    }
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Measures the inline formulas of one top-level block, when it is composed, and hands them to the
+ * block's text: inline placeholders need each formula's size before the paragraph is laid out.
+ */
+@Composable
+private fun MathScope(
+    content: String,
+    node: ASTNode,
+    measurer: LatexMeasurerState,
+    config: LatexConfig,
+    block: @Composable () -> Unit,
+) {
+    val formulas = remember(content, node) { buildSet { collectMath(content, node, this) } }
+    if (formulas.isEmpty()) {
+        block()
+    } else {
+        val mathContent = remember(formulas, measurer, config) {
+            formulas.mapNotNull { latex ->
+                measurer.inlineContent(latex, config)?.let { inline -> MATH_KEY + latex to inline }
+            }.toMap()
+        }
+        val annotator = remember(mathContent) { mathAnnotator(mathContent.keys) }
+        CompositionLocalProvider(
+            LocalMarkdownAnnotator provides annotator,
+            LocalMarkdownInlineContent provides markdownInlineContent(mathContent),
+            content = block,
+        )
+    }
+}
+
+/** Draws INLINE_MATH / BLOCK_MATH nodes as the inline content in [measured] (keys are MATH_KEY + formula). */
+private fun mathAnnotator(measured: Set<String>): MarkdownAnnotator =
+    markdownAnnotator { content, child ->
+        if (child.type != GFMElementTypes.INLINE_MATH && child.type != GFMElementTypes.BLOCK_MATH) {
+            return@markdownAnnotator false
+        }
+        val latex = mathSource(content, child)
+        // A formula the renderer cannot measure stays readable as source.
+        if ((MATH_KEY + latex) in measured) appendInlineContent(MATH_KEY + latex, latex)
+        else append(child.getTextInNode(content))
+        true
+    }
+
+@Composable
+private fun DisplayMath(latex: String, config: LatexConfig) {
+    // Wide formulas scroll sideways instead of shrinking.
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Latex(latex = latex, config = config)
+    }
+}
+
+@Composable
+private fun Heading(
+    model: MarkdownComponentModel,
+    style: TextStyle,
+    contentChildType: IElementType = MarkdownTokenTypes.ATX_CONTENT,
+) {
+    Box(Modifier.padding(top = 6.dp)) {
+        MarkdownHeader(model.content, model.node, style, contentChildType)
+    }
+}
+
+@Composable
+private fun BlockQuote(model: MarkdownComponentModel, bar: Color) {
+    val components = LocalMarkdownComponents.current
+    val typography = LocalMarkdownTypography.current
+    val quoted = remember(typography) {
+        (typography as? DefaultMarkdownTypography)?.copy(paragraph = typography.quote) ?: typography
+    }
+    CompositionLocalProvider(LocalMarkdownTypography provides quoted) {
+        // The bar is drawn rather than measured with IntrinsicSize: a table inside can't answer intrinsics.
+        Column(
+            Modifier
+                .drawBehind { drawRect(bar, size = Size(2.dp.toPx(), size.height)) }
+                .padding(start = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            model.node.children.forEach { child ->
+                if (child.type !in QuoteMarkup) MarkdownElement(child, components, model.content, includeSpacer = false)
+            }
+        }
+    }
+}
+
+private fun collectMath(content: String, node: ASTNode, into: MutableSet<String>) {
+    if (node.type == GFMElementTypes.INLINE_MATH || node.type == GFMElementTypes.BLOCK_MATH) {
+        into += mathSource(content, node)
+    } else {
+        node.children.forEach { collectMath(content, it, into) }
+    }
+}
+
+/** The formula between the `$` / `$$` delimiters of an INLINE_MATH or BLOCK_MATH node. */
+private fun mathSource(content: String, node: ASTNode): String {
+    val open = node.children.firstOrNull()
+    val close = node.children.lastOrNull()
+    return if (open != null && close != null && open !== close &&
+        open.type == GFMTokenTypes.DOLLAR && close.type == GFMTokenTypes.DOLLAR
+    ) {
+        content.substring(open.endOffset, close.startOffset).trim()
+    } else {
+        node.getTextInNode(content).toString().trim('$', ' ')
     }
 }
 
@@ -361,12 +473,25 @@ private fun CopyButton(text: String) {
 }
 
 @Composable
-private fun TableBlock(rows: List<List<String>>, inline: (String) -> AnnotatedString) {
+private fun TableBlock(content: String, node: ASTNode) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
+    val rows = remember(node) {
+        node.children
+            .filter { it.type == GFMElementTypes.HEADER || it.type == GFMElementTypes.ROW }
+            .map { row -> row.children.filter { it.type == GFMTokenTypes.CELL } }
+    }
+    if (rows.isEmpty()) return
+    // Cells get the same inline rendering as paragraphs: emphasis, code, links and math.
+    val settings = annotatorSettings()
+    val inlineContent = LocalMarkdownInlineContent.current.inlineContent
+    val headerStyle = typography.labelMedium.copy(color = t.textSecondary)
+    val cellStyle = typography.bodyMedium.copy(color = t.text)
+
     val columns = rows.maxOf { it.size }
     val natural = (0 until columns).map { column ->
-        (rows.maxOf { it.getOrNull(column)?.length ?: 0 } * 8 + 28).coerceIn(64, 280).dp
+        val chars = rows.maxOf { row -> row.getOrNull(column)?.let { it.endOffset - it.startOffset } ?: 0 }
+        (chars * 8 + 28).coerceIn(64, 280).dp
     }
     val naturalWidth = natural.fold(0.dp) { total, width -> total + width }
     val shape = RoundedCornerShape(12.dp)
@@ -383,12 +508,14 @@ private fun TableBlock(rows: List<List<String>>, inline: (String) -> AnnotatedSt
         val tableWidth = widths.fold(0.dp) { total, width -> total + width }
         Column(Modifier.horizontalScroll(rememberScrollState())) {
             rows.forEachIndexed { rowIndex, row ->
+                val style = if (rowIndex == 0) headerStyle else cellStyle
                 Row(Modifier.background(if (rowIndex == 0) t.code else Color.Transparent)) {
                     widths.forEachIndexed { column, width ->
+                        val cell = row.getOrNull(column)
                         Text(
-                            inline(row.getOrNull(column).orEmpty()),
-                            style = if (rowIndex == 0) typography.labelMedium.copy(color = t.textSecondary)
-                            else typography.bodyMedium.copy(color = t.text),
+                            cell?.let { content.buildMarkdownAnnotatedString(it, style, settings).trimmed() } ?: AnnotatedString(""),
+                            style = style,
+                            inlineContent = inlineContent,
                             modifier = Modifier
                                 .width(width)
                                 .padding(horizontal = 12.dp, vertical = 9.dp),
@@ -399,4 +526,11 @@ private fun TableBlock(rows: List<List<String>>, inline: (String) -> AnnotatedSt
             }
         }
     }
+}
+
+/** Drops the padding spaces around a cell's content, keeping its styles. */
+private fun AnnotatedString.trimmed(): AnnotatedString {
+    val start = text.indexOfFirst { !it.isWhitespace() }
+    if (start == -1) return AnnotatedString("")
+    return subSequence(start, text.indexOfLast { !it.isWhitespace() } + 1)
 }

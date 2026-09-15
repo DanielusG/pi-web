@@ -5,6 +5,7 @@ import app.pimobile.data.PiApi
 import app.pimobile.data.SettingsStore
 import app.pimobile.notify.Notifications
 import app.pimobile.notify.RunWatcherService
+import app.pimobile.ui.markdown.disablePreciseGlyphBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,6 +23,7 @@ class PiApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        disablePreciseGlyphBounds()
         settings = SettingsStore(this)
         Notifications.createChannels(this)
         // Tiny preferences read; needed synchronously to pick the start screen.
