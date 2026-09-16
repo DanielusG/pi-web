@@ -193,13 +193,15 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = t.text)
                 }
             }
+            // The project list comes from the saved server, so only once one is set.
+            if (current.isConfigured) AssistProjectSetting(app, Modifier.padding(top = 18.dp))
             Checklist(modifier = Modifier.padding(top = 18.dp))
         }
     }
 }
 
 @Composable
-private fun FieldLabel(text: String) {
+internal fun FieldLabel(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
