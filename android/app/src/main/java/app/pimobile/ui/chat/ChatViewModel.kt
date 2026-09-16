@@ -194,7 +194,7 @@ private const val LEASE_RENEW_MS = 30_000L
  * One chat session. Mirrors the web client's rules (hooks/useAgentSession.ts):
  * SSE is opened before a prompt and kept for a grace window afterwards; a run
  * ends on `prompt_done`/`agent_settled`, never on the first `agent_end`; state
- * polling and a refetch after every reconnect cover events lost while offline.
+ * polling and turn-boundary reloads cover events lost while offline.
  * The context indicator additionally reconciles on every turn boundary
  * (assistant `message_end`, `tool_execution_end`, `compaction_end`) so it
  * tracks usage per turn instead of waiting for the 15s poll.
@@ -832,14 +832,17 @@ class ChatViewModel(
     }
 
     private suspend fun refreshSession(id: String) {
+        val localAtRequest = messages
         try {
             val body = api.get("/api/sessions/${PiApi.encode(id)}?deferThinking=1&deferMedia=1").asObj() ?: return
             val context = body.obj("context")
             val info = body.obj("info")
             val fresh = context?.let(::parseContext).orEmpty()
-            // Server history wins (web parity): a still-unrecorded optimistic bubble
-            // is re-added by the delivered message_end.
-            messages = fresh
+            // A snapshot generated before local appends (optimistic bubble, SSE-
+            // delivered messages) must not wipe them: the GET response and the SSE
+            // events are unordered on the wire, and pi persists a message only
+            // after emitting its message_end.
+            messages = Messages.mergeSnapshot(fresh, localAtRequest, messages)
             oldestEntryId = context?.str("oldestEntryId")
             _state.update { state ->
                 state.copy(
@@ -1070,11 +1073,11 @@ class ChatViewModel(
                     setRunning("Working…")
                 }
                 if (reconnect) {
-                    // Events were lost while disconnected: reload history and re-check state.
-                    viewModelScope.launch {
-                        refreshSession(id)
-                        reconcile(id)
-                    }
+                    // Events may have been lost while disconnected: re-check server state.
+                    // No history reload here (web parity): a snapshot generated
+                    // before a just-sent prompt's user message is persisted could
+                    // wipe the delivered message. Turn-boundary reloads recover.
+                    viewModelScope.launch { reconcile(id) }
                 }
             }
             "agent_start" -> {

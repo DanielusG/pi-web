@@ -100,6 +100,69 @@ object Messages {
         }
 
     /**
+     * Merges a freshly fetched history snapshot with the local list.
+     *
+     * The snapshot is generated when the server reads the session file — which
+     * can be before a just-sent prompt's user message is persisted (pi emits
+     * the SSE message_end before appending to the file) — and the response can
+     * reach the client after that SSE event was already appended locally.
+     * Blindly replacing would wipe the optimistic bubble or the delivered
+     * message until the next reload. When the local list only grew at the tail
+     * while the GET was in flight, keep that tail, dropping anything the
+     * snapshot already contains.
+     */
+    fun mergeSnapshot(
+        fresh: List<LoadedMessage>,
+        localAtRequest: List<LoadedMessage>,
+        current: List<LoadedMessage>,
+    ): List<LoadedMessage> {
+        if (current === localAtRequest) return fresh
+        if (current.size <= localAtRequest.size) return fresh
+        if (current.subList(0, localAtRequest.size) != localAtRequest) return fresh
+        val tail = current.subList(localAtRequest.size, current.size)
+        return fresh + tail.filterNot { added -> fresh.any { snapshot -> messageMatches(added, snapshot) } }
+    }
+
+    /** Whether a locally appended message is already in the snapshot, in its persisted form. */
+    private fun messageMatches(added: LoadedMessage, snapshot: LoadedMessage): Boolean {
+        val a = added.json
+        val s = snapshot.json
+        if (a.str("role") != s.str("role")) return false
+        return when (a.str("role")) {
+            "user" -> userKey(a["content"]) == userKey(s["content"])
+            "assistant" -> assistantFingerprint(a) == assistantFingerprint(s)
+            else -> false
+        }
+    }
+
+    /** User message identity for dedup: text plus image signatures (web: userMessageKey). */
+    fun userKey(content: JsonElement?): String {
+        val parts = mutableListOf(contentText(content))
+        parts += images(content).map { "${it.mimeType}:${it.data}" }
+        return parts.joinToString("\u0000")
+    }
+
+    /** Assistant message identity for dedup, ignoring deferred thinking/image payloads. */
+    fun assistantFingerprint(json: JsonObject): String {
+        val parts = mutableListOf(
+            json.str("stopReason").orEmpty(),
+            json.str("provider").orEmpty(),
+            json.str("model").orEmpty(),
+        )
+        val content = json["content"]
+        if (content is JsonArray) {
+            for (element in content) {
+                val block = element as? JsonObject ?: continue
+                when (block.type) {
+                    "text" -> parts += "t\u0000${block.str("text").orEmpty()}"
+                    "toolCall" -> parts += "c\u0000${block.str("toolCallId") ?: block.str("id").orEmpty()}"
+                }
+            }
+        }
+        return parts.joinToString("\u0000")
+    }
+
+    /**
      * Tool calls arrive as `{toolCallId, toolName, input}` from session history
      * but as `{id, name, arguments}` from SSE `message_*` events; accept both.
      */
