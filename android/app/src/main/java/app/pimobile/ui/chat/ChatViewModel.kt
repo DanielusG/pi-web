@@ -1,12 +1,14 @@
 package app.pimobile.ui.chat
 
 import android.content.ContentResolver
+import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pimobile.data.ApiException
+import app.pimobile.data.AsrClient
 import app.pimobile.data.AttachedImage
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
@@ -162,6 +164,8 @@ data class ChatUiState(
     val skillDormancy: Map<String, Boolean> = emptyMap(),
     /** A built-in slash command is in flight; the composer is disabled meanwhile. */
     val commandPending: Boolean = false,
+    /** Voice dictation is live (long-press send); the composer shows the mic state. */
+    val dictating: Boolean = false,
     /** Title-bar status while a built-in runs outside an agent run, e.g. compaction. */
     val commandStatus: String? = null,
     /** Web: the compact result line above the composer, e.g. "Compacted 47k -> 12k tokens (35k saved)". */
@@ -196,6 +200,7 @@ private const val LEASE_RENEW_MS = 30_000L
  * tracks usage per turn instead of waiting for the 15s poll.
  */
 class ChatViewModel(
+    private val context: Context,
     private val api: PiApi,
     sessionId: String?,
     cwd: String,
@@ -321,6 +326,42 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    // --- Voice dictation (Nemotron ASR streaming server) ---
+
+    private var asr: AsrClient? = null
+
+    /** True when an ASR server is configured; the composer's long-press dictation needs it. */
+    fun hasAsr(): Boolean = api.config.asrUrl.isNotBlank()
+
+    /**
+     * Start dictation: [onToken] receives each transcribed token on the main thread,
+     * anchored by the caller into the draft. Failures surface through [state].error.
+     */
+    fun startDictation(onToken: (String) -> Unit) {
+        val base = api.config.asrUrl
+        if (base.isBlank() || asr != null) return
+        val client = AsrClient(context, base)
+        asr = client
+        _state.update { it.copy(dictating = true) }
+        client.start(
+            onToken = onToken,
+            onFinished = {
+                asr = null
+                _state.update { it.copy(dictating = false) }
+            },
+            onError = { message -> _state.update { it.copy(error = message) } },
+        )
+    }
+
+    fun stopDictation() {
+        asr?.stop()
+    }
+
+    override fun onCleared() {
+        asr?.stop()
+        super.onCleared()
     }
 
     /** Reads picked images off the main thread; extras past the per-message limit are dropped, as on the web. */
