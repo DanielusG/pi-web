@@ -79,8 +79,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_ASSIST -> {
                 val app = application as PiApp
                 // Tiny preferences read, served from cache after first emission; needed
-                // synchronously to pick the fresh session's cwd.
-                assistCwds.value = runBlocking { app.settings.lastCwd.first() }
+                // synchronously to pick the fresh session's cwd (chosen project, else last cwd).
+                assistCwds.value = runBlocking { app.settings.assistLaunchCwd.first() }
             }
             else -> {
                 val sessionId = intent?.getStringExtra(Notifications.EXTRA_SESSION_ID) ?: return
