@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -97,6 +96,8 @@ private fun chatRoute(id: String?, cwd: String, focus: Boolean = false): String 
 
 private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}&focus={focus}"
 
+private const val SESSIONS_ROUTE = "sessions?newSheet={newSheet}"
+
 /** savedStateHandle key: text a file screen asks the chat composer to insert. */
 private const val INSERT_KEY = "insert"
 
@@ -129,17 +130,19 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
         val cwd = assistCwd ?: return@LaunchedEffect
         assistCwds.value = null
         if (!app.api.config.isConfigured) return@LaunchedEffect
-        val startId = nav.graph.findStartDestination().id
+        // Pop by the list's route pattern, not findStartDestination(): the start route
+        // "sessions" has a different id than SESSIONS_ROUTE, so that lookup falls back
+        // to the root graph and popping to it drops the list too.
         if (cwd.isNotBlank()) {
             // Fresh session above the session list: Back returns to the list,
             // never to the previous chats (they are popped, the list is kept).
             nav.navigate(chatRoute(null, cwd, focus = true)) {
-                popUpTo(startId) { inclusive = false }
+                popUpTo(SESSIONS_ROUTE) { inclusive = false }
             }
         } else {
             // No remembered cwd: replace the list with one that opens the sheet.
             nav.navigate("sessions?newSheet=true") {
-                popUpTo(startId) { inclusive = true }
+                popUpTo(SESSIONS_ROUTE) { inclusive = true }
             }
         }
     }
@@ -157,7 +160,11 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                 },
             )
         }
-        composable("sessions?newSheet={newSheet}") { entry ->
+        composable(
+            SESSIONS_ROUTE,
+            // Declared, or "true" arrives as a String and getBoolean reads false.
+            arguments = listOf(navArgument("newSheet") { type = NavType.BoolType; defaultValue = false }),
+        ) { entry ->
             val newSheet = entry.arguments?.getBoolean("newSheet") ?: false
             AskNotificationPermissionOnce()
             val vm = viewModel { SessionsViewModel(app.api, app::onRunActive) }
