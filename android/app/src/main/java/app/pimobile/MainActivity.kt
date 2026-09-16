@@ -11,6 +11,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -24,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -98,6 +102,9 @@ private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}&focus={focus}"
 
 private const val SESSIONS_ROUTE = "sessions?newSheet={newSheet}"
 
+/** Screen changes slide horizontally (push) instead of NavHost's default cross-fade. */
+private val navSlideSpec = tween<IntOffset>(durationMillis = 300, easing = FastOutSlowInEasing)
+
 /** savedStateHandle key: text a file screen asks the chat composer to insert. */
 private const val INSERT_KEY = "insert"
 
@@ -147,7 +154,15 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
         }
     }
 
-    NavHost(navController = nav, startDestination = start) {
+    NavHost(
+        navController = nav,
+        startDestination = start,
+        // Forward: the new screen comes in from the right. Back: the reverse.
+        enterTransition = { slideIntoContainer(SlideDirection.Start, navSlideSpec) },
+        exitTransition = { slideOutOfContainer(SlideDirection.Start, navSlideSpec) },
+        popEnterTransition = { slideIntoContainer(SlideDirection.End, navSlideSpec) },
+        popExitTransition = { slideOutOfContainer(SlideDirection.End, navSlideSpec) },
+    ) {
         composable("settings") {
             val canGoBack = nav.previousBackStackEntry != null
             SettingsScreen(
