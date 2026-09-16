@@ -58,6 +58,7 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
     val current = app.api.config
     var url by rememberSaveable { mutableStateOf(current.baseUrl) }
     var password by rememberSaveable { mutableStateOf(current.password) }
+    var asrUrl by rememberSaveable { mutableStateOf(current.asrUrl) }
     var showPassword by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -126,6 +127,23 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            FieldLabel("Voice input (ASR)")
+            OutlinedTextField(
+                value = asrUrl,
+                onValueChange = { asrUrl = it },
+                placeholder = { Text("ws://192.168.1.56:8000/ws") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = piTextFieldColors(),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = GeistMono),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "WebSocket ASR server for voice dictation (long-press send). Leave empty to disable.",
+                style = MaterialTheme.typography.labelSmall,
+                color = t.textTertiary,
+            )
             PiPrimaryButton(
                 "Connect",
                 enabled = url.isNotBlank(),
@@ -137,7 +155,11 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                     scope.launch {
                         testing = true
                         error = null
-                        val candidate = ServerConfig(ServerConfig.normalizeUrl(url), password)
+                        val candidate = ServerConfig(
+                            ServerConfig.normalizeUrl(url),
+                            password,
+                            ServerConfig.normalizeAsrUrl(asrUrl),
+                        )
                         val previous = app.api.config
                         app.api.config = candidate
                         try {

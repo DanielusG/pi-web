@@ -2,15 +2,21 @@
 
 package app.pimobile.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,6 +88,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -100,6 +108,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -161,10 +170,80 @@ fun ChatScreen(
     }
     var showModels by remember { mutableStateOf(false) }
     // System photo picker: no storage permission; falls back to the document picker on old devices.
-    val resolver = LocalContext.current.applicationContext.contentResolver
+    val context = LocalContext.current
+    val resolver = context.applicationContext.contentResolver
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(ImageAttachments.MAX_IMAGES),
     ) { uris -> vm.addImages(resolver, uris) }
+
+    // --- Voice dictation (long-press send, Nemotron ASR server) ---
+    var voicePressHeld by remember { mutableStateOf(false) }
+    // Where the live transcript is anchored in the draft: the cursor at press time.
+    var dictationAnchor by remember { mutableIntStateOf(-1) }
+    var dictationLen by remember { mutableIntStateOf(0) }
+    // Breaks the reference cycle between the permission launcher and the local start function.
+    var startVoiceRef by remember { mutableStateOf({}) }
+
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted && voicePressHeld) startVoiceRef()
+        voicePressHeld = false
+    }
+
+    fun startVoiceDictation() {
+        dictationAnchor = draft.selection.min
+        dictationLen = 0
+        vm.startDictation { token ->
+            val d = draft
+            if (dictationAnchor < 0) return@startDictation
+            if (dictationLen == 0) {
+                // Leading space when the cursor sits mid-text, not right after whitespace.
+                val before = d.text.getOrNull(dictationAnchor)
+                val prefix = if (before != null && !before.isWhitespace()) " " else ""
+                val text = d.text.substring(0, dictationAnchor) + prefix + token +
+                        d.text.substring(dictationAnchor)
+                dictationLen = prefix.length + token.length
+                draft = TextFieldValue(text, TextRange(dictationAnchor + dictationLen))
+            } else {
+                val pos = dictationAnchor + dictationLen
+                val text = d.text.substring(0, pos) + token + d.text.substring(pos)
+                dictationLen += token.length
+                draft = TextFieldValue(text, TextRange(pos + token.length))
+            }
+        }
+    }
+
+    fun onVoiceStart() {
+        if (!vm.hasAsr()) return
+        voicePressHeld = true
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startVoiceDictation()
+        } else {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun onVoiceStop() {
+        voicePressHeld = false
+        vm.stopDictation()
+    }
+
+    fun onVoiceCancel() {
+        voicePressHeld = false
+    }
+
+    startVoiceRef = { startVoiceDictation() }
+
+    // Release the anchor once the session has fully ended (flushed tokens are already in).
+    LaunchedEffect(state.dictating) {
+        if (!state.dictating) {
+            dictationAnchor = -1
+            dictationLen = 0
+        }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
@@ -267,7 +346,8 @@ fun ChatScreen(
     val slashMatches = remember(slashQuery, state.running, state.slashCommands) {
         slashQuery?.let { filterSlashCommands(it, state.running, state.slashCommands) }.orEmpty()
     }
-    val slashGroups = remember(slashMatches, state.skillDormancy) { slashCommandLayout(slashMatches, state.skillDormancy) }
+    val slashGroups =
+        remember(slashMatches, state.skillDormancy) { slashCommandLayout(slashMatches, state.skillDormancy) }
     val slashDisplayed = remember(slashGroups) { slashGroups.flatMap { it.commands } }
     val activeIndex = slashActive.coerceIn(0, maxOf(0, slashDisplayed.lastIndex))
     BackHandler(enabled = slashMenuOpen) { slashDismissed = true }
@@ -364,6 +444,10 @@ fun ChatScreen(
                     },
                     onRemoveImage = vm::removeImage,
                     focusRequester = composerFocus,
+                    voiceAvailable = vm.hasAsr(),
+                    onVoiceStart = { onVoiceStart() },
+                    onVoiceStop = { onVoiceStop() },
+                    onVoiceCancel = { onVoiceCancel() },
                 )
             }
         },
@@ -415,6 +499,7 @@ fun ChatScreen(
                             { editRequest = EditRequest(id, item.command ?: item.text) }
                         },
                     )
+
                     is ChatItem.Assistant -> AssistantMessage(
                         item = item,
                         toolResults = state.toolResults,
@@ -438,6 +523,7 @@ fun ChatScreen(
                             { id -> selectedToolId = if (selectedToolId == id) null else id }
                         } else null,
                     )
+
                     is ChatItem.Bash -> BashCard(item)
                     is ChatItem.Notice -> NoticeRow(item)
                 }
@@ -512,9 +598,9 @@ private fun EditFromHereDialog(restoresText: Boolean, onDismiss: () -> Unit, onC
             Spacer(Modifier.height(8.dp))
             Text(
                 (
-                    if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
-                    else "The session goes back to this point. "
-                    ) + "Later messages stay saved as a branch you can reopen with /tree.",
+                        if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
+                        else "The session goes back to this point. "
+                        ) + "Later messages stay saved as a branch you can reopen with /tree.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = t.textSecondary,
             )
@@ -541,7 +627,11 @@ private fun insertAtCursor(value: TextFieldValue, text: String): TextFieldValue 
  * Web: extractTurnWrittenFiles per turn, keyed by the turn's last assistant item.
  * A file counts only when its write/edit call returned without error.
  */
-private fun turnWrittenFiles(items: List<ChatItem>, results: Map<String, ToolResult>, cwd: String): Map<String, List<String>> {
+private fun turnWrittenFiles(
+    items: List<ChatItem>,
+    results: Map<String, ToolResult>,
+    cwd: String
+): Map<String, List<String>> {
     val byItem = HashMap<String, List<String>>()
     var files = LinkedHashSet<String>()
     var lastAssistant: String? = null
@@ -563,6 +653,7 @@ private fun turnWrittenFiles(items: List<ChatItem>, results: Map<String, ToolRes
                     FilePaths.resolveToolPath(toolInputPath(block.input), cwd.ifEmpty { null })?.let(files::add)
                 }
             }
+
             else -> Unit
         }
     }
@@ -581,7 +672,7 @@ private fun ChatTopBar(
     val t = Pi.tokens
     // The idle runtime the slash palette creates (ensure_session) is still a new chat.
     val fresh = state.sessionId == null ||
-        (!state.loading && !state.running && state.items.isEmpty() && state.streaming == null)
+            (!state.loading && !state.running && state.items.isEmpty() && state.streaming == null)
     Column(Modifier.background(t.background)) {
         TopAppBar(
             colors = TopAppBarDefaults.topAppBarColors(
@@ -634,7 +725,12 @@ private fun ChatTopBar(
             actions = {
                 if (state.cwd.isNotBlank()) {
                     IconButton(onClick = onOpenFiles) {
-                        Icon(PiIcons.Folder, contentDescription = "Files", tint = t.textSecondary, modifier = Modifier.size(20.dp))
+                        Icon(
+                            PiIcons.Folder,
+                            contentDescription = "Files",
+                            tint = t.textSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
                 // /session in a new chat still opens the stats it fetched.
@@ -832,6 +928,19 @@ private fun EmptyChat(cwd: String) {
     }
 }
 
+/** Latest composer send-button values, read from the long-press gesture across recompositions. */
+private data class SendGesture(
+    val enabled: Boolean,
+    val stopping: Boolean,
+    val dictating: Boolean,
+    val voiceAvailable: Boolean,
+    val onSend: () -> Unit,
+    val onStop: () -> Unit,
+    val onVoiceStart: () -> Unit,
+    val onVoiceStop: () -> Unit,
+    val onVoiceCancel: () -> Unit,
+)
+
 @Composable
 private fun Composer(
     state: ChatUiState,
@@ -846,6 +955,10 @@ private fun Composer(
     onAttach: () -> Unit,
     onRemoveImage: (Long) -> Unit,
     focusRequester: FocusRequester,
+    voiceAvailable: Boolean,
+    onVoiceStart: () -> Unit,
+    onVoiceStop: () -> Unit,
+    onVoiceCancel: () -> Unit,
 ) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
@@ -860,6 +973,35 @@ private fun Composer(
     }
     var imageWarningDismissed by remember { mutableStateOf(false) }
     LaunchedEffect(hasImages) { if (!hasImages) imageWarningDismissed = false }
+    val hasContent = draft.text.isNotBlank() || hasImages
+    val stopping = state.running && !hasContent
+    // Wait for picked images to finish reading, so none is silently left behind.
+    val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0))
+    val dictating = state.dictating
+    // Dictation indicator: a soft red halo around the composer card (colored
+    // shadow, which can spread outside the card bounds — unlike a blur layer).
+    // The send button itself must stay a plain send button, so it never changes look.
+    val glowElevation by animateDpAsState(
+        targetValue = if (dictating) 24.dp else 0.dp,
+        animationSpec = tween(150),
+        label = "dictationGlow",
+    )
+    // The gesture coroutine outlives recompositions; the latest values go through snapshot state.
+    val gesture = remember {
+        mutableStateOf(SendGesture(false, false, false, false, {}, {}, {}, {}, {}))
+    }
+    gesture.value = SendGesture(
+        enabled = enabled,
+        stopping = stopping,
+        dictating = dictating,
+        voiceAvailable = voiceAvailable,
+        onSend = onSend,
+        onStop = onStop,
+        onVoiceStart = onVoiceStart,
+        onVoiceStop = onVoiceStop,
+        onVoiceCancel = onVoiceCancel,
+    )
+    var voiceAttempted by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -887,6 +1029,7 @@ private fun Composer(
         Column(
             Modifier
                 .fillMaxWidth()
+                .shadow(glowElevation, shape, ambientColor = t.danger, spotColor = t.danger)
                 .clip(shape)
                 .background(t.surface)
                 .border(1.dp, if (focused) t.borderStrong else t.border, shape)
@@ -949,19 +1092,65 @@ private fun Composer(
                             modifier = Modifier.size(18.dp),
                         )
                     }
-                    GhostChip(modelName ?: "Model", onClick = onModels, style = MaterialTheme.typography.labelSmall, enabled = !pending)
+                    GhostChip(
+                        modelName ?: "Model",
+                        onClick = onModels,
+                        style = MaterialTheme.typography.labelSmall,
+                        enabled = !pending
+                    )
                     ThinkingChip(state, onThinking, enabled = !pending)
                 }
-                val hasContent = draft.text.isNotBlank() || hasImages
-                val stopping = state.running && !hasContent
-                // Wait for picked images to finish reading, so none is silently left behind.
-                val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0))
                 Box(
                     Modifier
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (enabled) t.primary else t.muted)
-                        .clickable(enabled = enabled, onClick = if (stopping) onStop else onSend),
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                // Always await (and consume) the down before anything else:
+                                // returning from this block without suspending on a pointer
+                                // event makes awaitEachGesture's internal loop spin on the
+                                // main thread (ANR) while the button is disabled.
+                                awaitFirstDown(requireUnconsumed = false)
+                                val g = gesture.value
+                                // A long-press can start dictation even when the button is
+                                // disabled (empty draft) — dictating is its main use case.
+                                if (!g.enabled && !g.dictating && !g.voiceAvailable) return@awaitEachGesture
+                                // Quick release = tap (send / stop dictation / stop run);
+                                // held past 300 ms = voice dictation.
+                                val releasedEarly = withTimeoutOrNull(300) {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Main)
+                                        if (event.changes.any { !it.pressed }) return@withTimeoutOrNull true
+                                    }
+                                }
+                                if (releasedEarly == true) {
+                                    when {
+                                        // A quick tap while dictating stops the dictation.
+                                        gesture.value.dictating -> gesture.value.onVoiceStop()
+                                        gesture.value.stopping -> gesture.value.onStop()
+                                        gesture.value.enabled -> gesture.value.onSend()
+                                    }
+                                } else {
+                                    if (gesture.value.voiceAvailable) {
+                                        voiceAttempted = true
+                                        gesture.value.onVoiceStart()
+                                    }
+                                    // Keep holding until the pointer is released.
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Main)
+                                        if (event.changes.any { !it.pressed }) break
+                                    }
+                                    when {
+                                        gesture.value.dictating -> gesture.value.onVoiceStop()
+                                        voiceAttempted -> {
+                                            voiceAttempted = false
+                                            gesture.value.onVoiceCancel()
+                                        }
+                                    }
+                                }
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (stopping) {
@@ -1005,7 +1194,13 @@ private fun CompactResultLine(text: String) {
 }
 
 @Composable
-private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = MaterialTheme.typography.labelMedium, modifier: Modifier = Modifier, enabled: Boolean = true) {
+private fun GhostChip(
+    label: String,
+    onClick: () -> Unit,
+    style: TextStyle = MaterialTheme.typography.labelMedium,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
     val t = Pi.tokens
     Row(
         modifier
@@ -1024,7 +1219,8 @@ private fun GhostChip(label: String, onClick: () -> Unit, style: TextStyle = Mat
 private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabled: Boolean = true) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
-    val levels = state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
+    val levels =
+        state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
     Box {
         GhostChip(state.thinkingLevel ?: "default", onClick = { open = true }, enabled = enabled)
         DropdownMenu(
@@ -1039,7 +1235,12 @@ private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabl
                 DropdownMenuItem(
                     text = { Text(level, style = MaterialTheme.typography.bodyMedium, color = t.text) },
                     trailingIcon = {
-                        if (level == state.thinkingLevel) Icon(PiIcons.Check, null, tint = t.text, modifier = Modifier.size(16.dp))
+                        if (level == state.thinkingLevel) Icon(
+                            PiIcons.Check,
+                            null,
+                            tint = t.text,
+                            modifier = Modifier.size(16.dp)
+                        )
                     },
                     onClick = {
                         open = false
@@ -1098,7 +1299,8 @@ private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (Mod
                     )
                 }
                 items(options, key = { it.key }) { option ->
-                    val selected = state.model?.let { it.provider == option.provider && it.modelId == option.id } == true
+                    val selected =
+                        state.model?.let { it.provider == option.provider && it.modelId == option.id } == true
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -1110,14 +1312,26 @@ private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (Mod
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(option.name, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium), color = t.text)
+                            Text(
+                                option.name,
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                color = t.text
+                            )
                             Text(
                                 option.id,
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontWeight = FontWeight.Normal),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = GeistMono,
+                                    fontWeight = FontWeight.Normal
+                                ),
                                 color = t.textTertiary,
                             )
                         }
-                        if (selected) Icon(PiIcons.Check, contentDescription = "Selected", tint = t.text, modifier = Modifier.size(18.dp))
+                        if (selected) Icon(
+                            PiIcons.Check,
+                            contentDescription = "Selected",
+                            tint = t.text,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -1296,6 +1510,7 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                                 }
                             }
                         }
+
                         "input" -> OutlinedTextField(
                             value = text,
                             onValueChange = { text = it },
@@ -1309,6 +1524,7 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { vm.respondDialog(value = text) }),
                         )
+
                         "editor" -> OutlinedTextField(
                             value = text,
                             onValueChange = { text = it },

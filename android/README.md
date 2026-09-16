@@ -59,6 +59,14 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Thumbnails with a remove badge. Images are sent with `prompt`, also while steering.
   - A dismissible warning appears when the selected model doesn't list `image` input.
   - User messages show their images; tap one for a full-screen preview.
+- **Voice dictation:** long-press the send button to dictate (WhatsApp-style); while
+  dictating, a soft red halo glows around the composer (the send button itself stays
+  unchanged). Tokens from the Nemotron ASR server stream into the input live at the
+  cursor position. Release to stop and flush the trailing tokens; the text stays
+  editable. Tap sends as usual; a quick tap while dictating stops the dictation.
+  - Server URL is a setting ("Voice input (ASR)", default `ws://192.168.1.56:8000/ws`,
+    empty disables the feature). Language is `it-IT`.
+  - Needs the `RECORD_AUDIO` permission, requested on first use.
 - **Slash commands:**
   - Typing `/` opens pi-web's command palette above the input: built-in, extension,
     prompt and skill commands from `get_commands`, grouped with counts and filtered as
@@ -162,7 +170,9 @@ app/src/main/java/app/pimobile/
   data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, error mapping
   data/ChatModel.kt        message → ChatItem parsing (both tool-call spellings),
                            StreamingAssembler (applies message_update deltas)
-  data/Settings.kt         DataStore server config
+  data/Settings.kt         DataStore server config (incl. ASR URL for dictation)
+  data/AsrClient.kt        voice dictation: OkHttp WebSocket + AudioRecord 16 kHz mono
+                           to the Nemotron ASR server (start/audio/stop protocol)
   data/Json.kt             lenient JsonObject accessors
   ui/sessions/             session list + new-session sheet
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
