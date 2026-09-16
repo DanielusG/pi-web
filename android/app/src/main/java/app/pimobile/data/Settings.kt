@@ -45,6 +45,7 @@ class SettingsStore(private val context: Context) {
     private val passwordKey = stringPreferencesKey("password")
     private val asrUrlKey = stringPreferencesKey("asr_url")
     private val lastCwdKey = stringPreferencesKey("last_cwd")
+    private val assistCwdKey = stringPreferencesKey("assist_cwd")
 
     val config: Flow<ServerConfig> = context.serverStore.data.map {
         // A missing key means "use the default"; an explicitly saved empty string disables dictation.
@@ -58,6 +59,14 @@ class SettingsStore(private val context: Context) {
     /** Last chat cwd, so the assistant trigger can open a fresh session there. */
     val lastCwd: Flow<String> = context.chatStore.data.map { it[lastCwdKey].orEmpty() }
 
+    /** Project chosen in settings for the assistant trigger; empty = follow [lastCwd]. */
+    val assistCwd: Flow<String> = context.chatStore.data.map { it[assistCwdKey].orEmpty() }
+
+    /** Where the assistant trigger opens a fresh session: the chosen project, else the last cwd. */
+    val assistLaunchCwd: Flow<String> = context.chatStore.data.map {
+        it[assistCwdKey]?.takeIf(String::isNotBlank) ?: it[lastCwdKey].orEmpty()
+    }
+
     suspend fun save(config: ServerConfig) {
         context.serverStore.edit {
             it[urlKey] = config.baseUrl
@@ -68,5 +77,10 @@ class SettingsStore(private val context: Context) {
 
     suspend fun saveLastCwd(cwd: String) {
         context.chatStore.edit { it[lastCwdKey] = cwd }
+    }
+
+    /** Blank clears the choice, so the assistant trigger falls back to the last cwd. */
+    suspend fun saveAssistCwd(cwd: String) {
+        context.chatStore.edit { if (cwd.isBlank()) it.remove(assistCwdKey) else it[assistCwdKey] = cwd }
     }
 }

@@ -23,8 +23,10 @@ It has **not yet been tested against a real pi-web with a real model.**
   devices where the user can choose the default assistant (Settings > Apps > Default
   apps > Assistant app) Pi Mobile can be picked. The system triggers — swipe up from
   the bottom corner (gesture nav), long-press power (if enabled), long-press home
-  (3-button nav) — then open a **fresh session** in the last used working directory,
-  with the composer focused and the keyboard up. With no remembered cwd yet, the
+  (3-button nav) — then open a **fresh session** with the composer focused and the
+  keyboard up. The session opens in the project chosen under Settings > "Assistant
+  project" (a project from the session list or a typed directory, saved on pick);
+  left unset, it follows the last used working directory. With neither, the
   new-session sheet opens instead. Note: on OnePlus the Plus Key (AI key) has fixed
   options and cannot be mapped to a third-party app.
   - **Known bug (back navigation):** in a chat opened from an assistant trigger the
@@ -170,11 +172,13 @@ app/src/main/java/app/pimobile/
   data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, error mapping
   data/ChatModel.kt        message → ChatItem parsing (both tool-call spellings),
                            StreamingAssembler (applies message_update deltas)
-  data/Settings.kt         DataStore server config (incl. ASR URL for dictation)
+  data/Settings.kt         DataStore server config (incl. ASR URL for dictation),
+                           last cwd and assistant project
   data/AsrClient.kt        voice dictation: OkHttp WebSocket + AudioRecord 16 kHz mono
                            to the Nemotron ASR server (start/audio/stop protocol)
   data/Json.kt             lenient JsonObject accessors
   ui/sessions/             session list + new-session sheet
+  ui/settings/             server settings, assistant project picker
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
   ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
