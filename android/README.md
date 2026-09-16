@@ -27,16 +27,9 @@ It has **not yet been tested against a real pi-web with a real model.**
   keyboard up. The session opens in the project chosen under Settings > "Assistant
   project" (a project from the session list or a typed directory, saved on pick);
   left unset, it follows the last used working directory. With neither, the
-  new-session sheet opens instead. Note: on OnePlus the Plus Key (AI key) has fixed
+  new-session sheet opens instead. Back returns to the session list; chats opened
+  before the trigger are dropped. Note: on OnePlus the Plus Key (AI key) has fixed
   options and cannot be mapped to a third-party app.
-  - **Known bug (back navigation):** in a chat opened from an assistant trigger the
-    in-app back arrow (top left) does nothing, and the system back key exits the app
-    — the back stack ends up with only the current entry. Reproduce: set Pi Mobile as
-    the default assistant, fire the corner swipe (or long-press power), then tap the
-    back arrow in the new chat. Suspected cause: the `popUpTo(startDestination)`
-    navigation option used by the assist launch (MainActivity) corrupts the back
-    stack in navigation-compose 2.8.5. The same arrow works in chats opened from the
-    session list. Workaround: leave the app via the app switcher.
 - **Chat:**
   - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
   - Collapsible thinking; deferred thinking loads its full text on tap.
