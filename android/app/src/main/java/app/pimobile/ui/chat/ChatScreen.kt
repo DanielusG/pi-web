@@ -65,11 +65,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -118,6 +120,8 @@ import app.pimobile.data.ChatItem
 import app.pimobile.data.FilePaths
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.ToolResult
+import app.pimobile.data.TtsPlayer
+import app.pimobile.data.TtsUiState
 import app.pimobile.notify.AppVisibility
 import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
@@ -136,10 +140,15 @@ import app.pimobile.ui.theme.piTextFieldColors
 import app.pimobile.ui.markdown.Markdown
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 private val FALLBACK_THINKING_LEVELS = listOf("off", "minimal", "low", "medium", "high")
+
+/** Shared idle state for chats without a TTS player. */
+private val NoTtsState = MutableStateFlow<TtsUiState>(TtsUiState.Idle)
 
 @Composable
 fun ChatScreen(
@@ -153,10 +162,21 @@ fun ChatScreen(
     onInsertConsumed: () -> Unit = {},
     /** Fresh-session launches from the assistant trigger: focus the composer and raise the keyboard. */
     autoFocusComposer: Boolean = false,
+    /** The app-level TTS player; null disables the Listen action. */
+    tts: TtsPlayer? = null,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val ttsState by (tts?.state ?: NoTtsState).collectAsStateWithLifecycle()
     val t = Pi.tokens
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    DisposableEffect(tts) {
+        val handler: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
+        tts?.onError = handler
+        onDispose {
+            if (tts?.onError == handler) tts.onError = null
+        }
+    }
     val listState = rememberLazyListState()
     // A TextFieldValue, so inserting a slash command can put the cursor after it.
     var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
@@ -392,13 +412,23 @@ fun ChatScreen(
     Scaffold(
         containerColor = t.background,
         topBar = {
-            ChatTopBar(
-                state = state,
-                scrolled = listState.canScrollBackward,
-                onBack = onBack,
-                onStatsOpened = vm::consumeStatsRequest,
-                onOpenFiles = onOpenFiles,
-            )
+            Column {
+                ChatTopBar(
+                    state = state,
+                    scrolled = listState.canScrollBackward,
+                    onBack = onBack,
+                    onStatsOpened = vm::consumeStatsRequest,
+                    onOpenFiles = onOpenFiles,
+                )
+                if (ttsState != TtsUiState.Idle) {
+                    TtsBar(
+                        state = ttsState,
+                        onToggle = { tts?.toggle() },
+                        onSpeed = { tts?.setSpeed(it) },
+                        onClose = { tts?.stop() },
+                    )
+                }
+            }
         },
         snackbarHost = {
             SnackbarHost(snackbar) { data ->
@@ -522,6 +552,10 @@ fun ChatScreen(
                         onToolLongPress = if (canNavigate) {
                             { id -> selectedToolId = if (selectedToolId == id) null else id }
                         } else null,
+                        onListen = if (tts != null && tts.config.ttsUrl.isNotBlank()) {
+                            { key, text -> tts.play(key, text, state.title) }
+                        } else null,
+                        ttsLoadingKey = (ttsState as? TtsUiState.Loading)?.key,
                     )
 
                     is ChatItem.Bash -> BashCard(item)
@@ -740,6 +774,131 @@ private fun ChatTopBar(
         HorizontalDivider(color = if (scrolled) t.border else Color.Transparent)
     }
 }
+
+/** Telegram-style playback bar: play/pause, title, speed menu, stop. Shown while TTS is active. */
+@Composable
+private fun TtsBar(
+    state: TtsUiState,
+    onToggle: () -> Unit,
+    onSpeed: (Float) -> Unit,
+    onClose: () -> Unit,
+) {
+    val t = Pi.tokens
+    val loading = state is TtsUiState.Loading
+    val active = state as? TtsUiState.Active
+    val speed = active?.speed ?: 1f
+    var speedMenuOpen by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(t.background)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(t.muted)
+                    .clickable(enabled = !loading, onClick = onToggle),
+                contentAlignment = Alignment.Center,
+            ) {
+            when {
+                loading -> CircularProgressIndicator(
+                    Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = t.accent,
+                    trackColor = Color.Transparent,
+                )
+                active?.isPlaying == true ->
+                    Icon(PiIcons.Pause, "Pause", tint = t.text, modifier = Modifier.size(18.dp))
+                else ->
+                    Icon(PiIcons.Play, "Play", tint = t.text, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            (state as? TtsUiState.Loading)?.title ?: active?.title.orEmpty(),
+            style = MaterialTheme.typography.labelLarge,
+            color = t.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Box {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, t.border, RoundedCornerShape(8.dp))
+                    .alpha(if (loading) 0.5f else 1f)
+                    .clickable(enabled = !loading) { speedMenuOpen = true }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(speedLabel(speed), style = MaterialTheme.typography.labelMedium, color = t.accent)
+                Spacer(Modifier.width(4.dp))
+                Icon(PiIcons.ChevronDown, null, tint = t.textTertiary, modifier = Modifier.size(12.dp))
+            }
+            DropdownMenu(
+                expanded = speedMenuOpen,
+                onDismissRequest = { speedMenuOpen = false },
+                shape = RoundedCornerShape(14.dp),
+                containerColor = t.surface,
+                border = BorderStroke(1.dp, t.border),
+                shadowElevation = 8.dp,
+            ) {
+                TTS_SPEEDS.forEach { (value, label) ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    speedLabel(value),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (value == speed) t.accent else t.text,
+                                    modifier = Modifier.width(48.dp),
+                                )
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (value == speed) t.accent else t.textSecondary,
+                                )
+                            }
+                        },
+                        onClick = {
+                            onSpeed(value)
+                            speedMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(6.dp))
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(PiIcons.Close, "Stop", tint = t.textSecondary, modifier = Modifier.size(18.dp))
+        }
+    }
+    HorizontalDivider(color = t.border)
+}
+}
+
+private val TTS_SPEEDS = listOf(
+    0.5f to "Slow",
+    1f to "Normal",
+    1.2f to "Medium",
+    1.5f to "Fast",
+    1.7f to "Very fast",
+    2f to "Super fast",
+)
+
+private fun speedLabel(speed: Float): String =
+    if (speed == speed.toLong().toFloat()) "${speed.toLong()}x" else "${speed}x"
 
 @Composable
 private fun ContextIndicator(state: ChatUiState, onStatsOpened: () -> Unit) {

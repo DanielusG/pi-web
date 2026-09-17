@@ -87,6 +87,16 @@ object PiIcons {
     val Music by lazy {
         lineIcon("Music", "M9 18V5l12-2v13", "M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6", "M18 13a3 3 0 1 0 0 6a3 3 0 1 0 0-6")
     }
+    val VolumeUp by lazy {
+        lineIcon(
+            "VolumeUp",
+            "M11 5L6 9H2v6h4l5 4V5z",
+            "M15.54 8.46a5 5 0 0 1 0 7.07",
+            "M19.07 4.93a10 10 0 0 1 0 14.14",
+        )
+    }
+    val Play by lazy { lineIcon("Play", "M7 4l13 8-13 8V4z") }
+    val Pause by lazy { lineIcon("Pause", "M9 5v14", "M15 5v14") }
 }
 
 private fun lineIcon(name: String, vararg paths: String): ImageVector {

@@ -58,6 +58,10 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Media3: TTS playback — ExoPlayer + MediaSession in a foreground service,
+    // so audio survives background and screen-off (see service/TtsPlaybackService).
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
