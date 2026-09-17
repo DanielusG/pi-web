@@ -44,6 +44,10 @@ class AsrClient(private val context: Context, private val asrBaseUrl: String) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // Serializes audio sends with stop(): an audio message can never be sent
+    // after the 'stop' message, no matter how the two threads interleave.
+    private val sendLock = Any()
+
     private var webSocket: WebSocket? = null
     private var recorder: AudioRecord? = null
     private var audioThread: Thread? = null
@@ -120,9 +124,11 @@ class AsrClient(private val context: Context, private val asrBaseUrl: String) {
 
     /** End the session: the server flushes the held-back tokens, then `done` arrives. */
     fun stop() {
-        if (webSocket == null || stopping) return
-        stopping = true
-        webSocket?.send("""{"type":"stop"}""")
+        synchronized(sendLock) {
+            if (webSocket == null || stopping) return
+            stopping = true
+            webSocket?.send("""{"type":"stop"}""")
+        }
         // The silence flush takes a second or two; never hold the mic forever.
         mainHandler.postDelayed({ finish(null) }, 15000)
     }
@@ -157,7 +163,10 @@ class AsrClient(private val context: Context, private val asrBaseUrl: String) {
                 val n = rec.read(block, 0, block.size)
                 if (n > 0) {
                     val b64 = Base64.encodeToString(block.copyOf(n), Base64.NO_WRAP)
-                    webSocket?.send("""{"type":"audio","data":"$b64"}""")
+                    val msg = """{"type":"audio","data":"$b64"}"""
+                    synchronized(sendLock) {
+                        if (!stopping) webSocket?.send(msg)
+                    }
                 } else if (n < 0) {
                     break
                 }
