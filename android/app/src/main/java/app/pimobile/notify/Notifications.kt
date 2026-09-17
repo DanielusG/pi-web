@@ -57,16 +57,26 @@ object Notifications {
         )
     }
 
-    fun ongoing(context: Context, titles: List<String>): Notification {
-        val title = when (titles.size) {
-            0 -> "pi is working"
-            1 -> titles.first()
+    /** [items] are (title, waiting) pairs; waiting sessions win the title. */
+    fun ongoing(context: Context, items: List<Pair<String, Boolean>>): Notification {
+        val titles = items.map { it.first }
+        val waitingTitles = items.filter { it.second }.map { it.first }
+        val title = when {
+            waitingTitles.isNotEmpty() ->
+                if (titles.size == 1) waitingTitles.first() else "Waiting for input"
+            titles.isEmpty() -> "pi is working"
+            titles.size == 1 -> titles.first()
             else -> "${titles.size} sessions running"
+        }
+        val text = when {
+            waitingTitles.isNotEmpty() -> waitingTitles.joinToString(" · ")
+            titles.size > 1 -> titles.joinToString(" · ")
+            else -> "Working…"
         }
         return NotificationCompat.Builder(context, CHANNEL_RUNNING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText(if (titles.size > 1) titles.joinToString(" · ") else "Working…")
+            .setContentText(text)
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
@@ -87,5 +97,24 @@ object Notifications {
             .build()
         // Same tag scheme as pi-web's push, so repeats replace instead of stacking.
         NotificationManagerCompat.from(context).notify("pi-session-complete:$sessionId", FINISHED_ID, notification)
+    }
+
+    @SuppressLint("MissingPermission") // checked by canPost()
+    fun waitingForInput(context: Context, sessionId: String, cwd: String?, title: String) {
+        if (!canPost(context)) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_FINISHED)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText("Waiting for your input.")
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setContentIntent(openIntent(context, sessionId, cwd))
+            .build()
+        // Own tag: repeats replace, and it never collides with the completion tag.
+        NotificationManagerCompat.from(context).notify("pi-session-waiting:$sessionId", FINISHED_ID, notification)
+    }
+
+    fun cancelWaiting(context: Context, sessionId: String) {
+        NotificationManagerCompat.from(context).cancel("pi-session-waiting:$sessionId", FINISHED_ID)
     }
 }
