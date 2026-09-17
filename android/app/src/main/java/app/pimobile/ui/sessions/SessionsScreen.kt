@@ -108,7 +108,7 @@ fun SessionsScreen(
 
     Scaffold(
         containerColor = t.background,
-        topBar = { SessionsHeader(serverLabel, runningCount = state.running.size, onSettings = onSettings) },
+        topBar = { SessionsHeader(serverLabel, runningCount = state.running.size, waitingCount = state.waiting.size, onSettings = onSettings) },
         floatingActionButton = { NewSessionButton(onClick = { showNew = true }) },
         snackbarHost = {
             SnackbarHost(snackbar) { data ->
@@ -152,6 +152,7 @@ fun SessionsScreen(
                             group = group,
                             expanded = expanded,
                             running = state.running,
+                            waiting = state.waiting,
                             onOpen = onOpen,
                             onLongClick = { sheetRow = it },
                             onToggle = { vm.toggleProject(group.root) },
@@ -186,7 +187,7 @@ fun SessionsScreen(
 }
 
 @Composable
-private fun SessionsHeader(serverLabel: String, runningCount: Int, onSettings: () -> Unit) {
+private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount: Int, onSettings: () -> Unit) {
     val t = Pi.tokens
     Row(
         Modifier
@@ -205,6 +206,16 @@ private fun SessionsHeader(serverLabel: String, runningCount: Int, onSettings: (
                     Spacer(Modifier.width(6.dp))
                     Text(
                         if (runningCount == 1) "1 running" else "$runningCount running",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = t.textSecondary,
+                    )
+                }
+                if (waitingCount > 0) {
+                    Spacer(Modifier.width(10.dp))
+                    StatusDot(t.warning, pulsing = false)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (waitingCount == 1) "1 waiting" else "$waitingCount waiting",
                         style = MaterialTheme.typography.labelMedium,
                         color = t.textSecondary,
                     )
@@ -239,6 +250,7 @@ private fun ProjectGroupView(
     group: ProjectGroup,
     expanded: Boolean,
     running: Set<String>,
+    waiting: Set<String>,
     onOpen: (id: String, cwd: String) -> Unit,
     onLongClick: (SessionRow) -> Unit,
     onToggle: () -> Unit,
@@ -294,6 +306,7 @@ private fun ProjectGroupView(
                 SessionRowView(
                     row,
                     running = row.id in running,
+                    waiting = row.id in waiting,
                     onClick = { onOpen(row.id, row.cwd) },
                     onLongClick = { onLongClick(row) },
                 )
@@ -315,7 +328,7 @@ private fun ProjectGroupView(
 }
 
 @Composable
-private fun SessionRowView(row: SessionRow, running: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun SessionRowView(row: SessionRow, running: Boolean, waiting: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val t = Pi.tokens
     Row(
         Modifier
@@ -344,7 +357,14 @@ private fun SessionRowView(row: SessionRow, running: Boolean, onClick: () -> Uni
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        if (running) {
+        if (waiting) {
+            Spacer(Modifier.width(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot(t.warning, pulsing = false)
+                Spacer(Modifier.width(6.dp))
+                Text("Waiting", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
+            }
+        } else if (running) {
             Spacer(Modifier.width(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusDot(t.success, pulsing = true)

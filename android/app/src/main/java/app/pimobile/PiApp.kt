@@ -10,6 +10,7 @@ import app.pimobile.ui.markdown.disablePreciseGlyphBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -21,6 +22,9 @@ class PiApp : Application() {
         private set
     /** Initialized lazily: [settings] is assigned in [onCreate]. */
     val tts by lazy { TtsPlayer(this, settings) }
+
+    /** Session ids blocked on a user-input dialog; maintained by [RunWatcherService]. */
+    val waitingSessionIds = MutableStateFlow<Set<String>>(emptySet())
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
