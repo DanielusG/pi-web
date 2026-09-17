@@ -199,7 +199,7 @@ fun ChatScreen(
             if (dictationAnchor < 0) return@startDictation
             if (dictationLen == 0) {
                 // Leading space when the cursor sits mid-text, not right after whitespace.
-                val before = d.text.getOrNull(dictationAnchor)
+                val before = d.text.getOrNull(dictationAnchor - 1)
                 val prefix = if (before != null && !before.isWhitespace()) " " else ""
                 val text = d.text.substring(0, dictationAnchor) + prefix + token +
                         d.text.substring(dictationAnchor)
