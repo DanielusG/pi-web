@@ -30,12 +30,17 @@ import kotlinx.serialization.json.JsonObject
  * Foreground service that lives only while some session is running. pi-web's
  * own completion push is Web Push, which a native app can't receive, so this
  * polls GET /api/agent/running and notifies on running → idle transitions,
- * applying the same subagent suppression as pi-web's sidebar.
+ * applying the same subagent suppression as pi-web's sidebar. On top of the
+ * poll it keeps one SSE per active session (the viewed one excepted) to catch
+ * blocking extension UI requests — permission gates included — and notify on
+ * running → waiting transitions.
  */
 class RunWatcherService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loop: Job? = null
     private val sessions = mutableMapOf<String, Pair<String, String?>>() // id -> (title, cwd)
+    private val sseJobs = mutableMapOf<String, Job>()
+    private val waiting = mutableMapOf<String, String>() // id -> open dialog id
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -53,6 +58,10 @@ class RunWatcherService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        sseJobs.values.forEach { it.cancel() }
+        sseJobs.clear()
+        waiting.clear()
+        (application as PiApp).waitingSessionIds.value = emptySet()
         scope.cancel()
         super.onDestroy()
     }
@@ -81,15 +90,44 @@ class RunWatcherService : Service() {
             // Suppression comes from the previous poll: a finished subagent leaves both lists at once.
             val finished = previous - running - suppressed
             val active = running - body.arr("completionNotificationSuppressedSessionIds").strings().toSet()
-            if ((active + finished).any { it !in sessions }) loadSessions(api)
+            if ((running + finished).any { it !in sessions }) loadSessions(api)
 
             for (id in finished) {
                 if (AppVisibility.isForeground && AppVisibility.viewingSessionId == id) continue
                 val (title, cwd) = sessions[id] ?: ("Session complete" to null)
                 Notifications.finished(this, id, cwd, title)
+                // A gate that resolved into a finished run leaves both states at once.
+                if (waiting.remove(id) != null) Notifications.cancelWaiting(this, id)
             }
             suppressed = body.arr("completionNotificationSuppressedSessionIds").strings().toSet()
             previous = running
+
+            // One SSE per active session; the viewed one is covered by the chat's own SSE.
+            // The server replays open dialogs to new subscribers, so a (re)opened stream
+            // recovers the waiting state even if the gate opened before the connection.
+            val viewed = if (AppVisibility.isForeground) AppVisibility.viewingSessionId else null
+            val desired = if (viewed != null) running - viewed else running
+            for (id in sseJobs.keys.toList()) {
+                if (id !in desired) {
+                    sseJobs.remove(id)?.cancel()
+                    // Also covers navigating to the session: the chat's dialog is on screen now.
+                    if (waiting.remove(id) != null) Notifications.cancelWaiting(this, id)
+                }
+            }
+            for (id in desired) {
+                if (id !in sseJobs) {
+                    sseJobs[id] = scope.launch {
+                        try {
+                            api.events(id).collect { event -> onWaitingEvent(id, event) }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            // Dropped stream; the next tick reopens it while the session is active.
+                        }
+                    }
+                }
+            }
+            publishWaiting()
 
             if (active.isEmpty()) {
                 // A short grace lets queued follow-ups start without dropping the watch.
@@ -99,7 +137,7 @@ class RunWatcherService : Service() {
                 if (Notifications.canPost(this)) {
                     getSystemService(NotificationManager::class.java).notify(
                         Notifications.ONGOING_ID,
-                        Notifications.ongoing(this, active.map { sessions[it]?.first ?: "Session" }),
+                        Notifications.ongoing(this, active.map { id -> (sessions[id]?.first ?: "Session") to (id in waiting) }),
                     )
                 }
             }
@@ -107,6 +145,31 @@ class RunWatcherService : Service() {
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /** Blocking dialog methods only: notify/custom/widget/status never block the run. */
+    private fun onWaitingEvent(sessionId: String, event: JsonObject) {
+        when (event.str("type")) {
+            "extension_ui_request" -> {
+                val id = event.str("id") ?: return
+                if (event.str("method") !in BLOCKING_DIALOG_METHODS) return
+                if (waiting.putIfAbsent(sessionId, id) == null) {
+                    val (title, cwd) = sessions[sessionId] ?: ("Session" to null)
+                    if (!(AppVisibility.isForeground && AppVisibility.viewingSessionId == sessionId)) {
+                        Notifications.waitingForInput(this, sessionId, cwd, title)
+                    }
+                }
+            }
+            "extension_ui_closed" -> {
+                val id = event.str("id") ?: return
+                if (waiting.remove(sessionId, id)) Notifications.cancelWaiting(this, sessionId)
+            }
+        }
+        publishWaiting()
+    }
+
+    private fun publishWaiting() {
+        (application as PiApp).waitingSessionIds.value = waiting.keys
     }
 
     private suspend fun loadSessions(api: PiApi) {
@@ -127,6 +190,7 @@ class RunWatcherService : Service() {
 
     companion object {
         private const val POLL_MS = 3_000L
+        private val BLOCKING_DIALOG_METHODS = setOf("select", "confirm", "input", "editor")
         private const val IDLE_POLLS_BEFORE_STOP = 3
         private const val MAX_FAILURES = 40 // ~2 minutes unreachable
 

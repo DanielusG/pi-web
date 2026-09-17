@@ -182,7 +182,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
         ) { entry ->
             val newSheet = entry.arguments?.getBoolean("newSheet") ?: false
             AskNotificationPermissionOnce()
-            val vm = viewModel { SessionsViewModel(app.api, app::onRunActive) }
+            val vm = viewModel { SessionsViewModel(app.api, app::onRunActive, app.waitingSessionIds) }
             SessionsScreen(
                 vm = vm,
                 serverLabel = app.api.config.baseUrl.removePrefix("http://").removePrefix("https://"),

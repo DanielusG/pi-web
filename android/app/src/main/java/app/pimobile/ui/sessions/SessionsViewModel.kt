@@ -40,6 +40,7 @@ data class SessionsUiState(
     val refreshing: Boolean = false,
     val groups: List<ProjectGroup> = emptyList(),
     val running: Set<String> = emptySet(),
+    val waiting: Set<String> = emptySet(),
     val expanded: Set<String> = emptySet(),
     val recentCwds: List<String> = emptyList(),
     val error: String? = null,
@@ -48,11 +49,17 @@ data class SessionsUiState(
 class SessionsViewModel(
     private val api: PiApi,
     private val onRunActive: () -> Unit = {},
+    private val waitingSessionIds: StateFlow<Set<String>> = MutableStateFlow(emptySet()),
 ) : ViewModel() {
     private val _state = MutableStateFlow(SessionsUiState())
     val state: StateFlow<SessionsUiState> = _state.asStateFlow()
 
     private var listVersion: Long? = null
+
+    init {
+        // Waiting state is owned by RunWatcherService (its per-session SSE streams).
+        viewModelScope.launch { waitingSessionIds.collect { waiting -> _state.update { it.copy(waiting = waiting) } } }
+    }
 
     fun refresh(force: Boolean) {
         viewModelScope.launch { load(force) }
