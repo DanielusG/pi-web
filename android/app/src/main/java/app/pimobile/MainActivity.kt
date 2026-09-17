@@ -217,6 +217,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
             val insert by entry.savedStateHandle.getStateFlow<String?>(INSERT_KEY, null).collectAsState()
             ChatScreen(
                 vm,
+                tts = app.tts,
                 onBack = { nav.popBackStack() },
                 onOpenSession = { target ->
                     // Replace this chat (web: /clone switches the active session).
