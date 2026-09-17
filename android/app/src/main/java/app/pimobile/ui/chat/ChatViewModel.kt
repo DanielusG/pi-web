@@ -837,6 +837,12 @@ class ChatViewModel(
             val body = api.get("/api/sessions/${PiApi.encode(id)}?deferThinking=1&deferMedia=1").asObj() ?: return
             val context = body.obj("context")
             val info = body.obj("info")
+            // File-based context usage (same semantics as the live value): lets
+            // the indicator show on cold sessions. Applied as a full snapshot —
+            // a null `tokens` (post-compaction) must clear a stale value. A
+            // later reconcile() with live state overrides it while the agent
+            // is loaded.
+            val contextUsage = body.obj("contextUsage")
             val fresh = context?.let(::parseContext).orEmpty()
             // A snapshot generated before local appends (optimistic bubble, SSE-
             // delivered messages) must not wipe them: the GET response and the SSE
@@ -855,6 +861,9 @@ class ChatViewModel(
                     stats = body.obj("stats")?.let { parseStats(it, body.long("totalActiveMs")) } ?: state.stats,
                     tree = SessionTree.parse(body.arr("tree")),
                     leafId = body.str("leafId"),
+                    contextPercent = if (contextUsage != null) contextUsage.double("percent") else state.contextPercent,
+                    contextTokens = if (contextUsage != null) contextUsage.long("tokens") else state.contextTokens,
+                    contextWindow = if (contextUsage != null) contextUsage.long("contextWindow") else state.contextWindow,
                 )
             }
             publishMessages()

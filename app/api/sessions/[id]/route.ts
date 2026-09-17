@@ -18,6 +18,7 @@ import { abortSubagent, getRpcSession, getRpcSessionInfos } from "@/lib/rpc-mana
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 import { computeSessionStats } from "@/lib/session-stats";
+import { computeFileContextUsage } from "@/lib/cold-context";
 import type { SessionEntry } from "@/lib/types";
 import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
@@ -57,11 +58,15 @@ export async function GET(
     // the same aggregation the SDK's getSessionStats() uses. Lets the client
     // keep monotonic token/cost counters across compaction and page reloads.
     const stats = computeSessionStats(entries as unknown as SessionEntry[]);
+    const header = sm.getHeader();
+    // Context usage for the active branch, computed from the file with the
+    // same semantics as AgentSession.getContextUsage() so clients can show
+    // the indicator on cold sessions. Live runs override it via get_state/SSE.
+    const contextUsage = await computeFileContextUsage(entries, leafId, header?.cwd || process.cwd());
     const sessionName = sm.getSessionName();
     const firstUserEntry = entries.find((entry) => entry.type === "message" && entry.message.role === "user");
     const firstUserMessage = firstUserEntry?.type === "message" ? firstUserEntry.message : undefined;
 
-    const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
     const parentSessionId = header?.parentSession
@@ -105,6 +110,7 @@ export async function GET(
         tree,
         context,
         stats,
+        contextUsage,
         totalActiveMs,
         ...(toolNames !== undefined ? { toolNames } : {}),
       },
