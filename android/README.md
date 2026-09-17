@@ -62,6 +62,22 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Server URL is a setting ("Voice input (ASR)", default `ws://192.168.1.56:8000/ws`,
     empty disables the feature). Language is `it-IT`.
   - Needs the `RECORD_AUDIO` permission, requested on first use.
+- **Text to speech ("Listen"):**
+  - Final assistant messages show a "Listen" action with a speaker icon in the footer.
+  - Streaming synthesis against an OpenAI-compatible TTS server (`POST /v1/audio/speech`
+    with `stream: true`). Default: Kokoro-FastAPI on the laptop (`http://192.168.1.56:8880`,
+    model `kokoro`, voice `if_sara`). Audio playback starts in ~0.5 s even for long
+    responses because Kokoro chunks and streams mp3 frames incrementally.
+  - While active, a floating Telegram-style bar appears below the header with play/pause,
+    preview title, speed selector (0.5x, 1x, 1.2x, 1.5x, 1.7x, 2x), and a stop/close button.
+  - Changing playback speed happens client-side without re-synthesizing, and the last chosen
+    speed is persisted across sessions.
+  - Background and screen-off playback: uses Android's native Media3 stack (`ExoPlayer` +
+    `MediaSession` hosted in a foreground `MediaSessionService`), showing the standard system
+    media notification with lockscreen controls and handling audio focus automatically
+    (e.g., auto-pause during phone calls or voice dictation).
+  - Settings: URL, model, and voice configured in Settings > "Text to speech (TTS)"; empty
+    URL disables the feature and hides the button.
 - **Slash commands:**
   - Typing `/` opens pi-web's command palette above the input: built-in, extension,
     prompt and skill commands from `get_commands`, grouped with counts and filtered as
@@ -165,10 +181,15 @@ app/src/main/java/app/pimobile/
   data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, error mapping
   data/ChatModel.kt        message → ChatItem parsing (both tool-call spellings),
                            StreamingAssembler (applies message_update deltas)
-  data/Settings.kt         DataStore server config (incl. ASR URL for dictation),
-                           last cwd and assistant project
+  data/Settings.kt         DataStore server config (incl. ASR URL for dictation,
+                           TTS config), last cwd and assistant project
   data/AsrClient.kt        voice dictation: OkHttp WebSocket + AudioRecord 16 kHz mono
                            to the Nemotron ASR server (start/audio/stop protocol)
+  data/TtsClient.kt        TTS streaming request builder (OpenAI-compatible /v1/audio/speech)
+  data/TtsText.kt          markdown sanitizer for speech (drops code fences, markers)
+  data/TtsPlayer.kt        app-level TTS coordinator, MediaController binding, UI state
+  media/TtsDataSource.kt   Media3 DataSource streaming POST /v1/audio/speech directly to ExoPlayer
+  service/TtsPlaybackService.kt foreground MediaSessionService + ExoPlayer
   data/Json.kt             lenient JsonObject accessors
   ui/sessions/             session list + new-session sheet
   ui/settings/             server settings, assistant project picker

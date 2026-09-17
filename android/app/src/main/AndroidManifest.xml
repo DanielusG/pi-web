@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- TTS playback keeps playing with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Cleartext is allowed on purpose: pi-web serves plain HTTP on a LAN IP or
          a Tailscale address. Put HTTPS in front when exposing it further. -->
@@ -43,6 +46,16 @@
             android:name=".notify.RunWatcherService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Synthesized TTS audio: ExoPlayer + MediaSession, survives screen-off. -->
+        <service
+            android:name=".service.TtsPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
         <!-- Hands downloaded server files to other apps (share, open with). -->
         <provider

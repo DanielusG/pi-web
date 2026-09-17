@@ -59,6 +59,9 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
     var url by rememberSaveable { mutableStateOf(current.baseUrl) }
     var password by rememberSaveable { mutableStateOf(current.password) }
     var asrUrl by rememberSaveable { mutableStateOf(current.asrUrl) }
+    var ttsUrl by rememberSaveable { mutableStateOf(current.ttsUrl) }
+    var ttsModel by rememberSaveable { mutableStateOf(current.ttsModel) }
+    var ttsVoice by rememberSaveable { mutableStateOf(current.ttsVoice) }
     var showPassword by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -144,6 +147,49 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                 style = MaterialTheme.typography.labelSmall,
                 color = t.textTertiary,
             )
+            FieldLabel("Text to speech (TTS)")
+            OutlinedTextField(
+                value = ttsUrl,
+                onValueChange = { ttsUrl = it },
+                placeholder = { Text("http://192.168.1.56:8880") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = piTextFieldColors(),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = GeistMono),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = ttsModel,
+                    onValueChange = { ttsModel = it },
+                    label = { Text("Model") },
+                    placeholder = { Text("kokoro") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = piTextFieldColors(),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = GeistMono),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = ttsVoice,
+                    onValueChange = { ttsVoice = it },
+                    label = { Text("Voice") },
+                    placeholder = { Text("if_sara") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = piTextFieldColors(),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = GeistMono),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "OpenAI-compatible TTS server (POST /v1/audio/speech) for the Listen action. " +
+                    "Model and voice are sent as-is; leave them empty for the server defaults. " +
+                    "Leave the URL empty to disable.",
+                style = MaterialTheme.typography.labelSmall,
+                color = t.textTertiary,
+            )
             PiPrimaryButton(
                 "Connect",
                 enabled = url.isNotBlank(),
@@ -159,6 +205,9 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                             ServerConfig.normalizeUrl(url),
                             password,
                             ServerConfig.normalizeAsrUrl(asrUrl),
+                            ServerConfig.normalizeTtsUrl(ttsUrl),
+                            ttsModel.trim(),
+                            ttsVoice.trim(),
                         )
                         val previous = app.api.config
                         app.api.config = candidate

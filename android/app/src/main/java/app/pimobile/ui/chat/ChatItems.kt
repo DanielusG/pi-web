@@ -125,12 +125,15 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
     }
 }
 
-/** Web: MessageView's bottom row — copy, edit from here and the time. Always shown: touch has no hover. */
+/** Web: MessageView's bottom row — copy, listen, edit from here and the time. Always shown: touch has no hover. */
 @Composable
 fun MessageFooter(
     copyText: String,
     timestamp: Long?,
     onEditFromHere: (() -> Unit)?,
+    /** TTS: null hides the action; [listenLoading] shows a spinner for this message. */
+    onListen: (() -> Unit)? = null,
+    listenLoading: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val t = Pi.tokens
@@ -153,6 +156,13 @@ fun MessageFooter(
                 copied = true
             }
         }
+        if (onListen != null) {
+            if (listenLoading) {
+                FooterActionLoading()
+            } else {
+                FooterAction(PiIcons.VolumeUp, "Listen", t.textTertiary, onListen)
+            }
+        }
         onEditFromHere?.let { FooterAction(PiIcons.CornerDownRight, "Edit from here", t.textTertiary, it) }
         timestamp?.let {
             Text(
@@ -162,6 +172,31 @@ fun MessageFooter(
                 modifier = Modifier.padding(start = 6.dp),
             )
         }
+    }
+}
+
+/** The Listen action while its message is being synthesized. */
+@Composable
+private fun FooterActionLoading() {
+    val t = Pi.tokens
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            Modifier.size(12.dp),
+            strokeWidth = 1.5.dp,
+            color = t.accent,
+            trackColor = Color.Transparent,
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            "Synthesizing",
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal),
+            color = t.accent,
+        )
     }
 }
 
@@ -250,6 +285,10 @@ fun AssistantMessage(
     /** The tool card whose long-press footer is open. */
     selectedToolId: String? = null,
     onToolLongPress: ((callId: String) -> Unit)? = null,
+    /** TTS: opens the Listen action on the final footer; null hides it. */
+    onListen: ((key: String, text: String) -> Unit)? = null,
+    /** The message key currently being synthesized (spinner in its footer). */
+    ttsLoadingKey: String? = null,
 ) {
     val t = Pi.tokens
     val openLink: ((String) -> Unit)? = onOpenFile?.let { open -> { path: String -> open(path, false) } }
@@ -317,10 +356,13 @@ fun AssistantMessage(
         if (item.stopReason == "error" && !error.isNullOrBlank()) ErrorNote(error)
         // The agent loop ended here. Native-only: the web shows the footer on user bubbles alone.
         if (!item.streaming && item.stopReason != "toolUse") {
+            val listenText = item.blocks.filterIsInstance<Block.Text>().joinToString("\n\n") { it.text.trim() }.trim()
             MessageFooter(
-                copyText = item.blocks.filterIsInstance<Block.Text>().joinToString("\n\n") { it.text.trim() }.trim(),
+                copyText = listenText,
                 timestamp = item.timestamp,
                 onEditFromHere = item.entryId?.let { id -> onEditFromHere?.let { edit -> { edit(id) } } },
+                onListen = if (listenText.isNotBlank()) onListen?.let { cb -> { cb(item.key, listenText) } } else null,
+                listenLoading = ttsLoadingKey == item.key,
                 modifier = Modifier.offset(x = (-8).dp),
             )
         }
