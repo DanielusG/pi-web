@@ -125,6 +125,7 @@ import app.pimobile.data.ToolResult
 import app.pimobile.data.TtsPlayer
 import app.pimobile.data.TtsUiState
 import app.pimobile.notify.AppVisibility
+import app.pimobile.notify.Notifications
 import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
 import app.pimobile.ui.formatDuration
@@ -278,11 +279,13 @@ fun ChatScreen(
             awaitCancellation()
         }
     }
-    // Completion notifications are skipped for the session on screen.
+    // Completion notifications are skipped for the session on screen, and its pending
+    // one-shot notifications are stale the moment it is.
     LaunchedEffect(lifecycleOwner, state.sessionId) {
         val id = state.sessionId ?: return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             AppVisibility.viewingSessionId = id
+            Notifications.cancelForSession(context, id)
             try {
                 awaitCancellation()
             } finally {

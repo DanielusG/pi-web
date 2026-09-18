@@ -142,7 +142,9 @@ It has **not yet been tested against a real pi-web with a real model.**
   - pi-web's own push is Web Push, which a native app can't receive. Instead, `notify/RunWatcherService` runs as a foreground service only while a session is running.
   - It polls `/api/agent/running` every 3 s and posts "Task finished." when a session goes idle.
   - It stays silent for subagents (pi-web's suppression list) and for the session already on screen.
-  - Tapping the notification opens that session.
+  - Tapping the notification opens that session. Each tap is a one-shot deep link, consumed
+    exactly once (a unique token per notification survives activity recreation), and the
+    finished/waiting notifications of a session are removed as soon as that session is on screen.
 
 ## Install on a phone
 
