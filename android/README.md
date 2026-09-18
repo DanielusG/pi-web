@@ -14,6 +14,10 @@ It has **not yet been tested against a real pi-web with a real model.**
   and clear 401/403 messages.
 - **Sessions:** grouped by project, pull to refresh, a live "running" dot (polls
   `/api/agent/running` every 3 s, reloads when `sessionListVersion` changes),
+  an "Active" box at the top of the list, styled like a project group and
+  scrolling with it, that lists every running or waiting session across
+  projects (tap to open, long-press for the same rename/delete sheet; hidden
+  when nothing is active, capped at a few rows with internal scroll),
   "show all" for long projects, and long-press on a session for rename/delete
   (bottom sheet: pre-filled rename field with the web's no-op check, delete with
   inline confirmation).

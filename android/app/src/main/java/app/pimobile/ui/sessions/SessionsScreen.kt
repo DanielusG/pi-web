@@ -80,6 +80,9 @@ import kotlinx.coroutines.launch
 private const val COLLAPSED_COUNT = 5
 private val GroupShape = RoundedCornerShape(14.dp)
 
+/** A session running or waiting, with the project root it belongs to. */
+private data class ActiveRow(val root: String, val row: SessionRow)
+
 @Composable
 fun SessionsScreen(
     vm: SessionsViewModel,
@@ -93,6 +96,14 @@ fun SessionsScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
+    // Active sessions across all projects: running first, then waiting, most recent first.
+    val active = state.groups
+        .flatMap { group -> group.sessions.map { ActiveRow(group.root, it) } }
+        .filter { it.row.id in state.running || it.row.id in state.waiting }
+        .sortedWith(
+            compareByDescending<ActiveRow> { it.row.id in state.running }
+                .thenByDescending { it.row.modified },
+        )
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.watch() }
@@ -129,6 +140,16 @@ fun SessionsScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 112.dp),
             ) {
+                if (active.isNotEmpty()) {
+                    item(key = "active") {
+                        ActiveSessionsView(
+                            rows = active,
+                            waiting = state.waiting,
+                            onOpen = onOpen,
+                            onLongClick = { sheetRow = it },
+                        )
+                    }
+                }
                 when {
                     state.loading -> item("loading") {
                         Box(Modifier.fillMaxWidth().padding(64.dp), contentAlignment = Alignment.Center) {
@@ -244,6 +265,88 @@ private fun NewSessionButton(onClick: () -> Unit) {
         Icon(PiIcons.Plus, contentDescription = null, tint = t.onPrimary, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text("New session", style = MaterialTheme.typography.labelLarge, color = t.onPrimary)
+    }
+}
+
+@Composable
+private fun ActiveSessionsView(
+    rows: List<ActiveRow>,
+    waiting: Set<String>,
+    onOpen: (id: String, cwd: String) -> Unit,
+    onLongClick: (SessionRow) -> Unit,
+) {
+    val t = Pi.tokens
+    Column(Modifier.padding(top = 20.dp)) {
+        Row(
+            Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(t.success, pulsing = true)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Active",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = t.text,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (rows.size == 1) "1 session" else "${rows.size} sessions",
+                style = MaterialTheme.typography.labelSmall,
+                color = t.textTertiary,
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(GroupShape)
+                .border(1.dp, t.border, GroupShape)
+                .heightIn(max = 272.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            rows.forEachIndexed { index, active ->
+                if (index > 0) HorizontalDivider(color = t.border)
+                val row = active.row
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { onOpen(row.id, row.cwd) },
+                            onLongClick = { onLongClick(row) },
+                        )
+                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            row.title,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                            color = t.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            baseName(active.root).ifEmpty { "Unknown project" },
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Normal),
+                            color = t.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (row.id in waiting) {
+                            StatusDot(t.warning, pulsing = false)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Waiting", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
+                        } else {
+                            StatusDot(t.success, pulsing = true)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Running", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
