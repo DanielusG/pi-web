@@ -1131,7 +1131,22 @@ private fun ContextIndicator(state: ChatUiState, onStatsOpened: () -> Unit) {
             ContextRing(percent, size = 18.dp, stroke = 2.5.dp)
             if (percent != null) {
                 Spacer(Modifier.width(7.dp))
-                Text("${percent.roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = t.textSecondary)
+                // The Box wraps exactly the percent text, so the chip layout (and the ring's
+                // position on the title axis) is unchanged; the used-tokens label is a
+                // layout-neutral overlay centered under the percent text.
+                Box {
+                    Text("${percent.roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = t.textSecondary)
+                    state.contextTokens?.let { tokens ->
+                        Text(
+                            compactNumber(tokens),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp),
+                            color = t.textTertiary,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .offset(y = 14.dp),
+                        )
+                    }
+                }
             }
         }
         DropdownMenu(
