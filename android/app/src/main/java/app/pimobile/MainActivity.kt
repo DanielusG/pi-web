@@ -57,11 +57,18 @@ class MainActivity : ComponentActivity() {
     private val openRequests = MutableStateFlow<OpenRequest?>(null)
     /** Cwd for a fresh session from the system assistant trigger; empty = pick via sheet. */
     private val assistCwds = MutableStateFlow<String?>(null)
+    /** Token of the last consumed notification intent; survives activity recreation. */
+    private var consumedToken: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) handleIntent(intent)
+        consumedToken = savedInstanceState?.getString(KEY_CONSUMED_TOKEN)
+        // Always process the intent, also on recreation: the system keeps the process
+        // alive via the RunWatcherService foreground service but destroys the activity
+        // for memory, so a notification tap recreates the activity and must still open
+        // the session. [firstCreation] gates only the ASSIST action.
+        handleIntent(intent, firstCreation = savedInstanceState == null)
         val app = application as PiApp
         setContent {
             PiTheme {
@@ -74,13 +81,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleIntent(intent)
+        handleIntent(intent, firstCreation = true)
     }
 
-    private fun handleIntent(intent: Intent?) {
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        consumedToken?.let { outState.putString(KEY_CONSUMED_TOKEN, it) }
+    }
+
+    private fun handleIntent(intent: Intent?, firstCreation: Boolean) {
         when (intent?.action) {
             // System assistant trigger (corner swipe, long-press power/home): always a fresh session.
             Intent.ACTION_ASSIST -> {
+                if (!firstCreation) return // a recreation must not open another fresh session
                 val app = application as PiApp
                 // Tiny preferences read, served from cache after first emission; needed
                 // synchronously to pick the fresh session's cwd (chosen project, else last cwd).
@@ -88,9 +101,18 @@ class MainActivity : ComponentActivity() {
             }
             else -> {
                 val sessionId = intent?.getStringExtra(Notifications.EXTRA_SESSION_ID) ?: return
+                // One-shot: a tap is consumed exactly once, across activity recreation.
+                // A null token (notification posted by an older APK) is consumed without tracking.
+                val token = intent.getStringExtra(Notifications.EXTRA_TOKEN)
+                if (token != null && token == consumedToken) return
+                consumedToken = token
                 openRequests.value = OpenRequest(sessionId, intent.getStringExtra(Notifications.EXTRA_CWD).orEmpty())
             }
         }
+    }
+
+    private companion object {
+        const val KEY_CONSUMED_TOKEN = "consumed_notification_token"
     }
 }
 
