@@ -24,6 +24,8 @@ object Notifications {
 
     const val EXTRA_SESSION_ID = "app.pimobile.extra.SESSION_ID"
     const val EXTRA_CWD = "app.pimobile.extra.CWD"
+    /** One-shot marker: lets MainActivity consume each notification tap exactly once. */
+    const val EXTRA_TOKEN = "app.pimobile.extra.TOKEN"
 
     fun createChannels(context: Context) {
         context.getSystemService(NotificationManager::class.java).createNotificationChannels(
@@ -48,6 +50,9 @@ object Notifications {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             sessionId?.let { putExtra(EXTRA_SESSION_ID, it) }
             cwd?.let { putExtra(EXTRA_CWD, it) }
+            // Unique per post: re-posting refreshes it via FLAG_UPDATE_CURRENT, so every
+            // new notification tap carries a fresh token (MainActivity consumes it once).
+            putExtra(EXTRA_TOKEN, System.nanoTime().toString())
         }
         return PendingIntent.getActivity(
             context,
@@ -96,7 +101,7 @@ object Notifications {
             .setContentIntent(openIntent(context, sessionId, cwd))
             .build()
         // Same tag scheme as pi-web's push, so repeats replace instead of stacking.
-        NotificationManagerCompat.from(context).notify("pi-session-complete:$sessionId", FINISHED_ID, notification)
+        NotificationManagerCompat.from(context).notify(tagFinished(sessionId), FINISHED_ID, notification)
     }
 
     @SuppressLint("MissingPermission") // checked by canPost()
@@ -111,10 +116,20 @@ object Notifications {
             .setContentIntent(openIntent(context, sessionId, cwd))
             .build()
         // Own tag: repeats replace, and it never collides with the completion tag.
-        NotificationManagerCompat.from(context).notify("pi-session-waiting:$sessionId", FINISHED_ID, notification)
+        NotificationManagerCompat.from(context).notify(tagWaiting(sessionId), FINISHED_ID, notification)
     }
 
     fun cancelWaiting(context: Context, sessionId: String) {
-        NotificationManagerCompat.from(context).cancel("pi-session-waiting:$sessionId", FINISHED_ID)
+        NotificationManagerCompat.from(context).cancel(tagWaiting(sessionId), FINISHED_ID)
     }
+
+    /** Cancels both one-shot notifications of a session: stale once the session is on screen. */
+    fun cancelForSession(context: Context, sessionId: String) {
+        val manager = NotificationManagerCompat.from(context)
+        manager.cancel(tagFinished(sessionId), FINISHED_ID)
+        manager.cancel(tagWaiting(sessionId), FINISHED_ID)
+    }
+
+    private fun tagFinished(sessionId: String) = "pi-session-complete:$sessionId"
+    private fun tagWaiting(sessionId: String) = "pi-session-waiting:$sessionId"
 }
