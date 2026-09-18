@@ -53,3 +53,7 @@ fun relativeTime(epochMillis: Long, now: Long = System.currentTimeMillis()): Str
         else -> DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(epochMillis))
     }
 }
+
+/** ISO-8601 timestamps from the API as epoch millis; 0 when unparseable. */
+fun isoMillis(iso: String): Long =
+    runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrDefault(0L)

@@ -97,6 +97,18 @@ object PiIcons {
     }
     val Play by lazy { lineIcon("Play", "M7 4l13 8-13 8V4z") }
     val Pause by lazy { lineIcon("Pause", "M9 5v14", "M15 5v14") }
+    /** Same robot as the web's AgentSessionPanel subagent icon. */
+    val Bot by lazy {
+        lineIcon(
+            "Bot",
+            "M7 7h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z",
+            "M9 11h.01",
+            "M15 11h.01",
+            "M9 15h6",
+            "M12 7V4",
+            "M10 4h4",
+        )
+    }
 }
 
 private fun lineIcon(name: String, vararg paths: String): ImageVector {

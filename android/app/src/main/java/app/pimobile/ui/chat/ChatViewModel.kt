@@ -19,6 +19,9 @@ import app.pimobile.data.Messages
 import app.pimobile.data.PiApi
 import app.pimobile.data.SessionTree
 import app.pimobile.data.SlashDisplay
+import app.pimobile.data.SubagentInfo
+import app.pimobile.data.SubagentRelation
+import app.pimobile.data.Subagents
 import app.pimobile.data.StreamingAssembler
 import app.pimobile.data.ToolResult
 import app.pimobile.data.TreeNode
@@ -32,6 +35,7 @@ import app.pimobile.data.obj
 import app.pimobile.data.str
 import app.pimobile.data.strings
 import app.pimobile.data.type
+import app.pimobile.notify.AppVisibility
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -175,6 +179,10 @@ data class ChatUiState(
     val openTree: Boolean = false,
     val clipboard: String? = null,
     val openSession: OpenSession? = null,
+    /** Direct subagents of this session from /api/sessions; empty hides the bar. */
+    val subagents: List<SubagentInfo> = emptyList(),
+    /** Set when this session is itself a subagent: the top bar shows it. */
+    val subagentRelation: SubagentRelation? = null,
 ) {
     /** Web: modelSupportsImageInput — unknown modality info never warns. */
     val modelSupportsImages: Boolean
@@ -187,6 +195,7 @@ data class ChatUiState(
 
 private val DEFAULT_TOOLS = listOf("read", "bash", "edit", "write")
 private const val STATE_POLL_MS = 15_000L
+private const val SUBAGENT_POLL_MS = 5_000L
 private const val IDLE_CLOSE_MS = 30_000L
 private const val LEASE_RENEW_MS = 30_000L
 
@@ -225,6 +234,7 @@ class ChatViewModel(
     private var streamJob: Job? = null
     private var idleCloseJob: Job? = null
     private var pollJob: Job? = null
+    private var subagentPollJob: Job? = null
     private val connected = MutableStateFlow(false)
     private var everConnected = false
     private var reconnectAttempt = 0
@@ -244,8 +254,10 @@ class ChatViewModel(
             viewModelScope.launch {
                 refreshSession(sessionId)
                 reconcile(sessionId)
+                refreshSubagents()
             }
         }
+        startSubagentLoop()
     }
 
     // region public actions
@@ -417,6 +429,41 @@ class ChatViewModel(
             refreshSession(id)
             reconcile(id)
         }
+        refreshSubagents()
+    }
+
+    /**
+     * Subagent bar (web: AgentSessionPanel): the direct children of this
+     * session from the shared /api/sessions list. Failures keep the last list.
+     */
+    fun refreshSubagents() {
+        val id = _state.value.sessionId ?: return
+        viewModelScope.launch {
+            try {
+                val body = api.get("/api/sessions").asObj() ?: return@launch
+                _state.update { it.copy(subagents = Subagents.parse(body, id)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The next tick retries; a dead server must not clear the bar.
+            }
+        }
+    }
+
+    /** Long-press on an active subagent row; 409 (already settled) is not an error. */
+    fun abortSubagent(id: String) {
+        viewModelScope.launch {
+            try {
+                api.post("/api/subagents/${PiApi.encode(id)}", buildJsonObject { put("action", "abort") })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException) {
+                if (e.status != 409) _state.update { it.copy(error = e.message ?: "Abort failed") }
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message ?: "Abort failed") }
+            }
+            refreshSubagents()
+        }
     }
 
     fun onForeground() {
@@ -425,6 +472,7 @@ class ChatViewModel(
             return
         }
         refresh()
+        refreshSubagents()
     }
 
     fun loadEarlier() {
@@ -861,6 +909,7 @@ class ChatViewModel(
                     stats = body.obj("stats")?.let { parseStats(it, body.long("totalActiveMs")) } ?: state.stats,
                     tree = SessionTree.parse(body.arr("tree")),
                     leafId = body.str("leafId"),
+                    subagentRelation = Subagents.relationOf(info),
                     contextPercent = if (contextUsage != null) contextUsage.double("percent") else state.contextPercent,
                     contextTokens = if (contextUsage != null) contextUsage.long("tokens") else state.contextTokens,
                     contextWindow = if (contextUsage != null) contextUsage.long("contextWindow") else state.contextWindow,
@@ -991,10 +1040,36 @@ class ChatViewModel(
         streamDirty = false
         _state.update { it.copy(streaming = null) }
         markIdle()
-        viewModelScope.launch { refreshSession(id) }
+        viewModelScope.launch {
+            refreshSession(id)
+            refreshSubagents()
+        }
     }
 
     private fun setStatus(status: String?) = _state.update { if (it.running) it.copy(status = status) else it }
+
+    /**
+     * The bar refreshes only while something can change it: the session is
+     * running (Agent tool calls spawn subagents) or a subagent is still active
+     * while the parent is idle. Otherwise the ticks are free.
+     */
+    private fun startSubagentLoop() {
+        if (subagentPollJob?.isActive == true) return
+        subagentPollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(SUBAGENT_POLL_MS)
+                val id = _state.value.sessionId ?: continue
+                if (!subagentPollActive(id)) continue
+                refreshSubagents()
+            }
+        }
+    }
+
+    private fun subagentPollActive(id: String): Boolean {
+        val state = _state.value
+        if (!AppVisibility.isForeground || AppVisibility.viewingSessionId != id) return false
+        return state.running || state.subagents.any { it.active }
+    }
 
     // endregion
 
