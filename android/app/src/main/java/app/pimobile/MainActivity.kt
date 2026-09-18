@@ -226,6 +226,10 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                         popUpTo(entry.destination.id) { inclusive = true }
                     }
                 },
+                onOpenSubagent = { subagentId ->
+                    // Push, not replace: the back button returns to this session.
+                    nav.navigate(chatRoute(subagentId, vm.state.value.cwd.ifEmpty { cwd }))
+                },
                 onOpenFiles = {
                     val chat = vm.state.value
                     nav.navigate(filesRoute(chat.cwd.ifEmpty { cwd }, chat.sessionId, mention = true))

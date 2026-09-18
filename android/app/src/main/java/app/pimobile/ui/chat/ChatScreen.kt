@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
@@ -119,6 +120,7 @@ import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
 import app.pimobile.data.FilePaths
 import app.pimobile.data.ImageAttachments
+import app.pimobile.data.SubagentInfo
 import app.pimobile.data.ToolResult
 import app.pimobile.data.TtsPlayer
 import app.pimobile.data.TtsUiState
@@ -127,6 +129,8 @@ import app.pimobile.ui.baseName
 import app.pimobile.ui.compactNumber
 import app.pimobile.ui.formatDuration
 import app.pimobile.ui.groupedNumber
+import app.pimobile.ui.isoMillis
+import app.pimobile.ui.relativeTime
 import app.pimobile.ui.shortPath
 import app.pimobile.ui.theme.Geist
 import app.pimobile.ui.theme.GeistMono
@@ -164,6 +168,8 @@ fun ChatScreen(
     autoFocusComposer: Boolean = false,
     /** The app-level TTS player; null disables the Listen action. */
     tts: TtsPlayer? = null,
+    /** Subagent bar: open a subagent's own chat (push, so Back returns here). */
+    onOpenSubagent: (String) -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val ttsState by (tts?.state ?: NoTtsState).collectAsStateWithLifecycle()
@@ -441,12 +447,20 @@ fun ChatScreen(
             }
         },
         bottomBar = {
-            val dialog = state.dialog
-            if (dialog != null) {
-                // The extension dialog replaces the input bar in the composer slot, as on the web.
-                ExtensionDialogView(dialog, vm)
-            } else {
-                Composer(
+            Column(Modifier.fillMaxWidth()) {
+                if (state.subagents.isNotEmpty()) {
+                    SubagentBar(
+                        subagents = state.subagents,
+                        onOpen = onOpenSubagent,
+                        onAbort = vm::abortSubagent,
+                    )
+                }
+                val dialog = state.dialog
+                if (dialog != null) {
+                    // The extension dialog replaces the input bar in the composer slot, as on the web.
+                    ExtensionDialogView(dialog, vm)
+                } else {
+                    Composer(
                     state = state,
                     draft = draft,
                     onDraft = { draft = it },
@@ -479,6 +493,7 @@ fun ChatScreen(
                     onVoiceStop = { onVoiceStop() },
                     onVoiceCancel = { onVoiceCancel() },
                 )
+                }
             }
         },
         floatingActionButton = {
@@ -727,6 +742,20 @@ private fun ChatTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // Inside a subagent's own chat: say so (web: the agent switcher row).
+                    state.subagentRelation?.let { relation ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(PiIcons.Bot, null, tint = t.accent, modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "Subagent · " + (relation.description ?: relation.profile ?: "subagent"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = t.accent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             baseName(state.cwd),
@@ -886,6 +915,186 @@ private fun TtsBar(
     }
     HorizontalDivider(color = t.border)
 }
+}
+
+/**
+ * Collapsible bar of the session's subagents (web: AgentSessionPanel). Starts
+ * expanded; the header toggles it. Tap a row to open the subagent's chat;
+ * long-press an active row to abort it.
+ */
+@Composable
+private fun SubagentBar(
+    subagents: List<SubagentInfo>,
+    onOpen: (String) -> Unit,
+    onAbort: (String) -> Unit,
+) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(26.dp)
+    var expanded by remember { mutableStateOf(true) }
+    var abortTarget by remember { mutableStateOf<SubagentInfo?>(null) }
+    val activeCount = subagents.count { it.active }
+    // A floating bubble, styled like the composer below it.
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(t.background)
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(t.surface)
+                .border(1.dp, t.border, shape),
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = if (expanded) 2.dp else 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(PiIcons.Bot, null, tint = t.textSecondary, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Subagents", style = MaterialTheme.typography.labelLarge, color = t.text)
+                Spacer(Modifier.width(6.dp))
+                Text("${subagents.size}", style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
+                if (activeCount > 0) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("$activeCount running", style = MaterialTheme.typography.labelMedium, color = t.accent)
+                }
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    if (expanded) PiIcons.ChevronUp else PiIcons.ChevronDown,
+                    contentDescription = if (expanded) "Collapse subagents" else "Expand subagents",
+                    tint = t.textTertiary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            if (expanded) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 168.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    subagents.forEach { agent ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { onOpen(agent.id) },
+                                    onLongClick = if (agent.active) ({ abortTarget = agent }) else null,
+                                )
+                                .padding(start = 14.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            SubagentStatusIcon(agent)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    agent.title,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = t.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val secondary = buildList {
+                                    agent.profile?.let { add(it) }
+                                    val ago = relativeTime(isoMillis(agent.modified))
+                                    if (ago.isNotEmpty()) add(ago)
+                                }.joinToString(" · ")
+                                if (secondary.isNotEmpty()) {
+                                    Text(
+                                        secondary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = t.textTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (agent.active) "running" else agent.status,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = subagentStatusColor(agent),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+    abortTarget?.let { target ->
+        AbortSubagentDialog(
+            agent = target,
+            onDismiss = { abortTarget = null },
+            onConfirm = {
+                abortTarget = null
+                onAbort(target.id)
+            },
+        )
+    }
+}
+
+@Composable
+private fun SubagentStatusIcon(agent: SubagentInfo) {
+    val t = Pi.tokens
+    when {
+        agent.active -> CircularProgressIndicator(
+            Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+            color = t.accent,
+            trackColor = Color.Transparent,
+        )
+        agent.status == "failed" -> Icon(PiIcons.Close, null, tint = t.danger, modifier = Modifier.size(14.dp))
+        agent.status == "aborted" || agent.status == "interrupted" ->
+            Icon(PiIcons.Warning, null, tint = t.warning, modifier = Modifier.size(14.dp))
+        else -> Icon(PiIcons.Check, null, tint = t.success, modifier = Modifier.size(14.dp))
+    }
+}
+
+@Composable
+private fun subagentStatusColor(agent: SubagentInfo): Color {
+    val t = Pi.tokens
+    return when {
+        agent.active -> t.accent
+        agent.status == "failed" -> t.danger
+        agent.status == "aborted" || agent.status == "interrupted" -> t.warning
+        else -> t.success
+    }
+}
+
+@Composable
+private fun AbortSubagentDialog(agent: SubagentInfo, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(20.dp)
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .clip(shape)
+                .background(t.background)
+                .border(1.dp, t.border, shape)
+                .padding(20.dp),
+        ) {
+            Text("Abort this subagent?", style = MaterialTheme.typography.titleMedium, color = t.text)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "\"${agent.title}\" is stopped mid-run; the parent session sees the aborted result.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = t.textSecondary,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                PiSecondaryButton("Cancel", onClick = onDismiss)
+                Spacer(Modifier.width(8.dp))
+                PiPrimaryButton("Abort", onClick = onConfirm)
+            }
+        }
+    }
 }
 
 private val TTS_SPEEDS = listOf(
