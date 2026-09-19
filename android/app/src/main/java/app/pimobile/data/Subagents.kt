@@ -28,28 +28,26 @@ data class SubagentRelation(
 
 object Subagents {
     /**
-     * Direct children of [sessionId] in a /api/sessions response. The live
-     * running set takes precedence over the file status, as on the web
-     * (AgentSessionPanel); order is running-first, then newest first.
+     * Parses a GET /api/sessions/[id]/subagents response: the session's direct
+     * subagent children only (the server filters and orders them). The live
+     * `running` flag takes precedence over the file status, as on the web
+     * (AgentSessionPanel); order is running-first, then newest first. The client
+     * re-sorts defensively so the bar is correct even if the server order drifts.
      */
-    fun parse(body: JsonObject, sessionId: String): List<SubagentInfo> {
-        val running = body.arr("runningSessionIds").strings().toSet()
-        return body.arr("sessions").orEmpty()
+    fun parse(body: JsonObject): List<SubagentInfo> {
+        return body.arr("subagents").orEmpty()
             .mapNotNull { it as? JsonObject }
-            .mapNotNull { json ->
-                val relation = json.obj("relation") ?: return@mapNotNull null
-                if (relation.str("kind") != "subagent") return@mapNotNull null
-                if (relation.str("parentSessionId") != sessionId) return@mapNotNull null
+            .map { json ->
                 val id = json.str("id").orEmpty()
-                val live = id in running
+                val live = json.bool("running") == true
                 SubagentInfo(
                     id = id,
-                    title = relation.str("description")
+                    title = json.str("description")
                         ?: json.str("name")
                         ?: json.str("firstMessage")?.takeUnless { it == "(no messages)" }
                         ?: id.take(12),
-                    profile = relation.str("profile"),
-                    status = if (live) "running" else relation.str("status") ?: "completed",
+                    profile = json.str("profile"),
+                    status = if (live) "running" else json.str("status") ?: "completed",
                     running = live,
                     modified = json.str("modified").orEmpty(),
                 )
