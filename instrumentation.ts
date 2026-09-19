@@ -1,14 +1,11 @@
 export async function register(): Promise<void> {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-
-  const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
-  configureHttpDispatcher();
-
-  // In production Next 16 answers SIGINT/SIGTERM with server.close() and waits
-  // for every connection to end, without a timeout. SSE streams only end when
-  // the client disconnects, so close them here or the process never exits.
-  const { closeAllAgentEventStreams } = await import("@/lib/agent-event-stream");
-  const shutdownStreams = () => closeAllAgentEventStreams();
-  process.on("SIGINT", shutdownStreams);
-  process.on("SIGTERM", shutdownStreams);
+  // Next builds this file for both the Node and the Edge instrumentation entry.
+  // The Edge graph rejects Node APIs, so `process.on` and undici live in
+  // ./instrumentation-node, reached only through this compile-time-eliminated
+  // NEXT_RUNTIME branch. An early `return` instead of this `if` would leave the
+  // Node calls in the Edge module.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { registerNodeInstrumentation } = await import("./instrumentation-node");
+    registerNodeInstrumentation();
+  }
 }
