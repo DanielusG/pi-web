@@ -87,7 +87,7 @@ class TtsPlaybackService : MediaSessionService() {
                     val factory = TtsDataSource.Factory(httpClient, request)
                     val item = MediaItem.Builder()
                         .setUri(url)
-                        .setMimeType(MimeTypes.AUDIO_MPEG)
+                        .setMimeType(MimeTypes.AUDIO_WAV)
                         .setMediaMetadata(metadata)
                         .build()
                     p.setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
