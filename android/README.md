@@ -184,7 +184,7 @@ cd android
 app/src/main/java/app/pimobile/
   PiApp.kt                 process-wide PiApi + SettingsStore
   MainActivity.kt          navigation: settings → sessions → chat
-  data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, error mapping
+  data/PiApi.kt            OkHttp REST + SSE flow, Basic auth, gzip, error mapping
   data/ChatModel.kt        message → ChatItem parsing (both tool-call spellings),
                            StreamingAssembler (applies message_update deltas)
   data/Settings.kt         DataStore server config (incl. ASR URL for dictation,

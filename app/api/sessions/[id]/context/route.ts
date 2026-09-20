@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { jsonResponse } from "@/lib/json-response";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { computeFileContextUsage } from "@/lib/cold-context";
@@ -49,7 +50,7 @@ export async function GET(
           sm.getHeader()?.cwd || process.cwd(),
         );
 
-    return NextResponse.json({ context, contextUsage, tail, before: before ?? null });
+    return jsonResponse(req, { context, contextUsage, tail, before: before ?? null });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
