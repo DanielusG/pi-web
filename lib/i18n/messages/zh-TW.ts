@@ -396,6 +396,7 @@ export const zhTWLocale: LocalePlugin = {
     "terminal.exitCode": "程序已結束，結束代碼 {code}",
     "chat.outputLocal": "輸出保留在本地",
     "chat.outputModel": "輸出會傳送給模型",
+    "chat.configuredTools": "取自 settings.json 的 defaultTools",
     "chat.chatOnly": "僅聊天",
     "chat.readOnlyTools": "{count} 個只讀內建工具",
     "chat.builtInTools": "{count} 個內建工具",
