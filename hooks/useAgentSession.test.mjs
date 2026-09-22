@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
-const chatWindowSource = await readFile(new URL("../components/ChatWindow.tsx", import.meta.url), "utf8");
-const chatInputSource = await readFile(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
-const appShellSource = await readFile(new URL("../components/AppShell.tsx", import.meta.url), "utf8");
+const jitiSource = async (url) => (await readFile(url, "utf8")).replace(/\r\n/g, "\n");
+const source = await jitiSource(new URL("./useAgentSession.ts", import.meta.url));
+const chatWindowSource = await jitiSource(new URL("../components/ChatWindow.tsx", import.meta.url));
+const chatInputSource = await jitiSource(new URL("../components/ChatInput.tsx", import.meta.url));
+const appShellSource = await jitiSource(new URL("../components/AppShell.tsx", import.meta.url));
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
@@ -179,7 +180,7 @@ test("only the session-mount load probes disk for external appends", () => {
   assert.match(loadSessionSource, /options\?: \{ force\?: boolean \}/);
   assert.match(loadSessionSource, /if \(options\?\.force\) params\.set\("force", "1"\)/);
   assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
-  assert.match(mountSource, /loadSession\(session\.id, true, true, \{ force: true \}\)/);
+  assert.match(mountSource, /loadSession\(session\.id, !cached, true, \{ force: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
   assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
 });

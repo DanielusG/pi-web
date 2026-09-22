@@ -15,6 +15,11 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import {
+  deleteSessionViewSnapshot,
+  getSessionViewSnapshot,
+  setSessionViewSnapshot,
+} from "@/lib/session-view-cache";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { CONFIGURED_TOOL_PRESET, getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
@@ -44,6 +49,10 @@ export interface SessionData {
   tree: SessionTreeNode[];
   leafId: string | null;
   toolNames?: string[];
+  /** Opaque freshness token for the session view cache (summary tree reads). */
+  snapshotRevision?: string | null;
+  /** "summary" when `tree` carries the body-free navigation format. */
+  treeFormat?: "summary";
   context: {
     messages: AgentMessage[];
     entryIds: string[];
@@ -382,8 +391,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const modelSwitchPendingRef = useRef(false);
   const draftKeyAliasesRef = useRef(new Map<string, string>());
   const sessionHookMountedRef = useRef(true);
+  // In-flight session reads, keyed by session id (or force:<id> for fresh reads).
+  const loadFlightsRef = useRef(new Map<string, Promise<unknown>>());
+  // Latest settled view state, readable from the unmount cleanup without
+  // re-subscribing it. Assigned every render like sessionPropIdRef below.
+  const dataRef = useRef<SessionData | null>(null);
+  const messagesRef = useRef<AgentMessage[]>([]);
+  const entryIdsRef = useRef<string[]>([]);
+  const activeLeafIdRef = useRef<string | null>(null);
+  const historyCursorRef = useRef<string | null>(null);
+  const hasEarlierMessagesRef = useRef(false);
 
   sessionPropIdRef.current = session?.id ?? null;
+  dataRef.current = data;
+  messagesRef.current = messages;
+  entryIdsRef.current = entryIds;
+  activeLeafIdRef.current = activeLeafId;
+  historyCursorRef.current = historyCursor;
+  hasEarlierMessagesRef.current = hasEarlierMessages;
 
   if (!eventConnectionRef.current) {
     eventConnectionRef.current = new AgentEventConnection({
@@ -504,10 +529,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages, sessionStatsOverride, contextUsage, data?.context.messages, data?.filePath, data?.totalActiveMs, data?.stats, session?.id, session?.name]);
 
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false, options?: { force?: boolean }) => {
+    // Single-flight: concurrent reads for the same session (mount + SSE settle +
+    // reconcile) share one request unless the caller forces a fresh read.
+    const flightKey = options?.force ? `force:${sid}` : sid;
+    const inflight = options?.force ? undefined : loadFlightsRef.current.get(flightKey);
+    if (inflight) return await inflight;
+  const flight = (async (): Promise<unknown> => {
     let messagesLoaded = false;
     try {
       if (showLoading) setLoading(true);
-      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
+      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1", tree: "summary" });
       if (options?.force) params.set("force", "1");
       const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}?${params}`);
       if (res.status === 404) {
@@ -520,23 +551,84 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setHasEarlierMessages(false);
           setError(null);
         }
+        deleteSessionViewSnapshot(sid);
         return null;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
-      const persistedMessages = d.context.messages;
-      setData(d);
+      // Freshness check: when the disk snapshot is unchanged (same opaque
+      // revision), keep any history the user already paged in instead of
+      // collapsing back to the fresh 50-entry window. The state hooks then
+      // only need the server's tree/leaf/stats — never a history reset.
+      const cached = getSessionViewSnapshot(sid);
+      const revisionUnchanged = Boolean(
+        d.snapshotRevision
+        && cached?.revision === d.snapshotRevision
+        && cached.entryIds.length >= (d.context.entryIds ?? []).length,
+      );
+      const persistedMessages = revisionUnchanged ? messagesRef.current : d.context.messages;
+      setData(revisionUnchanged
+        ? {
+            ...d,
+            context: {
+              ...d.context,
+              messages: messagesRef.current,
+              entryIds: entryIdsRef.current,
+              oldestEntryId: historyCursorRef.current,
+              hasMore: hasEarlierMessagesRef.current,
+            },
+          }
+        : d);
       setActiveLeafId(d.leafId);
-      setMessages(persistedMessages);
-      setEntryIds(d.context.entryIds ?? []);
-      setHistoryCursor(d.context.oldestEntryId);
-      setHasEarlierMessages(d.context.hasMore);
+      if (revisionUnchanged) {
+        // Refresh the cached snapshot with the newest leaf/tree/stats while
+        // preserving the wider loaded window.
+        setSessionViewSnapshot({
+          sessionId: sid,
+          revision: d.snapshotRevision!,
+          messages: messagesRef.current,
+          entryIds: entryIdsRef.current,
+          leafId: d.leafId,
+          oldestEntryId: historyCursorRef.current,
+          hasMore: hasEarlierMessagesRef.current,
+          summaryTree: d.tree,
+          thinkingLevel: d.context.thinkingLevel,
+          model: d.context.model,
+          stats: d.stats,
+          totalActiveMs: d.totalActiveMs,
+          loadedEntryIds: entryIdsRef.current,
+        });
+      } else {
+        setMessages(persistedMessages);
+        setEntryIds(d.context.entryIds ?? []);
+        setHistoryCursor(d.context.oldestEntryId);
+        setHasEarlierMessages(d.context.hasMore);
+      }
+      // Tool-preset state is independent of the view cache: it must be applied
+      // on every read, cached window or not (#700).
       sessionToolsPinnedRef.current = d.toolNames !== undefined;
       setToolPresetState(d.toolNames !== undefined ? getPresetFromToolNames(d.toolNames) : CONFIGURED_TOOL_PRESET);
       setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
       setCurrentThinkingOverride(null);
       setError(null);
+      if (d.treeFormat === "summary" && d.snapshotRevision) {
+        setSessionViewSnapshot({
+          sessionId: sid,
+          revision: d.snapshotRevision,
+          messages: persistedMessages,
+          entryIds: d.context.entryIds ?? [],
+          leafId: d.leafId,
+          oldestEntryId: d.context.oldestEntryId,
+          hasMore: d.context.hasMore,
+          summaryTree: d.tree,
+          thinkingLevel: d.context.thinkingLevel,
+          model: d.context.model,
+          stats: d.stats,
+          totalActiveMs: d.totalActiveMs,
+          loadedEntryIds: d.context.entryIds ?? [],
+        });
+      }
       if (d.wrapperRebuilt) {
         eventConnectionRef.current?.close();
         eventConnectionRef.current?.maintain(sid);
@@ -574,10 +666,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       setError(String(e));
-      return null;
+      return "error";
     } finally {
       if (showLoading && !messagesLoaded) setLoading(false);
     }
+    })();
+    if (!options?.force) loadFlightsRef.current.set(flightKey, flight);
+    flight.finally(() => {
+      if (loadFlightsRef.current.get(flightKey) === flight) loadFlightsRef.current.delete(flightKey);
+    });
+    return await flight;
   }, [setToolPresetState, syncLiveModel]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null, options?: { tail?: number; signal?: AbortSignal }) => {
@@ -2102,7 +2200,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionHookMountedRef.current = true;
     if (session) {
       sessionIdRef.current = session.id;
-      loadSession(session.id, true, true, { force: true }).then((agentState) => {
+      // Snapshot fast path: show the cached history window immediately, then
+      // run the normal forced read in the background as the freshness check.
+      // Only the settled history fields are restored — no streaming, queue, or
+      // run state — and the background read remains authoritative.
+      const cached = getSessionViewSnapshot(session.id);
+      if (cached) {
+        setData({
+          sessionId: session.id,
+          filePath: "",
+          totalActiveMs: cached.totalActiveMs ?? 0,
+          tree: cached.summaryTree as SessionData["tree"],
+          leafId: cached.leafId,
+          context: {
+            messages: cached.messages,
+            entryIds: cached.entryIds,
+            oldestEntryId: cached.oldestEntryId,
+            hasMore: cached.hasMore,
+            thinkingLevel: cached.thinkingLevel,
+            model: cached.model,
+          },
+          stats: cached.stats as SessionData["stats"],
+        });
+        setActiveLeafId(cached.leafId);
+        setMessages(cached.messages);
+        setEntryIds(cached.entryIds);
+        setHistoryCursor(cached.oldestEntryId);
+        setHasEarlierMessages(cached.hasMore);
+        setError(null);
+        setLoading(false);
+      }
+      loadSession(session.id, !cached, true, { force: true }).then((loadedAgentState) => {
+        const agentState = loadedAgentState as { running: boolean; state?: AgentStateResponse } | null;
         if (agentState?.running) {
           loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
@@ -2141,6 +2270,35 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             clearDraft(abandonedDraftKey);
           }
         });
+      }
+      // Persist the settled view of the outgoing session so switching back can
+      // restore it instantly. Only when the cached window still covers every
+      // entry the UI has loaded (paged-in history included).
+      const sid = sessionIdRef.current;
+      const currentData = dataRef.current;
+      if (sid && currentData && currentData.sessionId === sid && currentData.snapshotRevision) {
+        const existing = getSessionViewSnapshot(sid);
+        const entryIds = entryIdsRef.current;
+        const coverable = !existing || entryIds.every((id) => existing.entryIds.includes(id) || (existing.loadedEntryIds ?? []).includes(id));
+        if (coverable) {
+          setSessionViewSnapshot({
+            sessionId: sid,
+            revision: currentData.snapshotRevision,
+            messages: messagesRef.current,
+            entryIds: entryIdsRef.current,
+            leafId: activeLeafIdRef.current,
+            oldestEntryId: historyCursorRef.current,
+            hasMore: hasEarlierMessagesRef.current,
+            summaryTree: currentData.tree,
+            thinkingLevel: currentData.context.thinkingLevel,
+            model: currentData.context.model,
+            stats: currentData.stats,
+            totalActiveMs: currentData.totalActiveMs,
+            loadedEntryIds: entryIdsRef.current,
+          });
+        } else {
+          deleteSessionViewSnapshot(sid);
+        }
       }
       if (liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
