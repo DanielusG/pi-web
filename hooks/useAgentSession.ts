@@ -51,6 +51,8 @@ export interface SessionData {
   };
   /** Cumulative usage over ALL session-file entries (incl. compacted history). */
   stats?: SessionFileStats;
+  /** Context usage for the active branch, computed from the file (same semantics as the live getContextUsage). */
+  contextUsage?: { percent: number | null; contextWindow: number | null; tokens: number | null } | null;
 }
 
 interface AgentEvent {
@@ -548,6 +550,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setToolPresetState(d.toolNames !== undefined ? getPresetFromToolNames(d.toolNames) : "default");
       setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
       setError(null);
+      // File-based context usage so the indicator can show on cold sessions;
+      // live state (below, or via SSE during runs) overrides it.
+      const fileContextUsage = d.contextUsage;
+      if (fileContextUsage && fileContextUsage.contextWindow) {
+        setContextUsage({ percent: fileContextUsage.percent, contextWindow: fileContextUsage.contextWindow, tokens: fileContextUsage.tokens });
+      }
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
         setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
       }
@@ -598,8 +606,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
       const res = await fetch(url, { signal: options?.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json() as { context: SessionData["context"] };
+      const d = await res.json() as { context: SessionData["context"]; contextUsage?: SessionData["contextUsage"] };
       if (sessionIdRef.current !== sid || options?.signal?.aborted || !sessionHookMountedRef.current) return;
+      // Branch switching moves the active leaf: refresh the indicator for the
+      // requested branch. Pagination pages (`before`) keep the same leaf.
+      if (!before) {
+        const fileContextUsage = d.contextUsage;
+        if (fileContextUsage && fileContextUsage.contextWindow) {
+          setContextUsage({ percent: fileContextUsage.percent, contextWindow: fileContextUsage.contextWindow, tokens: fileContextUsage.tokens });
+        }
+      }
       setHistoryCursor(d.context.oldestEntryId);
       setHasEarlierMessages(d.context.hasMore);
       setData((prev) => {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status bar icon: the launcher pi, cropped to its bounds. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="56"
+    android:viewportHeight="56">
+    <group
+        android:translateX="-26"
+        android:translateY="-30">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M34,38 L74,38 Q77,38 77,41 L77,43 Q77,46 74,46 L67,46 L67,68 Q67,72 70,72 L73,72 L73,78 L68,78 Q59,78 59,69 L59,46 L49,46 L47,69 Q46,78 38,78 L35,78 L35,72 L37,72 Q40,72 40,68 L41,46 L34,46 Q31,46 31,43 L31,41 Q31,38 34,38 Z" />
+    </group>
+</vector>

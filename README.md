@@ -13,6 +13,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 - **Project file tools**: browse and upload files, inspect Git diffs, and preview source, Markdown, images, audio, PDFs, and DOCX files with automatic refresh.
 - **Git worktrees**: switch checkouts from the sidebar while keeping sessions from the same repository grouped together.
 - **Web-based configuration**: manage provider login and API keys, models, model tests, plugin packages, and skills without leaving Pi Web.
+- **Native Android client**: a Kotlin + Jetpack Compose app in [android/](./android/) that talks to the same HTTP + SSE API with no backend changes — see [android/README.md](./android/README.md) for features and APK builds.
 - **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially and provides a language switcher in the top bar.
 
 ## Quick Start
@@ -169,6 +170,7 @@ Contributor guides: [Internationalization](./docs/i18n.md) and [Release process]
 
 ```text
 app/             Next.js UI and API routes
+android/         Native Android client (Kotlin + Jetpack Compose) — see android/README.md
 components/      React UI components
 hooks/           Client state and interaction hooks
 lib/             Session, agent, model, file, Git, and security logic

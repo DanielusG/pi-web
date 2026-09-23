@@ -22,6 +22,11 @@ test("context route parses ?tail and ?before, excluding the boundary on paging",
   assert.match(routeSrc, /buildSessionContext\(sm\.getEntries\(\) as never, before \?\? leafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
 });
 
+test("context route serves the success payload through jsonResponse (gzip support)", () => {
+  assert.match(routeSrc, /import \{ jsonResponse \} from "@\/lib\/json-response"/);
+  assert.match(routeSrc, /return jsonResponse\(req, \{ context, contextUsage, tail, before: before \?\? null \}\);/);
+});
+
 test("context route: ?before pages upward without duplicating the boundary", () => {
   const entries = [];
   for (let i = 0; i < 100; i++) {
