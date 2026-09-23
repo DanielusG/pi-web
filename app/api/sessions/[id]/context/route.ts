@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { jsonResponse } from "@/lib/json-response";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { computeFileContextUsage } from "@/lib/cold-context";
 
 export async function GET(
   req: Request,
@@ -38,7 +40,17 @@ export async function GET(
       sessionId: id,
     });
 
-    return NextResponse.json({ context, tail, before: before ?? null });
+    // Context usage for the requested branch, so branch switching updates the
+    // indicator. Skipped for pagination pages (`before`): same leaf, same value.
+    const contextUsage = before
+      ? null
+      : await computeFileContextUsage(
+          sm.getEntries() as never,
+          leafId ?? sm.getLeafId(),
+          sm.getHeader()?.cwd || process.cwd(),
+        );
+
+    return jsonResponse(req, { context, contextUsage, tail, before: before ?? null });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
