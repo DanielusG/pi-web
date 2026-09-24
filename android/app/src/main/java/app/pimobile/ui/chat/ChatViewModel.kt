@@ -196,6 +196,10 @@ private val DEFAULT_TOOLS = listOf("read", "bash", "edit", "write")
 private const val STATE_POLL_MS = 15_000L
 private const val IDLE_CLOSE_MS = 30_000L
 private const val LEASE_RENEW_MS = 30_000L
+/** Background time after which the chat closes its event stream. */
+private const val BACKGROUND_CLOSE_MS = 10_000L
+/** 10 streaming UI updates per second: smooth to read, half the cost of 20. */
+private const val STREAM_FLUSH_MS = 100L
 
 /**
  * One chat session. Mirrors the web client's rules (hooks/useAgentSession.ts):
@@ -226,7 +230,10 @@ class ChatViewModel(
     private var localCounter = 0
 
     private val assembler = StreamingAssembler()
-    private var streamDirty = false
+    /** Pending coalesced publish of the streaming bubble; null while nothing is buffered. */
+    private var flushJob: Job? = null
+    /** Latest `tool_execution_update` per tool call, applied with the next flush. */
+    private val pendingToolUpdates = LinkedHashMap<String, JsonObject>()
 
     private var eventsJob: Job? = null
     private var streamJob: Job? = null
@@ -242,10 +249,12 @@ class ChatViewModel(
     private var sdkActive = false
     private var lastSendAt = 0L
     private var foregroundSeen = false
+    private var backgroundJob: Job? = null
+    /** Live updates are paused while the chat is in the background; see [onBackground]. */
+    private var suspended = false
 
     init {
         if (cwd.isNotBlank()) saveLastCwd(cwd)
-        viewModelScope.launch { streamFlushLoop() }
         viewModelScope.launch { loadModels() }
         if (sessionId != null) {
             viewModelScope.launch {
@@ -462,13 +471,41 @@ class ChatViewModel(
         }
     }
 
+    /** The chat is on screen again: catch up on what the background missed. */
     fun onForeground() {
+        backgroundJob?.cancel()
+        suspended = false
         if (!foregroundSeen) {
             foregroundSeen = true
             return
         }
         refresh()
-        refreshSubagents()
+    }
+
+    /**
+     * The chat left the screen. After a grace period (a quick app switch keeps the
+     * stream), stop consuming the session: RunWatcherService covers notifications
+     * meanwhile, and [onForeground] reloads and reconnects, the server replaying the
+     * message in progress.
+     */
+    fun onBackground() {
+        backgroundJob?.cancel()
+        backgroundJob = viewModelScope.launch {
+            delay(BACKGROUND_CLOSE_MS)
+            suspended = true
+            eventsJob?.cancel()
+            eventsJob = null
+            idleCloseJob?.cancel()
+            pollJob?.cancel()
+            cancelFlush()
+            pendingToolUpdates.clear()
+            assembler.clear()
+            // A fresh connection on return, not a "reconnect": no Reconnecting… flash,
+            // and the refresh that precedes it already reconciled.
+            everConnected = false
+            reconnectAttempt = 0
+            _state.update { it.copy(streaming = null, liveTools = emptyMap()) }
+        }
     }
 
     fun loadEarlier() {
@@ -996,7 +1033,7 @@ class ChatViewModel(
                 state.bool("isCompacting") == true || state.bool("isBashRunning") == true)
         when {
             active -> {
-                if (!_state.value.running) setRunning("Working…")
+                if (!_state.value.running) setRunning("Working…") else ensurePoll()
                 ensureEvents(id)
             }
             _state.value.running && !recentlySent() -> settle(id)
@@ -1009,14 +1046,17 @@ class ChatViewModel(
         idleCloseJob?.cancel()
         onRunActive()
         _state.update { it.copy(running = true, status = status) }
-        if (pollJob?.isActive != true) {
-            pollJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(STATE_POLL_MS)
-                    val id = _state.value.sessionId ?: continue
-                    if (!_state.value.running) break
-                    reconcile(id)
-                }
+        ensurePoll()
+    }
+
+    private fun ensurePoll() {
+        if (suspended || pollJob?.isActive == true) return
+        pollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(STATE_POLL_MS)
+                val id = _state.value.sessionId ?: continue
+                if (!_state.value.running) break
+                reconcile(id)
             }
         }
     }
@@ -1033,7 +1073,8 @@ class ChatViewModel(
         optimisticKey = null
         sdkActive = false
         assembler.clear()
-        streamDirty = false
+        cancelFlush()
+        pendingToolUpdates.clear()
         _state.update { it.copy(streaming = null) }
         markIdle()
         viewModelScope.launch {
@@ -1050,7 +1091,7 @@ class ChatViewModel(
 
     private fun ensureEvents(id: String) {
         idleCloseJob?.cancel()
-        if (eventsJob?.isActive == true) return
+        if (suspended || eventsJob?.isActive == true) return
         eventsJob = viewModelScope.launch { eventLoop(id) }
     }
 
@@ -1148,14 +1189,14 @@ class ChatViewModel(
                 val message = event.obj("message") ?: return
                 if (message.str("role") == "assistant") {
                     assembler.start(message)
-                    streamDirty = true
+                    scheduleFlush()
                     setStatus("Responding…")
                 }
             }
             "message_update" -> {
                 val delta = event.obj("assistantMessageEvent") ?: return
                 if (assembler.apply(delta)) {
-                    streamDirty = true
+                    scheduleFlush()
                     val kind = delta.type.orEmpty()
                     setStatus(
                         when {
@@ -1183,15 +1224,14 @@ class ChatViewModel(
             }
             "tool_execution_update" -> {
                 val toolId = event.str("toolCallId") ?: return
-                val output = Messages.contentText(event.obj("partialResult")?.get("content"))
-                _state.update { state ->
-                    val tool = state.liveTools[toolId] ?: LiveTool(toolId, event.str("toolName").orEmpty(), "")
-                    state.copy(liveTools = state.liveTools + (toolId to tool.copy(output = output)))
-                }
+                // Coalesced like token deltas: a verbose bash command emits hundreds of updates per second.
+                pendingToolUpdates[toolId] = event
+                scheduleFlush()
             }
             "tool_execution_end" -> {
                 val toolId = event.str("toolCallId") ?: return
                 val toolName = event.str("toolName") ?: _state.value.liveTools[toolId]?.name
+                pendingToolUpdates.remove(toolId)
                 _state.update { it.copy(liveTools = it.liveTools - toolId) }
                 if (_state.value.liveTools.isEmpty()) setStatus("Waiting for model…")
                 // The tool result is appended to the context: estimate grew.
@@ -1264,7 +1304,7 @@ class ChatViewModel(
             }
             "assistant" -> {
                 assembler.clear()
-                streamDirty = false
+                cancelFlush()
                 messages = messages + loaded
                 _state.update { it.copy(streaming = null) }
                 setStatus("Waiting for model…")
@@ -1301,13 +1341,36 @@ class ChatViewModel(
 
     // region publishing
 
-    private suspend fun streamFlushLoop() {
-        while (true) {
-            delay(50) // coalesce token deltas into ~20 UI updates per second
-            if (streamDirty) {
-                streamDirty = false
-                publishStreaming()
+    /**
+     * Coalesces token deltas into at most [STREAM_FLUSH_MS]-spaced UI updates. The
+     * timer exists only while a delta is waiting: no periodic wakeups when idle.
+     */
+    private fun scheduleFlush() {
+        if (flushJob?.isActive == true) return
+        flushJob = viewModelScope.launch {
+            delay(STREAM_FLUSH_MS)
+            flushJob = null
+            publishToolUpdates()
+            publishStreaming()
+        }
+    }
+
+    private fun cancelFlush() {
+        flushJob?.cancel()
+        flushJob = null
+    }
+
+    private fun publishToolUpdates() {
+        if (pendingToolUpdates.isEmpty()) return
+        val updates = pendingToolUpdates.toMap()
+        pendingToolUpdates.clear()
+        _state.update { state ->
+            var tools = state.liveTools
+            for ((toolId, event) in updates) {
+                val tool = tools[toolId] ?: LiveTool(toolId, event.str("toolName").orEmpty(), "")
+                tools = tools + (toolId to tool.copy(output = Messages.contentText(event.obj("partialResult")?.get("content"))))
             }
+            state.copy(liveTools = tools)
         }
     }
 

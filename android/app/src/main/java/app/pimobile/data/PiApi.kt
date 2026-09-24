@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -88,10 +89,16 @@ class PiApi {
      * completes when the server ends the stream and fails on network errors;
      * reconnect policy belongs to the caller.
      */
-    fun events(sessionId: String): Flow<JsonObject> =
-        sse("/api/agent/${encode(sessionId)}/events").mapNotNull { event ->
+    fun events(sessionId: String): Flow<JsonObject> = jsonEvents("/api/agent/${encode(sessionId)}/events")
+
+    /**
+     * [sse] with each `data:` payload parsed as a JSON object (others are dropped). Parsing
+     * runs off the collector's thread, which is usually the main one.
+     */
+    fun jsonEvents(path: String): Flow<JsonObject> =
+        sse(path).mapNotNull { event ->
             runCatching { json.parseToJsonElement(event.data).jsonObject }.getOrNull()
-        }
+        }.flowOn(Dispatchers.Default)
 
     /** Any SSE endpoint as a cold flow of events; same completion rules as [events]. */
     fun sse(path: String): Flow<SseEvent> = callbackFlow {

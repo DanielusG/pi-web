@@ -276,7 +276,11 @@ fun ChatScreen(
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             vm.onForeground()
-            awaitCancellation()
+            try {
+                awaitCancellation()
+            } finally {
+                vm.onBackground()
+            }
         }
     }
     // Completion notifications are skipped for the session on screen, and its pending
@@ -775,7 +779,7 @@ private fun ChatTopBar(
                         }
                         if (dot != null && label != null) {
                             Spacer(Modifier.width(8.dp))
-                            StatusDot(dot, pulsing = true)
+                            StatusDot(dot)
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 label,
@@ -1047,12 +1051,8 @@ private fun SubagentBar(
 private fun SubagentStatusIcon(agent: SubagentInfo) {
     val t = Pi.tokens
     when {
-        agent.active -> CircularProgressIndicator(
-            Modifier.size(14.dp),
-            strokeWidth = 2.dp,
-            color = t.accent,
-            trackColor = Color.Transparent,
-        )
+        // A static dot, not a spinner: see StatusDot.
+        agent.active -> Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) { StatusDot(t.accent, size = 7.dp) }
         agent.status == "failed" -> Icon(PiIcons.Close, null, tint = t.danger, modifier = Modifier.size(14.dp))
         agent.status == "aborted" || agent.status == "interrupted" ->
             Icon(PiIcons.Warning, null, tint = t.warning, modifier = Modifier.size(14.dp))
@@ -1782,7 +1782,7 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatusDot(t.accent, pulsing = true, size = 8.dp)
+                StatusDot(t.accent, size = 8.dp)
                 Spacer(Modifier.width(10.dp))
                 Text(
                     title,

@@ -108,21 +108,26 @@ class TtsPlayer(private val context: Context, private val settings: SettingsStor
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_ENDED) stop()
+            // The service stops its player the moment it ends, so this controller may see
+            // IDLE without ENDED. Both end the playback: stop() releases the controller,
+            // letting the service leave the foreground and be destroyed right away.
+            if (state == Player.STATE_ENDED || (state == Player.STATE_IDLE && _state.value is TtsUiState.Active)) stop()
         }
 
-        override fun onPlayerError(error: PlaybackException) {
-            onError?.invoke(
-                when (error.errorCodeName) {
-                    "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
-                    "ERROR_CODE_IO_NETWORK_CONNECTION_LOST",
-                    "ERROR_CODE_IO_NETWORK_TIMEOUT",
-                    -> "TTS server unreachable."
-                    else -> "TTS playback failed (${error.errorCodeName})."
-                },
-            )
-            stop()
-        }
+        override fun onPlayerError(error: PlaybackException) = fail(error)
+    }
+
+    private fun fail(error: PlaybackException) {
+        onError?.invoke(
+            when (error.errorCodeName) {
+                "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+                "ERROR_CODE_IO_NETWORK_CONNECTION_LOST",
+                "ERROR_CODE_IO_NETWORK_TIMEOUT",
+                -> "TTS server unreachable."
+                else -> "TTS playback failed (${error.errorCodeName})."
+            },
+        )
+        stop()
     }
 
     private val controllerListener = object : MediaController.Listener {
@@ -169,6 +174,8 @@ class TtsPlayer(private val context: Context, private val settings: SettingsStor
                 if (c.isPlaying && _state.value is TtsUiState.Loading) {
                     _state.value = TtsUiState.Active(activeKey.orEmpty(), activeTitle, true, c.playbackParameters.speed)
                 }
+                // Likewise a failure before attachment (e.g. unreachable server) would never be reported.
+                c.playerError?.let(::fail)
             } else {
                 if (isActive) {
                     _state.value = TtsUiState.Idle

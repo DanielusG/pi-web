@@ -30,6 +30,9 @@ class TtsPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Media3 keeps a paused service in the foreground for 10 minutes by default,
+        // which also keeps the whole app process from being frozen.
+        setForegroundServiceTimeoutMs(PAUSED_FOREGROUND_TIMEOUT_MS)
         val p = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -117,6 +120,7 @@ class TtsPlaybackService : MediaSessionService() {
     }
 
     companion object {
+        private const val PAUSED_FOREGROUND_TIMEOUT_MS = 60_000L
         const val ACTION_PLAY = "app.pimobile.action.PLAY"
         const val ACTION_STOP = "app.pimobile.action.STOP"
         const val EXTRA_TITLE = "title"

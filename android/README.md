@@ -1,7 +1,9 @@
 # Pi Mobile — native Android client for pi-web
 
 A native Kotlin + Jetpack Compose app that talks to a running pi-web backend on
-another machine over its existing HTTP + SSE API. It needs no backend changes.
+another machine over its HTTP + SSE API. It needs this fork's pi-web: it relies on
+`GET /api/agent/running/events`, and against a server without it the app shows an
+"Update pi-web" screen instead of starting (there is no polling fallback).
 
 **Status: first working version.** It covers one complete flow and is meant to decide
 the direction before building a full-featured app. It has been tested on an Android 15
@@ -11,9 +13,11 @@ It has **not yet been tested against a real pi-web with a real model.**
 ## What works
 
 - **Server setup:** address + `PI_WEB_PASSWORD` (Basic auth), with a connection test
-  and clear 401/403 messages.
-- **Sessions:** grouped by project, pull to refresh, a live "running" dot (polls
-  `/api/agent/running` every 3 s, reloads when `sessionListVersion` changes),
+  and clear 401/403 messages. The test also refuses a pi-web without the run-state
+  stream.
+- **Sessions:** grouped by project, pull to refresh, a live "running" dot (pushed by
+  the run-state stream while the list is visible, reloads when `sessionListVersion`
+  changes),
   an "Active" box at the top of the list, styled like a project group and
   scrolling with it, that lists every running or waiting session across
   projects (tap to open, long-press for the same rename/delete sheet; hidden
@@ -37,7 +41,7 @@ It has **not yet been tested against a real pi-web with a real model.**
 - **Chat:**
   - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
   - Collapsible thinking; deferred thinking loads its full text on tap.
-  - Tool call cards with a spinner, check or error state. Tap for input and output;
+  - Tool call cards with a running dot, check or error state. Tap for input and output;
     bash output streams live.
   - `!bash` executions and compaction notices.
   - "Load earlier messages" paging.
@@ -112,6 +116,9 @@ It has **not yet been tested against a real pi-web with a real model.**
     missed events.
   - State polling every 15 s while running, plus a check when the app returns to the
     foreground.
+  - 10 s after the chat leaves the screen it closes its event stream (the notification
+    service keeps watching); on return it reloads and reconnects, and the server replays
+    the message in progress.
   - SSE lease renewal. The run ends on `prompt_done` / `agent_settled`, never on the
     first `agent_end`.
 
@@ -140,8 +147,13 @@ It has **not yet been tested against a real pi-web with a real model.**
   - In chat, the path in read/write/edit tool cards opens the file (edits open on the diff). Local markdown links open in the viewer, and chips under a turn's last message list the files it wrote.
 - **Notifications:**
   - pi-web's own push is Web Push, which a native app can't receive. Instead, `notify/RunWatcherService` runs as a foreground service only while a session is running.
-  - It polls `/api/agent/running` every 3 s and posts "Task finished." when a session goes idle.
+  - It follows `GET /api/agent/running/events`, one SSE connection shared with the session
+    list: the server sends the running and waiting session ids on connect and then only
+    when they change, so nothing is polled.
+  - It posts "Task finished." when a session goes idle, and "Waiting for your input." when a
+    session blocks on an extension dialog (permission gates included).
   - It stays silent for subagents (pi-web's suppression list) and for the session already on screen.
+  - The ongoing notification is re-posted only when its content changes.
   - Tapping the notification opens that session. Each tap is a one-shot deep link, consumed
     exactly once (a unique token per notification survives activity recreation), and the
     finished/waiting notifications of a session are removed as soon as that session is on screen.
@@ -197,8 +209,10 @@ app/src/main/java/app/pimobile/
   media/TtsDataSource.kt   Media3 DataSource streaming POST /v1/audio/speech directly to ExoPlayer
   service/TtsPlaybackService.kt foreground MediaSessionService + ExoPlayer
   data/Json.kt             lenient JsonObject accessors
+  notify/RunStatus.kt      the one run-state SSE connection (list + notification service)
+  notify/RunWatcherService.kt foreground service: finished / waiting notifications
   ui/sessions/             session list + new-session sheet
-  ui/settings/             server settings, assistant project picker
+  ui/settings/             server settings, assistant project picker, "Update pi-web" screen
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
   ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
@@ -206,6 +220,7 @@ app/src/main/java/app/pimobile/
   data/FilePaths.kt        pi-web's path, link and @mention helpers
   ui/files/                explorer, viewer (source/preview/diff), media views, share
   ui/markdown/Markdown.kt  small markdown renderer
+  ui/markdown/StreamingMarkdown.kt streaming message: closed segments cached, only the tail re-parsed
 ```
 
 The API contract this client relies on (endpoints, SSE events, delta rules) was
@@ -217,7 +232,7 @@ between SDK releases.
 
 | Area | Notes |
 |---|---|
-| Notifications, part 2 | "Needs your input" (blocking extension dialog) requires holding SSE from the service. Real push (FCM) would need a backend addition. |
+| Notifications, part 2 | Real push (FCM), so runs started while the app is closed notify too, would need a backend addition. |
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
 | Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
