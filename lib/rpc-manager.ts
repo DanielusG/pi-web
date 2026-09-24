@@ -119,6 +119,9 @@ type AgentSessionWrapperOptions = {
   suppressCompletionNotifications?: boolean;
 };
 
+/** Extension dialogs that block the run until the user answers. */
+const BLOCKING_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
 const IDLE_RESET_EVENT_TYPES = new Set([
   "agent_end",
   "agent_settled",
@@ -310,6 +313,13 @@ export class AgentSessionWrapper {
 
   hasSuppressedCompletionNotifications(): boolean {
     return this.suppressCompletionNotifications;
+  }
+
+  hasPendingBlockingDialog(): boolean {
+    for (const request of this.pendingUiRequests.values()) {
+      if (BLOCKING_DIALOG_METHODS.has(String((request as { method?: unknown }).method))) return true;
+    }
+    return false;
   }
 
   start(): void {
@@ -1926,6 +1936,15 @@ export function getRunningRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {
     if (session.isRunning()) ids.add(session.sessionId || sessionId);
+  }
+  return [...ids];
+}
+
+/** Sessions blocked on an extension dialog that waits for the user's answer. */
+export function getWaitingRpcSessionIds(): string[] {
+  const ids = new Set<string>();
+  for (const [sessionId, session] of getRegistry()) {
+    if (session.isAlive() && session.hasPendingBlockingDialog()) ids.add(session.sessionId || sessionId);
   }
   return [...ids];
 }
