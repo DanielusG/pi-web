@@ -11,11 +11,12 @@ import app.pimobile.data.long
 import app.pimobile.data.obj
 import app.pimobile.data.str
 import app.pimobile.data.strings
+import app.pimobile.notify.RunSnapshot
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -49,17 +50,13 @@ data class SessionsUiState(
 class SessionsViewModel(
     private val api: PiApi,
     private val onRunActive: () -> Unit = {},
-    private val waitingSessionIds: StateFlow<Set<String>> = MutableStateFlow(emptySet()),
+    /** [app.pimobile.notify.RunStatus.snapshot]: collected only while the list is visible. */
+    private val runStatus: StateFlow<RunSnapshot?> = MutableStateFlow(null),
 ) : ViewModel() {
     private val _state = MutableStateFlow(SessionsUiState())
     val state: StateFlow<SessionsUiState> = _state.asStateFlow()
 
     private var listVersion: Long? = null
-
-    init {
-        // Waiting state is owned by RunWatcherService (its per-session SSE streams).
-        viewModelScope.launch { waitingSessionIds.collect { waiting -> _state.update { it.copy(waiting = waiting) } } }
-    }
 
     fun refresh(force: Boolean) {
         viewModelScope.launch { load(force) }
@@ -71,24 +68,15 @@ class SessionsViewModel(
 
     fun clearError() = _state.update { it.copy(error = null) }
 
-    /** Runs while the screen is visible: cheap running-state poll, full reload on version change. */
+    /** Runs while the screen is visible: live run state from the server's stream, full reload on version change. */
     suspend fun watch() {
         load(force = false)
-        while (true) {
-            delay(3_000)
-            try {
-                val body = api.get("/api/agent/running").asObj() ?: continue
-                val running = body.arr("runningSessionIds").strings().toSet()
-                _state.update { it.copy(running = running) }
-                // Runs started elsewhere (e.g. pi-web in a browser) get notifications too.
-                if (running.isNotEmpty()) onRunActive()
-                val version = body.long("sessionListVersion")
-                if (version != null && version != listVersion) load(force = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // transient; the next tick retries
-            }
+        runStatus.filterNotNull().collect { snapshot ->
+            _state.update { it.copy(running = snapshot.running, waiting = snapshot.waiting) }
+            // Runs started elsewhere (e.g. pi-web in a browser) get notifications too.
+            if (snapshot.running.isNotEmpty()) onRunActive()
+            val version = snapshot.listVersion
+            if (version != null && version != listVersion) load(force = false)
         }
     }
 

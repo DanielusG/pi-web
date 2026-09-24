@@ -1,7 +1,6 @@
 package app.pimobile.ui.theme
 
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -28,7 +27,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,21 +67,16 @@ fun ShimmerText(
     )
 }
 
+/**
+ * Solid dot for a state (running, waiting, live). Deliberately static: an infinite
+ * animation keeps the whole window rendering at the display refresh rate for as long
+ * as it is on screen, which measured as the app's largest battery cost.
+ */
 @Composable
-fun StatusDot(color: Color, modifier: Modifier = Modifier, pulsing: Boolean = false, size: Dp = 6.dp) {
-    val alpha = if (pulsing) {
-        val transition = rememberInfiniteTransition(label = "dot")
-        transition.animateFloat(
-            initialValue = 0.3f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
-            label = "alpha",
-        ).value
-    } else 1f
+fun StatusDot(color: Color, modifier: Modifier = Modifier, size: Dp = 6.dp) {
     Box(
         modifier
             .size(size)
-            .alpha(alpha)
             .background(color, CircleShape),
     )
 }

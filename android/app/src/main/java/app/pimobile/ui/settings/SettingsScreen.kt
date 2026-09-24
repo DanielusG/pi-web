@@ -216,6 +216,7 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                             if (body?.containsKey("runningSessionIds") != true) {
                                 throw IllegalStateException("The server answered, but it doesn't look like pi-web.")
                             }
+                            app.runStatus.require()
                             app.settings.save(candidate)
                             onConnected()
                         } catch (e: Exception) {

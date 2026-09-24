@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.pimobile.notify.Notifications
@@ -43,6 +45,7 @@ import app.pimobile.ui.files.FilesScreen
 import app.pimobile.ui.files.FilesViewModel
 import app.pimobile.ui.sessions.SessionsScreen
 import app.pimobile.ui.sessions.SessionsViewModel
+import app.pimobile.ui.settings.ServerOutdatedScreen
 import app.pimobile.ui.settings.SettingsScreen
 import app.pimobile.ui.theme.PiTheme
 import kotlinx.coroutines.flow.first
@@ -176,145 +179,170 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
         }
     }
 
-    NavHost(
-        navController = nav,
-        startDestination = start,
-        // Forward: the new screen comes in from the right. Back: the reverse.
-        enterTransition = { slideIntoContainer(SlideDirection.Start, navSlideSpec) },
-        exitTransition = { slideOutOfContainer(SlideDirection.Start, navSlideSpec) },
-        popEnterTransition = { slideIntoContainer(SlideDirection.End, navSlideSpec) },
-        popExitTransition = { slideOutOfContainer(SlideDirection.End, navSlideSpec) },
-    ) {
-        composable("settings") {
-            val canGoBack = nav.previousBackStackEntry != null
-            SettingsScreen(
-                app = app,
-                canGoBack = canGoBack,
-                onBack = { nav.popBackStack() },
-                onConnected = {
-                    if (canGoBack) nav.popBackStack()
-                    else nav.navigate("sessions") { popUpTo("settings") { inclusive = true } }
-                },
-            )
-        }
-        composable(
-            SESSIONS_ROUTE,
-            // Declared, or "true" arrives as a String and getBoolean reads false.
-            arguments = listOf(navArgument("newSheet") { type = NavType.BoolType; defaultValue = false }),
-        ) { entry ->
-            val newSheet = entry.arguments?.getBoolean("newSheet") ?: false
-            AskNotificationPermissionOnce()
-            val vm = viewModel { SessionsViewModel(app.api, app::onRunActive, app.waitingSessionIds) }
-            SessionsScreen(
-                vm = vm,
-                serverLabel = app.api.config.baseUrl.removePrefix("http://").removePrefix("https://"),
-                onOpen = { id, cwd -> nav.navigate(chatRoute(id, cwd)) },
-                onNew = { cwd -> nav.navigate(chatRoute(null, cwd)) },
-                onSettings = { nav.navigate("settings") },
-                // No chat to mention into from here.
-                onBrowse = { root -> nav.navigate(filesRoute(root, null, mention = false)) },
-                startWithNewSheet = newSheet,
-            )
-        }
-        composable(
-            CHAT_ROUTE,
-            arguments = listOf(
-                navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
-                navArgument("cwd") { type = NavType.StringType; defaultValue = "" },
-                navArgument("focus") { type = NavType.BoolType; defaultValue = false },
-            ),
-        ) { entry ->
-            val id = entry.arguments?.getString("id")
-            val cwd = entry.arguments?.getString("cwd").orEmpty()
-            val focus = entry.arguments?.getBoolean("focus") ?: false
-            val vm = viewModel {
-                ChatViewModel(app, app.api, id, cwd, app::onRunActive) { last ->
-                    navScope.launch { app.settings.saveLastCwd(last) }
+    // This version needs pi-web's run-state stream: an older server gets an update
+    // prompt over the whole app instead of a degraded, polling one.
+    val outdated by app.runStatus.outdated.collectAsState()
+    var checkingServer by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (app.api.config.isConfigured) app.runStatus.check()
+    }
+    val route = nav.currentBackStackEntryAsState().value?.destination?.route
+
+    Box(Modifier.fillMaxSize()) {
+        NavHost(
+            navController = nav,
+            startDestination = start,
+            // Forward: the new screen comes in from the right. Back: the reverse.
+            enterTransition = { slideIntoContainer(SlideDirection.Start, navSlideSpec) },
+            exitTransition = { slideOutOfContainer(SlideDirection.Start, navSlideSpec) },
+            popEnterTransition = { slideIntoContainer(SlideDirection.End, navSlideSpec) },
+            popExitTransition = { slideOutOfContainer(SlideDirection.End, navSlideSpec) },
+        ) {
+            composable("settings") {
+                val canGoBack = nav.previousBackStackEntry != null
+                SettingsScreen(
+                    app = app,
+                    canGoBack = canGoBack,
+                    onBack = { nav.popBackStack() },
+                    onConnected = {
+                        if (canGoBack) nav.popBackStack()
+                        else nav.navigate("sessions") { popUpTo("settings") { inclusive = true } }
+                    },
+                )
+            }
+            composable(
+                SESSIONS_ROUTE,
+                // Declared, or "true" arrives as a String and getBoolean reads false.
+                arguments = listOf(navArgument("newSheet") { type = NavType.BoolType; defaultValue = false }),
+            ) { entry ->
+                val newSheet = entry.arguments?.getBoolean("newSheet") ?: false
+                AskNotificationPermissionOnce()
+                val vm = viewModel { SessionsViewModel(app.api, app::onRunActive, app.runStatus.snapshot) }
+                SessionsScreen(
+                    vm = vm,
+                    serverLabel = app.api.config.baseUrl.removePrefix("http://").removePrefix("https://"),
+                    onOpen = { id, cwd -> nav.navigate(chatRoute(id, cwd)) },
+                    onNew = { cwd -> nav.navigate(chatRoute(null, cwd)) },
+                    onSettings = { nav.navigate("settings") },
+                    // No chat to mention into from here.
+                    onBrowse = { root -> nav.navigate(filesRoute(root, null, mention = false)) },
+                    startWithNewSheet = newSheet,
+                )
+            }
+            composable(
+                CHAT_ROUTE,
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("cwd") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("focus") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { entry ->
+                val id = entry.arguments?.getString("id")
+                val cwd = entry.arguments?.getString("cwd").orEmpty()
+                val focus = entry.arguments?.getBoolean("focus") ?: false
+                val vm = viewModel {
+                    ChatViewModel(app, app.api, id, cwd, app::onRunActive) { last ->
+                        navScope.launch { app.settings.saveLastCwd(last) }
+                    }
+                }
+                LaunchedEffect(vm) {
+                    carriedNotice?.let(vm::showNotice)
+                    carriedNotice = null
+                }
+                val insert by entry.savedStateHandle.getStateFlow<String?>(INSERT_KEY, null).collectAsState()
+                ChatScreen(
+                    vm,
+                    tts = app.tts,
+                    onBack = { nav.popBackStack() },
+                    onOpenSession = { target ->
+                        // Replace this chat (web: /clone switches the active session).
+                        carriedNotice = target.notice
+                        nav.navigate(chatRoute(target.sessionId, target.cwd)) {
+                            popUpTo(entry.destination.id) { inclusive = true }
+                        }
+                    },
+                    onOpenSubagent = { subagentId ->
+                        // Push, not replace: the back button returns to this session.
+                        nav.navigate(chatRoute(subagentId, vm.state.value.cwd.ifEmpty { cwd }))
+                    },
+                    onOpenFiles = {
+                        val chat = vm.state.value
+                        nav.navigate(filesRoute(chat.cwd.ifEmpty { cwd }, chat.sessionId, mention = true))
+                    },
+                    onOpenFile = { path, diff ->
+                        val chat = vm.state.value
+                        nav.navigate(fileRoute(path, chat.cwd.ifEmpty { cwd }, chat.sessionId, diff, mention = true))
+                    },
+                    pendingInsert = insert,
+                    onInsertConsumed = { entry.savedStateHandle[INSERT_KEY] = null },
+                    autoFocusComposer = focus,
+                )
+            }
+            // Back to the chat below, with the mention for its composer.
+            val mentionInChat: (String) -> Unit = { text ->
+                if (nav.popBackStack(CHAT_ROUTE, inclusive = false)) {
+                    nav.currentBackStackEntry?.savedStateHandle?.set(INSERT_KEY, text)
                 }
             }
-            LaunchedEffect(vm) {
-                carriedNotice?.let(vm::showNotice)
-                carriedNotice = null
+            composable(
+                "files?root={root}&session={session}&mention={mention}",
+                arguments = listOf(
+                    navArgument("root") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("session") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("mention") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { entry ->
+                val root = entry.arguments?.getString("root").orEmpty()
+                val session = entry.arguments?.getString("session")?.takeIf { it.isNotEmpty() }
+                val mention = entry.arguments?.getBoolean("mention") ?: false
+                val vm = viewModel { FilesViewModel(app.api, root, session) }
+                FilesScreen(
+                    vm = vm,
+                    mentionEnabled = mention,
+                    onBack = { nav.popBackStack() },
+                    onOpenFile = { path, diff -> nav.navigate(fileRoute(path, root, session, diff, mention)) },
+                    onMention = mentionInChat,
+                )
             }
-            val insert by entry.savedStateHandle.getStateFlow<String?>(INSERT_KEY, null).collectAsState()
-            ChatScreen(
-                vm,
-                tts = app.tts,
-                onBack = { nav.popBackStack() },
-                onOpenSession = { target ->
-                    // Replace this chat (web: /clone switches the active session).
-                    carriedNotice = target.notice
-                    nav.navigate(chatRoute(target.sessionId, target.cwd)) {
-                        popUpTo(entry.destination.id) { inclusive = true }
+            composable(
+                "file?path={path}&root={root}&session={session}&diff={diff}&mention={mention}",
+                arguments = listOf(
+                    navArgument("path") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("root") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("session") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("diff") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("mention") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { entry ->
+                val args = entry.arguments
+                val path = args?.getString("path").orEmpty()
+                val root = args?.getString("root").orEmpty()
+                val session = args?.getString("session")?.takeIf { it.isNotEmpty() }
+                val diff = args?.getBoolean("diff") ?: false
+                val mention = args?.getBoolean("mention") ?: false
+                val cacheDir = LocalContext.current.cacheDir
+                val vm = viewModel { FileViewerViewModel(app.api, path, root, session, diff, cacheDir) }
+                FileViewerScreen(
+                    vm = vm,
+                    mentionEnabled = mention,
+                    onBack = { nav.popBackStack() },
+                    onMention = mentionInChat,
+                    onOpenFile = { target -> nav.navigate(fileRoute(target, root, session, diff = false, mention = mention)) },
+                )
+            }
+        }
+        if (outdated && route != "settings") {
+            ServerOutdatedScreen(
+                serverLabel = app.api.config.baseUrl.removePrefix("http://").removePrefix("https://"),
+                checking = checkingServer,
+                onRetry = {
+                    navScope.launch {
+                        checkingServer = true
+                        app.runStatus.check()
+                        checkingServer = false
                     }
                 },
-                onOpenSubagent = { subagentId ->
-                    // Push, not replace: the back button returns to this session.
-                    nav.navigate(chatRoute(subagentId, vm.state.value.cwd.ifEmpty { cwd }))
-                },
-                onOpenFiles = {
-                    val chat = vm.state.value
-                    nav.navigate(filesRoute(chat.cwd.ifEmpty { cwd }, chat.sessionId, mention = true))
-                },
-                onOpenFile = { path, diff ->
-                    val chat = vm.state.value
-                    nav.navigate(fileRoute(path, chat.cwd.ifEmpty { cwd }, chat.sessionId, diff, mention = true))
-                },
-                pendingInsert = insert,
-                onInsertConsumed = { entry.savedStateHandle[INSERT_KEY] = null },
-                autoFocusComposer = focus,
-            )
-        }
-        // Back to the chat below, with the mention for its composer.
-        val mentionInChat: (String) -> Unit = { text ->
-            if (nav.popBackStack(CHAT_ROUTE, inclusive = false)) {
-                nav.currentBackStackEntry?.savedStateHandle?.set(INSERT_KEY, text)
-            }
-        }
-        composable(
-            "files?root={root}&session={session}&mention={mention}",
-            arguments = listOf(
-                navArgument("root") { type = NavType.StringType; defaultValue = "" },
-                navArgument("session") { type = NavType.StringType; defaultValue = "" },
-                navArgument("mention") { type = NavType.BoolType; defaultValue = false },
-            ),
-        ) { entry ->
-            val root = entry.arguments?.getString("root").orEmpty()
-            val session = entry.arguments?.getString("session")?.takeIf { it.isNotEmpty() }
-            val mention = entry.arguments?.getBoolean("mention") ?: false
-            val vm = viewModel { FilesViewModel(app.api, root, session) }
-            FilesScreen(
-                vm = vm,
-                mentionEnabled = mention,
-                onBack = { nav.popBackStack() },
-                onOpenFile = { path, diff -> nav.navigate(fileRoute(path, root, session, diff, mention)) },
-                onMention = mentionInChat,
-            )
-        }
-        composable(
-            "file?path={path}&root={root}&session={session}&diff={diff}&mention={mention}",
-            arguments = listOf(
-                navArgument("path") { type = NavType.StringType; defaultValue = "" },
-                navArgument("root") { type = NavType.StringType; defaultValue = "" },
-                navArgument("session") { type = NavType.StringType; defaultValue = "" },
-                navArgument("diff") { type = NavType.BoolType; defaultValue = false },
-                navArgument("mention") { type = NavType.BoolType; defaultValue = false },
-            ),
-        ) { entry ->
-            val args = entry.arguments
-            val path = args?.getString("path").orEmpty()
-            val root = args?.getString("root").orEmpty()
-            val session = args?.getString("session")?.takeIf { it.isNotEmpty() }
-            val diff = args?.getBoolean("diff") ?: false
-            val mention = args?.getBoolean("mention") ?: false
-            val cacheDir = LocalContext.current.cacheDir
-            val vm = viewModel { FileViewerViewModel(app.api, path, root, session, diff, cacheDir) }
-            FileViewerScreen(
-                vm = vm,
-                mentionEnabled = mention,
-                onBack = { nav.popBackStack() },
-                onMention = mentionInChat,
-                onOpenFile = { target -> nav.navigate(fileRoute(target, root, session, diff = false, mention = mention)) },
+                onSettings = { nav.navigate("settings") },
             )
         }
     }

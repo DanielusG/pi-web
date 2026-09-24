@@ -48,11 +48,14 @@ object Notifications {
     private fun openIntent(context: Context, sessionId: String?, cwd: String?): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            sessionId?.let { putExtra(EXTRA_SESSION_ID, it) }
-            cwd?.let { putExtra(EXTRA_CWD, it) }
-            // Unique per post: re-posting refreshes it via FLAG_UPDATE_CURRENT, so every
-            // new notification tap carries a fresh token (MainActivity consumes it once).
-            putExtra(EXTRA_TOKEN, System.nanoTime().toString())
+            if (sessionId != null) {
+                putExtra(EXTRA_SESSION_ID, sessionId)
+                cwd?.let { putExtra(EXTRA_CWD, it) }
+                // Unique per post: re-posting refreshes it via FLAG_UPDATE_CURRENT, so every
+                // new notification tap carries a fresh token (MainActivity consumes it once).
+                // The ongoing notification opens no session, so its intent stays identical.
+                putExtra(EXTRA_TOKEN, System.nanoTime().toString())
+            }
         }
         return PendingIntent.getActivity(
             context,

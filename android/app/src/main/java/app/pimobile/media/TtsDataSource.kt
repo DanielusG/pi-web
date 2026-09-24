@@ -28,6 +28,8 @@ class TtsDataSource(
     @Volatile private var source: okio.BufferedSource? = null
     @Volatile private var closed = false
     @Volatile private var currentUri: Uri? = null
+    /** Set once [transferStarted] ran: [transferEnded] requires it. */
+    @Volatile private var opened = false
 
     override fun getUri(): Uri? = currentUri
 
@@ -61,6 +63,7 @@ class TtsDataSource(
             }
         }
         source = bodySource
+        opened = true
         transferStarted(dataSpec)
         return C.LENGTH_UNSET.toLong()
     }
@@ -85,7 +88,12 @@ class TtsDataSource(
         source = null
         call = null
         currentUri = null
-        transferEnded()
+        // After a failed open (e.g. TTS server unreachable) there is no transfer to end:
+        // calling transferEnded() would throw and hide the open error from the player.
+        if (opened) {
+            opened = false
+            transferEnded()
+        }
     }
 
     /** Creates [TtsDataSource]es for the immutable [request]. */

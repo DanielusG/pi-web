@@ -5,12 +5,12 @@ import app.pimobile.data.PiApi
 import app.pimobile.data.SettingsStore
 import app.pimobile.data.TtsPlayer
 import app.pimobile.notify.Notifications
+import app.pimobile.notify.RunStatus
 import app.pimobile.notify.RunWatcherService
 import app.pimobile.ui.markdown.disablePreciseGlyphBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -23,10 +23,10 @@ class PiApp : Application() {
     /** Initialized lazily: [settings] is assigned in [onCreate]. */
     val tts by lazy { TtsPlayer(this, settings) }
 
-    /** Session ids blocked on a user-input dialog; maintained by [RunWatcherService]. */
-    val waitingSessionIds = MutableStateFlow<Set<String>>(emptySet())
-
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Live running/waiting sessions, shared by the session list and [RunWatcherService]. */
+    val runStatus = RunStatus(api, appScope)
 
     override fun onCreate() {
         super.onCreate()

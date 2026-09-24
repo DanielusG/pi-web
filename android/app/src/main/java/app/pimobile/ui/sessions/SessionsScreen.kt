@@ -225,7 +225,7 @@ private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount:
                 Text(serverLabel, style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
                 if (runningCount > 0) {
                     Spacer(Modifier.width(10.dp))
-                    StatusDot(t.success, pulsing = true)
+                    StatusDot(t.success)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         if (runningCount == 1) "1 running" else "$runningCount running",
@@ -235,7 +235,7 @@ private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount:
                 }
                 if (waitingCount > 0) {
                     Spacer(Modifier.width(10.dp))
-                    StatusDot(t.warning, pulsing = false)
+                    StatusDot(t.warning)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         if (waitingCount == 1) "1 waiting" else "$waitingCount waiting",
@@ -281,7 +281,7 @@ private fun ActiveSessionsView(
             Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusDot(t.success, pulsing = true)
+            StatusDot(t.success)
             Spacer(Modifier.width(8.dp))
             Text(
                 "Active",
@@ -335,11 +335,11 @@ private fun ActiveSessionsView(
                     Spacer(Modifier.width(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (row.id in waiting) {
-                            StatusDot(t.warning, pulsing = false)
+                            StatusDot(t.warning)
                             Spacer(Modifier.width(6.dp))
                             Text("Waiting", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
                         } else {
-                            StatusDot(t.success, pulsing = true)
+                            StatusDot(t.success)
                             Spacer(Modifier.width(6.dp))
                             Text("Running", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
                         }
@@ -465,14 +465,14 @@ private fun SessionRowView(row: SessionRow, running: Boolean, waiting: Boolean, 
         if (waiting) {
             Spacer(Modifier.width(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(t.warning, pulsing = false)
+                StatusDot(t.warning)
                 Spacer(Modifier.width(6.dp))
                 Text("Waiting", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
             }
         } else if (running) {
             Spacer(Modifier.width(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(t.success, pulsing = true)
+                StatusDot(t.success)
                 Spacer(Modifier.width(6.dp))
                 Text("Running", style = MaterialTheme.typography.labelSmall, color = t.textSecondary)
             }

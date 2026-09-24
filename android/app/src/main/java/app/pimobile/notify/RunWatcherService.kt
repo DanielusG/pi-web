@@ -15,32 +15,31 @@ import app.pimobile.data.SlashDisplay
 import app.pimobile.data.arr
 import app.pimobile.data.asObj
 import app.pimobile.data.str
-import app.pimobile.data.strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
 /**
  * Foreground service that lives only while some session is running. pi-web's
  * own completion push is Web Push, which a native app can't receive, so this
- * polls GET /api/agent/running and notifies on running → idle transitions,
- * applying the same subagent suppression as pi-web's sidebar. On top of the
- * poll it keeps one SSE per active session (the viewed one excepted) to catch
- * blocking extension UI requests — permission gates included — and notify on
- * running → waiting transitions.
+ * follows pi-web's run-state stream ([RunStatus]) and notifies on running → idle
+ * transitions, applying the same subagent suppression as pi-web's sidebar, and
+ * when a session starts waiting on a blocking extension dialog (permission gates
+ * included). Nothing is polled: the server pushes only changes.
  */
 class RunWatcherService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loop: Job? = null
     private val sessions = mutableMapOf<String, Pair<String, String?>>() // id -> (title, cwd)
-    private val sseJobs = mutableMapOf<String, Job>()
-    private val waiting = mutableMapOf<String, String>() // id -> open dialog id
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -58,118 +57,93 @@ class RunWatcherService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        sseJobs.values.forEach { it.cancel() }
-        sseJobs.clear()
-        waiting.clear()
-        (application as PiApp).waitingSessionIds.value = emptySet()
         scope.cancel()
         super.onDestroy()
     }
 
-    private suspend fun watch() {
-        val api = (application as PiApp).api
+    private suspend fun watch(): Unit = coroutineScope {
+        val app = application as PiApp
         var previous = emptySet<String>()
         var suppressed = emptySet<String>()
-        var idlePolls = 0
-        var failures = 0
-        while (true) {
-            val body = try {
-                api.get("/api/agent/running").asObj()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
+        /** Waiting sessions with a posted notification. */
+        var notifiedWaiting = emptySet<String>()
+        var posted: List<Pair<String, Boolean>>? = null
+        var stopTimer: Job? = null
+        var stopDelay = 0L
+        fun scheduleStop(delayMs: Long) {
+            if (stopTimer?.isActive == true && stopDelay == delayMs) return
+            stopTimer?.cancel()
+            stopDelay = delayMs
+            stopTimer = launch {
+                delay(delayMs)
+                stopWatching()
             }
-            if (body == null) {
-                if (++failures >= MAX_FAILURES) break
-                delay(POLL_MS)
-                continue
+        }
+
+        // The app refuses to run against an outdated server: nothing to watch.
+        launch {
+            app.runStatus.outdated.first { it }
+            stopWatching()
+        }
+        // The session on screen matters too: a dialog left open when the user navigates
+        // away (or leaves the app) notifies then, though the server state did not change.
+        app.runStatus.snapshot.combine(AppVisibility.viewingSession) { snapshot, _ -> snapshot }.collect { snapshot ->
+            if (snapshot == null) {
+                // Reconnecting: keep the last state; give up only if the server stays unreachable.
+                if (stopTimer?.isActive != true) scheduleStop(OFFLINE_STOP_MS)
+                return@collect
             }
-            failures = 0
-            val running = body.arr("runningSessionIds").strings().toSet()
-            // Suppression comes from the previous poll: a finished subagent leaves both lists at once.
+            val running = snapshot.running
+            // Suppression comes from the previous state: a finished subagent leaves both lists at once.
             val finished = previous - running - suppressed
-            val active = running - body.arr("completionNotificationSuppressedSessionIds").strings().toSet()
-            if ((running + finished).any { it !in sessions }) loadSessions(api)
+            val active = running - snapshot.suppressed
+            if ((running + finished + snapshot.waiting).any { it !in sessions }) loadSessions(app.api)
 
             for (id in finished) {
-                if (AppVisibility.isForeground && AppVisibility.viewingSessionId == id) continue
+                if (isOnScreen(id)) continue
                 val (title, cwd) = sessions[id] ?: ("Session complete" to null)
-                Notifications.finished(this, id, cwd, title)
-                // A gate that resolved into a finished run leaves both states at once.
-                if (waiting.remove(id) != null) Notifications.cancelWaiting(this, id)
+                Notifications.finished(this@RunWatcherService, id, cwd, title)
             }
-            suppressed = body.arr("completionNotificationSuppressedSessionIds").strings().toSet()
+            // Answered, or resolved into a finished run.
+            for (id in notifiedWaiting - snapshot.waiting) Notifications.cancelWaiting(this@RunWatcherService, id)
+            // On screen, the chat shows the dialog and clears the notification; leaving it notifies again.
+            val shown = notifiedWaiting.filterTo(mutableSetOf()) { it in snapshot.waiting && !isOnScreen(it) }
+            for (id in snapshot.waiting) {
+                if (id in shown || isOnScreen(id)) continue
+                val (title, cwd) = sessions[id] ?: ("Session" to null)
+                Notifications.waitingForInput(this@RunWatcherService, id, cwd, title)
+                shown += id
+            }
+            notifiedWaiting = shown
             previous = running
-
-            // One SSE per active session; the viewed one is covered by the chat's own SSE.
-            // The server replays open dialogs to new subscribers, so a (re)opened stream
-            // recovers the waiting state even if the gate opened before the connection.
-            val viewed = if (AppVisibility.isForeground) AppVisibility.viewingSessionId else null
-            val desired = if (viewed != null) running - viewed else running
-            for (id in sseJobs.keys.toList()) {
-                if (id !in desired) {
-                    sseJobs.remove(id)?.cancel()
-                    // Also covers navigating to the session: the chat's dialog is on screen now.
-                    if (waiting.remove(id) != null) Notifications.cancelWaiting(this, id)
-                }
-            }
-            for (id in desired) {
-                if (id !in sseJobs) {
-                    sseJobs[id] = scope.launch {
-                        try {
-                            api.events(id).collect { event -> onWaitingEvent(id, event) }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            // Dropped stream; the next tick reopens it while the session is active.
-                        }
-                    }
-                }
-            }
-            publishWaiting()
+            suppressed = snapshot.suppressed
 
             if (active.isEmpty()) {
                 // A short grace lets queued follow-ups start without dropping the watch.
-                if (++idlePolls >= IDLE_POLLS_BEFORE_STOP) break
+                scheduleStop(IDLE_STOP_MS)
             } else {
-                idlePolls = 0
-                if (Notifications.canPost(this)) {
+                stopTimer?.cancel()
+                val items = active.map { id -> (sessions[id]?.first ?: "Session") to (id in snapshot.waiting) }
+                // Re-posted only when its content changes: every post wakes the system.
+                if (items != posted && Notifications.canPost(this@RunWatcherService)) {
                     getSystemService(NotificationManager::class.java).notify(
                         Notifications.ONGOING_ID,
-                        Notifications.ongoing(this, active.map { id -> (sessions[id]?.first ?: "Session") to (id in waiting) }),
+                        Notifications.ongoing(this@RunWatcherService, items),
                     )
+                    posted = items
                 }
             }
-            delay(POLL_MS)
         }
+    }
+
+    /** Main thread only (see [AppVisibility.isForeground]). */
+    private fun isOnScreen(sessionId: String) =
+        AppVisibility.isForeground && AppVisibility.viewingSessionId == sessionId
+
+    private fun stopWatching() {
+        loop?.cancel()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
-    }
-
-    /** Blocking dialog methods only: notify/custom/widget/status never block the run. */
-    private fun onWaitingEvent(sessionId: String, event: JsonObject) {
-        when (event.str("type")) {
-            "extension_ui_request" -> {
-                val id = event.str("id") ?: return
-                if (event.str("method") !in BLOCKING_DIALOG_METHODS) return
-                if (waiting.putIfAbsent(sessionId, id) == null) {
-                    val (title, cwd) = sessions[sessionId] ?: ("Session" to null)
-                    if (!(AppVisibility.isForeground && AppVisibility.viewingSessionId == sessionId)) {
-                        Notifications.waitingForInput(this, sessionId, cwd, title)
-                    }
-                }
-            }
-            "extension_ui_closed" -> {
-                val id = event.str("id") ?: return
-                if (waiting.remove(sessionId, id)) Notifications.cancelWaiting(this, sessionId)
-            }
-        }
-        publishWaiting()
-    }
-
-    private fun publishWaiting() {
-        (application as PiApp).waitingSessionIds.value = waiting.keys
     }
 
     private suspend fun loadSessions(api: PiApi) {
@@ -189,10 +163,8 @@ class RunWatcherService : Service() {
     }
 
     companion object {
-        private const val POLL_MS = 3_000L
-        private val BLOCKING_DIALOG_METHODS = setOf("select", "confirm", "input", "editor")
-        private const val IDLE_POLLS_BEFORE_STOP = 3
-        private const val MAX_FAILURES = 40 // ~2 minutes unreachable
+        private const val IDLE_STOP_MS = 10_000L
+        private const val OFFLINE_STOP_MS = 120_000L
 
         @Volatile
         var isRunning = false

@@ -64,10 +64,12 @@ import app.pimobile.data.str
 import app.pimobile.ui.messageTime
 import app.pimobile.ui.markdown.CodeBlock
 import app.pimobile.ui.markdown.Markdown
+import app.pimobile.ui.markdown.StreamingMarkdown
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.ShimmerText
+import app.pimobile.ui.theme.StatusDot
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -303,7 +305,8 @@ fun AssistantMessage(
         item.blocks.forEach { block ->
             when (block) {
                 is Block.Text -> if (block.text.isNotBlank()) SelectionContainer {
-                    Markdown(block.text, baseDir = cwd.ifEmpty { null }, onOpenFile = openLink)
+                    if (item.streaming) StreamingMarkdown(block.text, baseDir = cwd.ifEmpty { null }, onOpenFile = openLink)
+                    else Markdown(block.text, baseDir = cwd.ifEmpty { null }, onOpenFile = openLink)
                 }
                 is Block.Thinking -> if (block.text.isNotBlank()) {
                     val key = item.entryId?.let { "$it:${block.blockIndex}" }
@@ -425,7 +428,8 @@ private fun ThinkingBlock(text: String, needsLoad: Boolean, streaming: Boolean, 
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (streaming) ShimmerText("Thinking")
+            // Static on purpose: an animated label keeps the window rendering at full frame rate.
+            if (streaming) Text("Thinking", style = MaterialTheme.typography.labelLarge, color = t.textSecondary)
             else Text("Thought process", style = MaterialTheme.typography.labelLarge, color = t.textTertiary)
             Spacer(Modifier.width(4.dp))
             Icon(
@@ -436,7 +440,7 @@ private fun ThinkingBlock(text: String, needsLoad: Boolean, streaming: Boolean, 
             )
         }
         if (expanded || streaming) {
-            val shown = if (expanded) text.trim() else text.lines().filter { it.isNotBlank() }.takeLast(2).joinToString("\n")
+            val shown = if (expanded) text.trim() else lastNonBlankLines(text, 2)
             Row(
                 Modifier
                     .height(IntrinsicSize.Min)
@@ -459,6 +463,19 @@ private fun ThinkingBlock(text: String, needsLoad: Boolean, streaming: Boolean, 
             }
         }
     }
+}
+
+/** The last [count] non-blank lines of [text], scanned from its end: cheap on a long streaming thought. */
+private fun lastNonBlankLines(text: String, count: Int): String {
+    val lines = ArrayList<String>(count)
+    var end = text.length
+    while (end > 0 && lines.size < count) {
+        val start = text.lastIndexOf('\n', end - 1) + 1
+        val line = text.substring(start, end).trimEnd('\r')
+        if (line.isNotBlank()) lines.add(0, line)
+        end = start - 1
+    }
+    return lines.joinToString("\n")
 }
 
 private val MonoSmall = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 18.sp)
@@ -533,12 +550,8 @@ private fun ToolCard(
         ) {
             Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
                 when {
-                    pending || generatingInput -> CircularProgressIndicator(
-                        Modifier.size(12.dp),
-                        strokeWidth = 1.5.dp,
-                        color = t.textSecondary,
-                        trackColor = Color.Transparent,
-                    )
+                    // A static dot, not a spinner: see StatusDot.
+                    pending || generatingInput -> StatusDot(t.textSecondary, size = 7.dp)
                     isError -> Icon(PiIcons.Alert, null, tint = t.danger, modifier = Modifier.size(15.dp))
                     // No result and nothing running (e.g. an interrupted run): no status, like pi-web.
                     result != null -> Icon(PiIcons.Check, null, tint = t.textTertiary, modifier = Modifier.size(15.dp))
