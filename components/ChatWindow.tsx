@@ -1,11 +1,12 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
+import Image from "next/image";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
+import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isAssistantTruncated, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView } from "./MessageView";
@@ -18,6 +19,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
@@ -53,7 +55,7 @@ interface Props {
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string, page?: number) => void;
   onOpenSession?: (sessionId: string) => void;
   onAskInNewChat?: (prompt: string, sourceSessionId: string, sourceEntryId: string) => Promise<void>;
   quoteSelectionEnabled?: boolean;
@@ -183,36 +185,6 @@ function getUserInputText(message: AgentMessage): string | null {
   return text.length > 0 ? text : null;
 }
 
-function countToolCalls(messages: AgentMessage[], indices: number[]): number {
-  let count = 0;
-  for (const idx of indices) {
-    const msg = messages[idx];
-    if (msg?.role !== "assistant") continue;
-    count += countToolCallBlocks(getDisplayableAssistantBlocks(msg as AssistantMessage));
-  }
-  return count;
-}
-
-function hasDisplayableProcessMessage(message: AgentMessage): boolean {
-  if (message.role === "assistant") {
-    return getDisplayableAssistantBlocks(message as AssistantMessage).length > 0;
-  }
-  return message.role === "custom";
-}
-
-// A user message normally anchors a turn (user prompt → process → final
-// answer), and the process messages in between get folded into a collapsed
-// ProcessDetailsGroup. When compaction fires mid-turn, pi drops the original
-// user prompt and inserts a compaction summary (role "custom", customType
-// "compaction") in its place; the agent then keeps producing tool calls and a
-// final answer with no user message left to anchor them. Treat a compaction
-// summary as an anchor too, otherwise every post-compaction message renders
-// standalone and never collapses.
-function isGroupAnchor(message: AgentMessage): boolean {
-  if (message.role === "user") return true;
-  return message.role === "custom" && (message as CustomMessage).customType === "compaction";
-}
-
 function withAssistantBlocks(
   message: AssistantMessage,
   content: AssistantContentBlock[],
@@ -310,8 +282,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     isAutoModelSelection,
+    isAutoThinkingSelection,
     agentPhase,
     isNew,
+    showScrollToBottom,
     sessionIdRef, scrollContainerRef,
     lastUserMsgRef, promptAnchorActive,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
@@ -778,6 +752,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   }, [messages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
@@ -896,20 +871,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === "user") { lastUserIdx = i; break; }
     }
-    // Anchor for live-tail detection: the last user message, or a
-    // compaction summary when compaction has replaced it mid-turn.
-    // Computed independently from lastUserIdx (which is kept for the
-    // scroll-to-user ref) because a compaction summary can sit after
-    // the last user message and anchor the still-streaming segment.
+    // Anchor for live-tail detection. A compaction summary or subagent
+    // completion can sit after the last user message and own the
+    // still-streaming segment. lastUserIdx stays the scroll target.
     let lastAnchorIdx = -1;
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (isGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
+      if (isMessageGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
     }
 
     const visibleRefIndexByMessage = new Map<number, number>();
     let refIdx = 0;
     messages.forEach((msg, idx) => {
-      if (msg.role === "user" || msg.role === "assistant") {
+      if (isMessageGroupAnchor(msg) || msg.role === "assistant") {
         visibleRefIndexByMessage.set(idx, refIdx++);
       }
     });
@@ -921,9 +894,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
     const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
       const msg = options.messageOverride ?? messages[idx];
-      const isVisible = msg.role === "user" || msg.role === "assistant";
+      const isVisible = isMessageGroupAnchor(msg) || msg.role === "assistant";
       const currentRefIdx = visibleRefIndexByMessage.get(idx);
       const keyPrefix = options.keyPrefix ?? "message";
+      const messageKey = entryIds[idx] ?? idx;
       let showTimestamp = false;
       if (msg.role === "assistant") {
         showTimestamp = true;
@@ -940,7 +914,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
       const view = (
         <MessageView
-          key={`${keyPrefix}-view-${idx}`}
+          key={`${keyPrefix}-view-${messageKey}`}
           message={msg}
           toolResults={toolResultsMap}
           modelNames={modelNames}
@@ -959,9 +933,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           writtenFiles={options.writtenFiles}
         />
       );
-      if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
+      if (!isVisible || currentRefIdx === undefined) return view;
       return (
-        <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+        <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)}>
           {view}
         </div>
       );
@@ -970,7 +944,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     const rendered: ReactNode[] = [];
     for (let idx = 0; idx < messages.length;) {
       const msg = messages[idx];
-      if (!isGroupAnchor(msg)) {
+      if (!isMessageGroupAnchor(msg)) {
         rendered.push(renderMessage(idx));
         idx += 1;
         continue;
@@ -978,7 +952,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       const userIdx = idx;
       let endIdx = userIdx + 1;
-      while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
+      while (endIdx < messages.length && !isMessageGroupAnchor(messages[endIdx])) endIdx += 1;
 
       const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
 
@@ -1001,60 +975,54 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       rendered.push(renderMessage(userIdx));
 
-      const processIndices: number[] = [];
-      for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
-        processIndices.push(processIdx);
-      }
-      const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
       const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
       const finalSplit = splitFinalAssistantBlocks(finalAssistant);
-      const finalProcessMessage = finalSplit.processBlocks.length > 0
-        ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
-        : null;
-      const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant)
+      const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant) || isAssistantTruncated(finalAssistant)
         ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
         : null;
 
-      const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
-      if (processCount > 0) {
-        const processRefIdx = visibleProcessIndices
-          .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
-          .find((value): value is number => typeof value === "number")
-          ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
-        // Open the group when the search target lives inside it.
-        let revealProcess = false;
-        if (pendingSearchScroll) {
-          for (const processIdx of visibleProcessIndices) {
-            if (entryIds[processIdx] !== pendingSearchScroll.entryId) continue;
-            const m = messages[processIdx];
-            if (m.role !== "assistant") { revealProcess = true; break; }
-            const blocks = getDisplayableAssistantBlocks(m);
-            revealProcess = !searchBlock || blocks.includes(searchBlock);
-            break;
-          }
-          if (!revealProcess && finalProcessMessage && entryIds[finalAssistantIdx] === pendingSearchScroll.entryId) {
-            const blocks = getDisplayableAssistantBlocks(finalProcessMessage);
-            revealProcess = !searchBlock || blocks.includes(searchBlock);
-          }
+      const finalProcessEnd = finalAssistant.content.indexOf(finalSplit.answerBlocks[0]);
+      // Keep the original prefix so deferred thinking retains its stored block indices.
+      const finalProcessBlocks = finalAssistant.content.slice(0, finalProcessEnd < 0 ? undefined : finalProcessEnd);
+
+      const processViews: ReactNode[] = [];
+      let processToolCount = 0;
+      let processRefIdx: number | undefined;
+      let revealProcess = false;
+
+      for (let processIdx = userIdx + 1; processIdx <= finalAssistantIdx; processIdx++) {
+        const processMessage = messages[processIdx];
+        if (processMessage.role === "custom") {
+          revealProcess ||= Boolean(pendingSearchScroll && pendingSearchScroll.entryId === entryIds[processIdx]);
+          processViews.push(renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }));
+          continue;
         }
-        const processGroup = (
-          <ProcessDetailsGroup
-            messageCount={processCount}
-            defaultExpanded={!finalAnswerMessage}
-            reveal={revealProcess}
-            t={t}
-            toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
-          >
-            {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
-            {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
-          </ProcessDetailsGroup>
-        );
+        if (processMessage.role !== "assistant") continue;
+        const message = processIdx === finalAssistantIdx
+          ? withAssistantBlocks(processMessage, finalProcessBlocks, { omitUsage: Boolean(finalAnswerMessage) })
+          : processMessage;
+        const blocks = getDisplayableAssistantBlocks(message);
+        if (blocks.length === 0) continue;
+        processRefIdx ??= visibleRefIndexByMessage.get(processIdx);
+        processToolCount += countToolCallBlocks(blocks);
+        revealProcess ||= Boolean(pendingSearchScroll && entryIds[processIdx] === pendingSearchScroll.entryId && (!searchBlock || blocks.includes(searchBlock)));
+        processViews.push(renderMessage(processIdx, {
+          attachRef: false,
+          keyPrefix: "process",
+          messageOverride: message,
+          showTimestamp: false,
+        }));
+      }
+
+      if (processViews.length > 0) {
         rendered.push(
           <div
-            key={`process-group-${userIdx}-${finalAssistantIdx}`}
+            key={`process-group-${entryIds[userIdx] ?? userIdx}`}
             ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
           >
-            {processGroup}
+            <ProcessDetailsGroup messageCount={processViews.length} toolCallCount={processToolCount} defaultExpanded={!finalAnswerMessage} reveal={revealProcess} t={t}>
+              {processViews}
+            </ProcessDetailsGroup>
           </div>,
         );
       }
@@ -1072,7 +1040,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           }
         }
         const writtenFiles = extractTurnWrittenFiles(turnContent, toolResultsMap, messageCwd);
-        rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage, writtenFiles }));
+        rendered.push(renderMessage(finalAssistantIdx, {
+          messageOverride: finalAnswerMessage,
+          writtenFiles,
+        }));
       }
       for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
         rendered.push(renderMessage(renderIdx));
@@ -1144,6 +1115,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       toolPreset={toolPreset}
       onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
       thinkingLevel={thinkingLevel}
+      isAutoThinkingSelection={isAutoThinkingSelection}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
@@ -1262,7 +1234,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         {!isEmptyNew && <>
         <div
           ref={scrollContainerRef}
-          className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]"
+          // The message list is the one place long output has to be dragged through,
+          // so it shows its scrollbar instead of hiding it behind the minimap (#788).
+          // A stable gutter keeps the centred column from shifting when a short
+          // session grows past one screen.
+          className="scrollbar-subtle min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-gutter:stable]"
           style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
@@ -1322,7 +1298,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             position: "fixed",
             top: quotedSelection.top,
             left: quotedSelection.left,
-            zIndex: 130,
+            zIndex: 260,
             display: "flex",
             flexWrap: "wrap",
             gap: 3,
@@ -1393,11 +1369,38 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       )}
 
       <div className="relative shrink-0">
+        {!isEmptyNew && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "100%",
+              left: 0,
+              right: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
+              display: "flex",
+              justifyContent: "center",
+              paddingBottom: 10,
+              pointerEvents: "none",
+              zIndex: 20,
+            }}
+          >
+            <button
+              type="button"
+              className={`chat-scroll-to-bottom${showScrollToBottom && !pendingScrollRestore ? " is-visible" : ""}`}
+              title={t("chat.scrollToLatest")}
+              aria-label={t("chat.scrollToLatest")}
+              onClick={() => scrollToBottom("smooth")}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 5v14M5 12l7 7 7-7" />
+              </svg>
+            </button>
+          </div>
+        )}
         {isEmptyNew && (
-          <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontFamily: "var(--font-mono)" }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
-                <span style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
+          <div className="mb-3 w-full" style={{ paddingLeft: 16, paddingRight: isMobile ? 16 : 52 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto", fontFamily: "var(--font-mono)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
+                <Image src="/icons/apple-touch-icon.png" width={32} height={32} alt="" priority style={{ flexShrink: 0 }} />
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
                 <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
               </div>
@@ -1634,9 +1637,9 @@ function ExtensionDialog({
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0, maxHeight: "50%", overflowY: "auto" }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
+          <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.title}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
             <span>{t("chat.extensionRequest")}</span>
             {countdown}
@@ -1712,6 +1715,10 @@ function ExtensionDialog({
                   textAlign: "left",
                   fontSize: 13,
                   overflowWrap: "anywhere",
+                  // Match the scroller's padding so keyboard navigation never parks the
+                  // option flush against the edge, where whole-pixel scroll snapping and
+                  // overflow clipping cut off its focus ring.
+                  scrollMargin: 14,
                 }}
               >
                 <div inert>
@@ -1729,7 +1736,6 @@ function ExtensionDialog({
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
-              if (e.key === "Escape") onRespond(request, { cancelled: true });
             }}
             style={{
               width: "100%",
@@ -1749,7 +1755,6 @@ function ExtensionDialog({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") onRespond(request, { cancelled: true });
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) submitValue();
             }}
             style={{
