@@ -298,10 +298,13 @@ class StreamingAssembler {
         while (slots.size <= index) slots += null
         val delta = event.str("delta").orEmpty()
         when (event.type) {
-            "text_start" -> if (slots[index] !is Slot.Text) slots[index] = Slot.Text(StringBuilder())
+            // The message_start snapshot may already carry this block's first
+            // delta; the deltas are the only source of truth until *_end, so
+            // always start empty (upstream 002400d, #835).
+            "text_start" -> slots[index] = Slot.Text(StringBuilder())
             "text_delta" -> textSlot(index).text.append(delta)
             "text_end" -> event.str("content")?.let { slots[index] = Slot.Text(StringBuilder(it)) }
-            "thinking_start" -> if (slots[index] !is Slot.Thinking) slots[index] = Slot.Thinking(StringBuilder())
+            "thinking_start" -> slots[index] = Slot.Thinking(StringBuilder())
             "thinking_delta" -> thinkingSlot(index).text.append(delta)
             "thinking_end" -> event.str("content")?.let { slots[index] = Slot.Thinking(StringBuilder(it)) }
             "toolcall_start" -> slots[index] = Slot.Tool(
