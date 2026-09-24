@@ -164,4 +164,42 @@ class ChatModelTest {
         }
         assertEquals(Messages.userKey(userJson("hi")["content"]), Messages.userKey(blocks["content"]))
     }
+
+    @Test
+    fun assemblerDoesNotDuplicateFirstChunkLeakedInSnapshot() {
+        // The message_start snapshot may already carry the block's first delta
+        // (pi's partial is the live response so far). *_start must reset the
+        // block so the deltas are not appended a second time (upstream 002400d,
+        // #835: "stop duplicating the first streamed chunk").
+        val assembler = StreamingAssembler()
+        assembler.start(
+            buildJsonObject {
+                put("role", "assistant")
+                putJsonArray("content") {
+                    addJsonObject {
+                        put("type", "text")
+                        put("text", "ok")
+                    }
+                }
+            },
+        )
+        assembler.apply(buildJsonObject {
+            put("type", "text_start")
+            put("contentIndex", 0)
+        })
+        assembler.apply(buildJsonObject {
+            put("type", "text_delta")
+            put("contentIndex", 0)
+            put("delta", "ok")
+        })
+        val blocks = assembler.blocks()
+        assertEquals(1, blocks.size)
+        assertEquals("ok", (blocks[0] as Block.Text).text)
+        assembler.apply(buildJsonObject {
+            put("type", "text_end")
+            put("contentIndex", 0)
+            put("content", "ok")
+        })
+        assertEquals("ok", (assembler.blocks()[0] as Block.Text).text)
+    }
 }
