@@ -34,14 +34,18 @@ function session(info) {
 
 test("subagents route: direct children only, running-first then newest", async (t) => {
   const previousCache = globalThis.__piSessionListCache;
+  const previousGeneration = globalThis.__piSessionListGeneration;
   const previousRegistry = globalThis.__piSessions;
   t.after(() => {
     globalThis.__piSessionListCache = previousCache;
+    globalThis.__piSessionListGeneration = previousGeneration;
     globalThis.__piSessions = previousRegistry;
   });
 
+  globalThis.__piSessionListGeneration = 0;
   globalThis.__piSessionListCache = {
     ts: Date.now(),
+    generation: 0,
     data: [
       session({ id: "a", modified: "2026-01-01T01:00:00.000Z", relation: { kind: "subagent", parentSessionId: id, profile: "Explore", description: "task a", status: "completed" } }),
       session({ id: "b", modified: "2026-01-01T03:00:00.000Z", relation: { kind: "subagent", parentSessionId: id, profile: "Explore", description: "task b", status: "completed" } }),
@@ -73,14 +77,18 @@ test("subagents route: direct children only, running-first then newest", async (
 
 test("subagents route: empty when the session has no subagents", async (t) => {
   const previousCache = globalThis.__piSessionListCache;
+  const previousGeneration = globalThis.__piSessionListGeneration;
   const previousRegistry = globalThis.__piSessions;
   t.after(() => {
     globalThis.__piSessionListCache = previousCache;
+    globalThis.__piSessionListGeneration = previousGeneration;
     globalThis.__piSessions = previousRegistry;
   });
 
+  globalThis.__piSessionListGeneration = 0;
   globalThis.__piSessionListCache = {
     ts: Date.now(),
+    generation: 0,
     data: [session({ id: "x", relation: { kind: "fork", originSessionId: id } })],
   };
   globalThis.__piSessions = new Map();
