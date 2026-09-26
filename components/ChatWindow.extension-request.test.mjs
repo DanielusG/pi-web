@@ -39,7 +39,14 @@ test("renders extension confirmation and options as markdown", () => {
 test("preserves title newlines like pi's TUI and keeps long titles from hiding the body", () => {
   const header = dialogSource.slice(dialogSource.indexOf('role="dialog"'), dialogSource.indexOf("{request.method === \"confirm\""));
   assert.match(header, /whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{request\.title\}/);
-  assert.match(header, /maxHeight: "50%", overflowY: "auto" \}\}>[\s\S]*?\{request\.title\}/);
+  // The card has only a max-height, so a percentage cap would resolve to none: the title
+  // scrolls inside an absolute cap derived from the card's own limit.
+  assert.match(source, /const EXTENSION_DIALOG_MAX_HEIGHT = "min\(45vh, 360px\)";/);
+  assert.match(source, /const EXTENSION_DIALOG_TITLE_MAX_HEIGHT = `calc\(\$\{EXTENSION_DIALOG_MAX_HEIGHT\} \* 0\.4\)`;/);
+  assert.match(header, /maxHeight: EXTENSION_DIALOG_MAX_HEIGHT,/);
+  // Keyed by request so the next question of a sequence starts scrolled to the top.
+  assert.match(header, /key=\{request\.id\} id=\{dialogTitleId\} tabIndex=\{0\} style=\{\{ maxHeight: EXTENSION_DIALOG_TITLE_MAX_HEIGHT, overflowY: "auto",[^}]*\}\}>\{request\.title\}/);
+  assert.doesNotMatch(dialogSource, /maxHeight: "50%"/);
 });
 
 test("resets collapse state when a new extension request arrives", () => {
