@@ -68,6 +68,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -359,6 +360,10 @@ fun ChatScreen(
     // Follow the bottom unless the user scrolled up to read.
     val follow = rememberBottomFollow(listState)
     val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
+    // Index of the list's last item, the "bottom" spacer: keep in step with the LazyColumn below.
+    val lastIndex = listOf(state.loading, state.hasMore, showEmpty).count { it } +
+        state.items.size + (if (state.streaming != null) 1 else 0)
+    SideEffect { follow.onComposed(lastIndex, state.items, state.streaming, state.liveTools, state.toolResults) }
 
     // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
     // the palette until the query changes, like Escape on the web.

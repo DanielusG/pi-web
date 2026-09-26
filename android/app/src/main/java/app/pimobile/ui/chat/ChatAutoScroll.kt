@@ -77,6 +77,24 @@ class BottomFollow internal constructor(
         attached = true
     }
 
+    private var composedLastIndex = -1
+    private var composedContent: Array<out Any?> = emptyArray()
+
+    /**
+     * Called after each composition of the list with the index of its last item and the values
+     * it shows. While attached, a change is scrolled to by the same measure pass that lays it
+     * out: a streaming update costs one frame. The fallback in [rememberBottomFollow] can only
+     * jump after that layout, in a second frame.
+     */
+    fun onComposed(lastIndex: Int, vararg content: Any?) {
+        val changed = lastIndex != composedLastIndex || content.size != composedContent.size ||
+            content.indices.any { content[it] !== composedContent[it] }
+        if (!changed) return
+        composedLastIndex = lastIndex
+        composedContent = content
+        if (attached && !listState.isScrollInProgress) listState.requestScrollToItem(lastIndex)
+    }
+
     fun scrollToEnd() {
         attached = true
         scope.launch {
@@ -91,9 +109,9 @@ fun rememberBottomFollow(listState: LazyListState): BottomFollow {
     val scope = rememberCoroutineScope()
     val reattachPx = with(LocalDensity.current) { 32.dp.toPx() }
     val follow = remember(listState) { BottomFollow(listState, scope, reattachPx) }
-    // While attached, any growth below the viewport (stream deltas, tool output, images
-    // decoding, the keyboard opening) pulls the list back to its end. A gesture in progress
-    // owns the list; the jump waits for it to finish.
+    // While attached, any growth below the viewport (images decoding, the keyboard opening, a
+    // card expanding, content that [BottomFollow.onComposed] did not see) pulls the list back
+    // to its end. A gesture in progress owns the list; the jump waits for it to finish.
     LaunchedEffect(follow, follow.attached) {
         if (!follow.attached) return@LaunchedEffect
         snapshotFlow {

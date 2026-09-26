@@ -42,11 +42,13 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
   - Collapsible thinking; deferred thinking loads its full text on tap.
   - Tool call cards with a running dot, check or error state. Tap for input and output;
-    bash output streams live.
+    bash output streams live as its last lines (`?toolUpdates=tail`), the whole output
+    arrives when the tool finishes.
   - `!bash` executions and compaction notices.
   - "Load earlier messages" paging.
 - **Live runs:**
-  - Token streaming, throttled to about 20 UI updates per second.
+  - Token streaming at about 10 UI updates per second, each re-rendering only the
+    message's last block and scrolling in the same frame.
   - Stop (`abort`). Typing while the agent runs sends a steering message.
   - Model picker, thinking level, context % indicator.
 - **Extension dialogs:** select / confirm / input / editor, so an extension waiting for
