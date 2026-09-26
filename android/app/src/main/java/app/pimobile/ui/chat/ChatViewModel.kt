@@ -1004,10 +1004,13 @@ class ChatViewModel(
 
     // region run state
 
-    /** GET /api/agent/[id]: authoritative "is anything running" check. */
+    /**
+     * GET /api/agent/[id]: authoritative "is anything running" check. `lite=1` leaves out
+     * the system prompt, which the app never shows (tens of KB, several times a minute).
+     */
     private suspend fun reconcile(id: String) {
         val body = try {
-            api.get("/api/agent/${PiApi.encode(id)}").asObj() ?: return
+            api.get("/api/agent/${PiApi.encode(id)}?lite=1").asObj() ?: return
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

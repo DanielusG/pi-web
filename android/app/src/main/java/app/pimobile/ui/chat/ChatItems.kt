@@ -478,6 +478,20 @@ private fun lastNonBlankLines(text: String, count: Int): String {
     return lines.joinToString("\n")
 }
 
+/**
+ * `text.lines().takeLast(count)` joined with newlines, found from the end of [text]: a live
+ * output can be long. Like [lines], a lone `\r` (progress bars) also ends a line.
+ */
+internal fun lastLines(text: String, count: Int): String {
+    var breaks = 0
+    for (i in text.indices.reversed()) {
+        val c = text[i]
+        val isBreak = c == '\n' || (c == '\r' && text.getOrNull(i + 1) != '\n')
+        if (isBreak && ++breaks == count) return text.substring(i + 1).lines().joinToString("\n")
+    }
+    return text.lines().joinToString("\n")
+}
+
 private val MonoSmall = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 18.sp)
 private val MonoOutput = TextStyle(fontFamily = GeistMono, fontSize = 12.5.sp, lineHeight = 19.sp)
 
@@ -602,7 +616,7 @@ private fun ToolCard(
         val liveOutput = live?.output?.takeIf { it.isNotBlank() && result == null }
         if (liveOutput != null && !expanded) {
             HorizontalDivider(color = t.border)
-            OutputArea(liveOutput.trimEnd().lines().takeLast(8).joinToString("\n"))
+            OutputArea(remember(liveOutput) { lastLines(liveOutput.trimEnd(), 8) })
         }
         AnimatedVisibility(expanded) {
             Column {

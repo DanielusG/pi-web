@@ -87,9 +87,12 @@ class PiApi {
     /**
      * GET /api/agent/[id]/events as a cold flow of `data:` payloads. The flow
      * completes when the server ends the stream and fails on network errors;
-     * reconnect policy belongs to the caller.
+     * reconnect policy belongs to the caller. Tool progress updates carry only the
+     * end of the output (`toolUpdates=tail`): a live tool shows its last lines, and
+     * `tool_execution_end` still brings the whole result.
      */
-    fun events(sessionId: String): Flow<JsonObject> = jsonEvents("/api/agent/${encode(sessionId)}/events")
+    fun events(sessionId: String): Flow<JsonObject> =
+        jsonEvents("/api/agent/${encode(sessionId)}/events?toolUpdates=tail")
 
     /**
      * [sse] with each `data:` payload parsed as a JSON object (others are dropped). Parsing
