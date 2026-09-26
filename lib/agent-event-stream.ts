@@ -2,6 +2,7 @@ import {
   isEventIncludedInSnapshot,
   toClientAgentEvent,
   type AgentEventLike,
+  type ClientAgentEventOptions,
 } from "./agent-event-wire";
 import { acquireSessionLivenessLease } from "./session-liveness";
 
@@ -52,6 +53,7 @@ export function createAgentEventStream(
   req: Request,
   sessionId: string,
   sessionPromise: Promise<AgentEventStreamSession>,
+  options: ClientAgentEventOptions = {},
 ): ReadableStream<Uint8Array> {
   let cancelStream: (closeController: boolean | "error") => void = () => {};
   let releaseLease: () => void = () => {};
@@ -103,7 +105,7 @@ export function createAgentEventStream(
       };
       const forwardEvent = (event: AgentEventLike, snapshot: unknown) => {
         if (isEventIncludedInSnapshot(event, snapshot)) return;
-        const clientEvent = toClientAgentEvent(event);
+        const clientEvent = toClientAgentEvent(event, options);
         if (clientEvent) encode(clientEvent);
       };
 

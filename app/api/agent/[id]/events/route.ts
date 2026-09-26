@@ -4,7 +4,8 @@ import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/agent/[id]/events - SSE stream of agent events
+// GET /api/agent/[id]/events - SSE stream of agent events; `?toolUpdates=tail` sends only
+// the end of the output in tool progress updates (see ClientAgentEventOptions)
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -26,7 +27,8 @@ export async function GET(
     sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
   }
 
-  const stream = createAgentEventStream(req, id, sessionPromise);
+  const toolUpdates = new URL(req.url).searchParams.get("toolUpdates") === "tail" ? "tail" : "full";
+  const stream = createAgentEventStream(req, id, sessionPromise, { toolUpdates });
 
   return new Response(stream, {
     headers: {

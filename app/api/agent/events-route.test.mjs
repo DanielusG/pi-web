@@ -6,7 +6,7 @@ const agentEventsSource = await readFile(new URL("./[id]/events/route.ts", impor
 const agentEventStreamSource = await readFile(new URL("../../../lib/agent-event-stream.ts", import.meta.url), "utf8");
 
 test("agent SSE starts sessions asynchronously and disables response buffering", () => {
-  assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise\)/);
+  assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise, \{ toolUpdates \}\)/);
   assert.match(agentEventsSource, /sessionPromise = startRpcSession\([\s\S]*?\.then\(\(result\) => result\.session\)/);
   assert.doesNotMatch(agentEventsSource, /await startRpcSession\(/);
   assert.match(agentEventsSource, /if \(req\.signal\.aborted\) return new Response\(null, \{ status: 204 \}\)/);
@@ -17,4 +17,9 @@ test("agent SSE starts sessions asynchronously and disables response buffering",
 test("agent SSE reuses one TextEncoder per stream", () => {
   assert.equal((agentEventStreamSource.match(/new TextEncoder\(\)/g) ?? []).length, 1);
   assert.match(agentEventStreamSource, /controller\.enqueue\(encoder\.encode\(/);
+});
+
+test("agent SSE sends tool output tails only to clients that ask for them", () => {
+  assert.match(agentEventsSource, /searchParams\.get\("toolUpdates"\) === "tail" \? "tail" : "full"/);
+  assert.match(agentEventStreamSource, /toClientAgentEvent\(event, options\)/);
 });

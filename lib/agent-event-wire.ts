@@ -23,6 +23,22 @@ export type ClientMessageUpdateEvent = Omit<JsonMessageUpdateEvent, "assistantMe
   assistantMessageEvent: ClientAssistantMessageEvent;
 };
 
+/** Choices a client makes per event stream (query parameters of the SSE route). */
+export interface ClientAgentEventOptions {
+  /**
+   * "tail" (the Android client, a fork addition): each `tool_execution_update` carries only
+   * the end of the output so far. Tools resend their whole accumulated output with every
+   * update (bash: up to 50 KB, ten times a second), while a live view shows its last lines;
+   * `tool_execution_end` still delivers the complete result. "full", the default, is what the
+   * web client gets.
+   */
+  toolUpdates?: "full" | "tail";
+}
+
+const TAIL_MAX_LINES = 16;
+/** The Android client's output clip: a tail never ends up with its "… more" suffix. */
+const TAIL_MAX_CHARS = 8_000;
+
 const OMITTED_EVENT_TYPES = new Set([
   "turn_start",
   "turn_end",
@@ -54,6 +70,40 @@ function toolCallMetadata(
   return id !== null && toolName !== null ? { id, toolName } : null;
 }
 
+/**
+ * The last TAIL_MAX_LINES lines of `text`, at most TAIL_MAX_CHARS long and starting at a line
+ * start; text within both limits comes back unchanged. A single line longer than the limit
+ * keeps its end.
+ */
+function tailText(text: string): string {
+  let tail = text;
+  if (text.length > TAIL_MAX_CHARS) {
+    const cut = text.length - TAIL_MAX_CHARS;
+    const lineStart = text[cut - 1] === "\n" ? cut : text.indexOf("\n", cut) + 1;
+    tail = text.slice(lineStart > 0 && lineStart < text.length ? lineStart : cut);
+  }
+  // A trailing newline ends the last line rather than starting an empty one.
+  let start = tail.endsWith("\n") ? tail.length - 1 : tail.length;
+  for (let line = 0; line < TAIL_MAX_LINES; line++) {
+    if (start <= 0) return tail;
+    start = tail.lastIndexOf("\n", start - 1);
+    if (start < 0) return tail;
+  }
+  return tail.slice(start + 1);
+}
+
+function tailToolOutput(partialResult: unknown): unknown {
+  if (!isObject(partialResult) || !Array.isArray(partialResult.content)) return partialResult;
+  return {
+    ...partialResult,
+    content: partialResult.content.map((block) => (
+      isObject(block) && block.type === "text" && typeof block.text === "string"
+        ? { ...block, text: tailText(block.text) }
+        : block
+    )),
+  };
+}
+
 /** A `message_start` / `message_end` for a transcript system message (prompt and tool loadout). */
 export function isSystemMessageEvent(event: AgentEventLike): boolean {
   return (event.type === "message_start" || event.type === "message_end")
@@ -64,6 +114,7 @@ export function isSystemMessageEvent(event: AgentEventLike): boolean {
 /** Apply pi-web's event filters plus Pi 0.84's message_update projection. */
 export function toClientAgentEvent(
   event: AgentEventLike,
+  options: ClientAgentEventOptions = {},
 ): AgentEventLike | ClientMessageUpdateEvent | null {
   if (OMITTED_EVENT_TYPES.has(event.type)) return null;
   // Pi >= 0.86 appends the prompt and tool loadout to the transcript as system
@@ -101,7 +152,9 @@ export function toClientAgentEvent(
       type: "tool_execution_update",
       toolCallId: event.toolCallId,
       toolName: event.toolName,
-      partialResult: event.partialResult,
+      partialResult: options.toolUpdates === "tail"
+        ? tailToolOutput(event.partialResult)
+        : event.partialResult,
     };
   }
 
