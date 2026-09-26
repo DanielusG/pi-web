@@ -43,6 +43,7 @@ import app.pimobile.ui.files.FileViewerScreen
 import app.pimobile.ui.files.FileViewerViewModel
 import app.pimobile.ui.files.FilesScreen
 import app.pimobile.ui.files.FilesViewModel
+import app.pimobile.ui.markdown.PreloadLatexFonts
 import app.pimobile.ui.sessions.SessionsScreen
 import app.pimobile.ui.sessions.SessionsViewModel
 import app.pimobile.ui.settings.ServerOutdatedScreen
@@ -76,6 +77,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             PiTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    PreloadLatexFonts()
                     PiNavHost(app, openRequests, assistCwds)
                 }
             }
