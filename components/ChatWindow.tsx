@@ -1525,6 +1525,12 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
 
 type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
+// The card has only a max-height, so a percentage cap inside it resolves to none and a
+// long title pushes the options out of the card. RPC-mode extensions fold whole option
+// lists and previews into the title, so the cap must be an absolute length.
+const EXTENSION_DIALOG_MAX_HEIGHT = "min(45vh, 360px)";
+const EXTENSION_DIALOG_TITLE_MAX_HEIGHT = `calc(${EXTENSION_DIALOG_MAX_HEIGHT} * 0.4)`;
+
 function getExtensionDialogSummary(request: ExtensionDialogRequest): string | undefined {
   if (request.method === "select" && request.options.length > 0) return request.options[0];
   if (request.method === "confirm") {
@@ -1629,7 +1635,7 @@ function ExtensionDialog({
         display: "flex",
         flexDirection: "column",
         width: "100%",
-        maxHeight: "min(45vh, 360px)",
+        maxHeight: EXTENSION_DIALOG_MAX_HEIGHT,
         border: "1px solid var(--border)",
         borderRadius: 10,
         background: "var(--bg)",
@@ -1637,9 +1643,9 @@ function ExtensionDialog({
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0, maxHeight: "50%", overflowY: "auto" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div id={dialogTitleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.title}</div>
+          <div key={request.id} id={dialogTitleId} tabIndex={0} style={{ maxHeight: EXTENSION_DIALOG_TITLE_MAX_HEIGHT, overflowY: "auto", color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.title}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
             <span>{t("chat.extensionRequest")}</span>
             {countdown}

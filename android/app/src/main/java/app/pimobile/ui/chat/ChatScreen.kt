@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1761,6 +1762,10 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
 
     val configuration = LocalConfiguration.current
     val maxCardHeight = minOf(360.dp, configuration.screenHeightDp.dp * 0.45f)
+    // RPC-mode extensions fold option lists and previews into the title: left unbounded it
+    // takes the whole card and squeezes the options and the buttons out (web: same cap).
+    val maxTitleHeight = maxCardHeight * 0.4f
+    val titleScroll = remember(dialog.id) { ScrollState(0) }
     val maxSummaryWidth = configuration.screenWidthDp.dp * 0.34f
 
     Column(
@@ -1845,6 +1850,9 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                             title,
                             style = typography.bodyLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
                             color = t.text,
+                            modifier = Modifier
+                                .heightIn(max = maxTitleHeight)
+                                .verticalScroll(titleScroll),
                         )
                         Row(
                             Modifier.padding(top = 3.dp),
