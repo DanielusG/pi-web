@@ -153,7 +153,11 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
         val open = request ?: return@LaunchedEffect
         openRequests.value = null
         if (app.api.config.isConfigured) {
-            nav.navigate(chatRoute(open.sessionId, open.cwd)) { launchSingleTop = true }
+            // Not launchSingleTop: over another chat it would hand the new id to that entry, whose
+            // ViewModel still holds the previous session, so the tap changed nothing.
+            val top = nav.currentBackStackEntry
+            val showing = top?.destination?.route == CHAT_ROUTE && top.arguments?.getString("id") == open.sessionId
+            if (!showing) nav.navigate(chatRoute(open.sessionId, open.cwd))
         }
     }
 
