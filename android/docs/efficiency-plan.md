@@ -15,9 +15,20 @@ decisa dall'admin:
   `GET /api/agent/[id]/events?toolUpdates=tail` con le ultime 16 righe negli update dei tool
   (5.1, dal piano `PLAN-android-bash-tail-updates.md`).
 
-Restano: 3.3 (reconcile raggruppati, ora poco utile: ogni reconcile pesa ~0,7 KB), 4.5, 5.2 (non
-serve più: il watcher non apre stream per sessione) e la fase 6. La verifica sul telefono resta
-all'admin.
+Restano: 3.3 (reconcile raggruppati, ora poco utile: ogni reconcile pesa ~0,7 KB), 5.2 (non
+serve più: il watcher non apre stream per sessione) e la fase 6. Il 4.5 è stato misurato e non
+serve (nessun fan-out).
+
+**Verifica sul telefono, 2026-09-26: completata**, vedi `phone-verification-2026-09-26.md`.
+Le ottimizzazioni reggono sul telefono. Ha trovato quattro punti nuovi:
+- la voce non si ferma con un TTS che manda WAV in streaming (corretto, verificato sul
+  telefono);
+- su OxygenOS il freezer del sistema congela l'app in background e la notifica di fine run non
+  arriva, a meno che l'utente non accenda "Allow background activity";
+- la lista delle sessioni pesa 1,5 MB e il servizio delle notifiche la riscaricava a ogni
+  prompt (ora paginata per progetto, e il servizio chiede solo i propri id: da verificare sul
+  telefono);
+- il cursore che lampeggia costa CPU per tutta la run.
 
 Misure sull'emulatore (prima = baseline del report, dopo = build di `main` con le modifiche):
 
@@ -252,6 +263,9 @@ per intero con il percorso attuale.
 messaggi non in streaming non si ricompongono a ogni flush.
 - Prima si misura con il composition tracing quanti item si ricompongono davvero; si fa solo
   se il guadagno è significativo.
+- **Misurato il 2026-09-26: non serve.** Con un contatore per item, durante lo streaming si
+  ricompongono solo il messaggio in streaming e la radice della chat; gli altri item 0 volte
+  (strong skipping del compilatore Compose). Dettagli in `phone-verification-2026-09-26.md`, T4.
 
 **Accettazione.** EXL con costo per aggiornamento ≤ 8 ms costanti e GC −70 %; messaggio
 finale identico a oggi.

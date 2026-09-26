@@ -22,7 +22,10 @@ It has **not yet been tested against a real pi-web with a real model.**
   scrolling with it, that lists every running or waiting session across
   projects (tap to open, long-press for the same rename/delete sheet; hidden
   when nothing is active, capped at a few rows with internal scroll),
-  "show all" for long projects, and long-press on a session for rename/delete
+  five sessions per project with "Show 10 more" and "Show less": the list arrives a
+  page at a time (`GET /api/sessions?perProject=`), first messages cut to what a row
+  shows, so a project with thousands of sessions is never downloaded whole; and
+  long-press on a session for rename/delete
   (bottom sheet: pre-filled rename field with the web's no-op check, delete with
   inline confirmation).
 - **New session:** pick a recent working directory or type a path (validated by the
@@ -40,6 +43,8 @@ It has **not yet been tested against a real pi-web with a real model.**
   options and cannot be mapped to a third-party app.
 - **Chat:**
   - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
+  - LaTeX math: inline formulas in text style, display formulas shrunk to fit (down to 75 %)
+    and then scrolled behind a faded edge, tables that wrap their text to fit the screen.
   - Collapsible thinking; deferred thinking loads its full text on tap.
   - Tool call cards with a running dot, check or error state. Tap for input and output;
     bash output streams live as its last lines (`?toolUpdates=tail`), the whole output
@@ -170,7 +175,11 @@ APK files:
 
 To install:
 
-- **USB:** `~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/release/app-release.apk`
+- **USB:** `~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/release/app-release.apk`,
+  then `adb shell cmd package bg-dexopt-job app.pimobile` to compile it now. A sideloaded app
+  otherwise runs interpreted until the system's overnight compilation (charging and idle):
+  about 15 % more CPU while streaming. On OnePlus `cmd package compile` is refused from the
+  shell; the background job works.
 - **Without USB:** copy the APK to the phone and open it (allow "install unknown apps").
 
 ## Server side (pi-web machine)
@@ -191,6 +200,10 @@ Requirements: JDK 17 and the Android SDK at `~/Android/Sdk` (`local.properties` 
 cd android
 ./gradlew assembleRelease      # or assembleDebug
 ```
+
+The build patches two classes of the LaTeX renderer (`LatexRendererPatches` in
+`app/build.gradle.kts`, see `ui/markdown/LatexGlyphBounds.kt`) and fails if a library update
+moved the code they patch: check them when updating `latex-renderer`.
 
 ## Code map
 
@@ -222,6 +235,9 @@ app/src/main/java/app/pimobile/
   data/FilePaths.kt        pi-web's path, link and @mention helpers
   ui/files/                explorer, viewer (source/preview/diff), media views, share
   ui/markdown/Markdown.kt  small markdown renderer
+  ui/markdown/LatexSource.kt formula rewrites for the LaTeX renderer (spaces, minus, inline style)
+  ui/markdown/LatexGlyphBounds.kt precise glyph bounds with each font loaded once
+  ui/markdown/TableLayout.kt column widths like a browser's automatic table layout
   ui/markdown/StreamingMarkdown.kt streaming message: closed segments cached, only the tail re-parsed
 ```
 
