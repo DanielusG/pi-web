@@ -172,21 +172,30 @@ fun SessionsScreen(
                         )
                     }
                 }
-                state.groups.forEach { group ->
-                    item(key = "project:${group.key}") {
-                        ProjectGroupView(
-                            group = group,
-                            shown = state.shown[group.key] ?: SessionPages.FIRST_PAGE,
-                            loadingMore = group.key in state.loadingMore,
-                            running = state.running,
-                            waiting = state.waiting,
-                            onOpen = onOpen,
-                            onLongClick = { sheetRow = it },
-                            onMore = { vm.showMore(group.key) },
-                            onLess = { vm.showLess(group.key) },
-                            onBrowse = { onBrowse(group.root) },
-                        )
+                fun project(group: ProjectGroup) = item(key = "project:${group.key}") {
+                    ProjectGroupView(
+                        group = group,
+                        shown = SessionPages.shown(group, state.shown[group.key]),
+                        loadingMore = group.key in state.loadingMore,
+                        running = state.running,
+                        waiting = state.waiting,
+                        onOpen = onOpen,
+                        onLongClick = { sheetRow = it },
+                        onMore = { vm.showMore(group.key) },
+                        onLess = { vm.showLess(group.key) },
+                        onBrowse = { onBrowse(group.root) },
+                    )
+                }
+                val (recent, older) = state.groups.partition { it.recent > 0 }
+                recent.forEach(::project)
+                if (older.isNotEmpty()) {
+                    // With nothing recent there is nothing to fold them under.
+                    if (recent.isNotEmpty()) {
+                        item(key = "older") {
+                            OlderProjectsToggle(count = older.size, open = state.olderOpen, onClick = vm::toggleOlder)
+                        }
                     }
+                    if (state.olderOpen || recent.isEmpty()) older.forEach(::project)
                 }
             }
         }
@@ -358,7 +367,7 @@ private fun ActiveSessionsView(
 @Composable
 private fun ProjectGroupView(
     group: ProjectGroup,
-    /** Rows to show; the rest of the loaded ones stay hidden until "Show more". */
+    /** Rows to show; the rest of the loaded ones stay hidden until "Show more". None for an older project. */
     shown: Int,
     loadingMore: Boolean,
     running: Set<String>,
@@ -426,9 +435,9 @@ private fun ProjectGroupView(
             }
             // Sessions arrive a page at a time: a project with thousands never loads them all.
             val remaining = group.total - visible.size
-            val canLess = visible.size > SessionPages.FIRST_PAGE
+            val canLess = visible.size > group.recent
             if (remaining > 0 || canLess) {
-                HorizontalDivider(color = t.border)
+                if (visible.isNotEmpty()) HorizontalDivider(color = t.border)
                 Row(Modifier.fillMaxWidth()) {
                     if (remaining > 0) {
                         Text(
@@ -456,6 +465,34 @@ private fun ProjectGroupView(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OlderProjectsToggle(count: Int, open: Boolean, onClick: () -> Unit) {
+    val t = Pi.tokens
+    Row(
+        Modifier
+            .padding(top = 20.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(if (open) PiIcons.ChevronDown else PiIcons.ChevronRight, null, tint = t.textTertiary, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "Older projects",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = t.text,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "$count · nothing in ${SessionPages.RECENT_HOURS} h",
+            style = MaterialTheme.typography.labelSmall,
+            color = t.textTertiary,
+        )
     }
 }
 
