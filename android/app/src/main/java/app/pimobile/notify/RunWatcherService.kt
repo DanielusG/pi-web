@@ -97,7 +97,8 @@ class RunWatcherService : Service() {
             // Suppression comes from the previous state: a finished subagent leaves both lists at once.
             val finished = previous - running - suppressed
             val active = running - snapshot.suppressed
-            if ((running + finished + snapshot.waiting).any { it !in sessions }) loadSessions(app.api)
+            val unknown = (running + finished + snapshot.waiting).filterNot { it in sessions }
+            if (unknown.isNotEmpty()) loadSessions(app.api, unknown)
 
             for (id in finished) {
                 if (isOnScreen(id)) continue
@@ -146,13 +147,15 @@ class RunWatcherService : Service() {
         stopSelf()
     }
 
-    private suspend fun loadSessions(api: PiApi) {
+    /** Titles and cwds of [ids], for the notifications; the full list would be megabytes. */
+    private suspend fun loadSessions(api: PiApi, ids: Collection<String>) {
         try {
-            api.get("/api/sessions").asObj()?.arr("sessions")?.forEach { element ->
+            val query = "ids=${PiApi.encode(ids.joinToString(","))}&firstMessageChars=$TITLE_CHARS"
+            api.get("/api/sessions?$query").asObj()?.arr("sessions")?.forEach { element ->
                 val json = element as? JsonObject ?: return@forEach
                 val id = json.str("id") ?: return@forEach
                 val title = json.str("name")?.takeIf { it.isNotBlank() }
-                    ?: json.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)?.take(80)
+                    ?: json.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)
                     ?: "Session complete"
                 sessions[id] = title to json.str("cwd")
             }
@@ -164,6 +167,7 @@ class RunWatcherService : Service() {
 
     companion object {
         private const val IDLE_STOP_MS = 10_000L
+        private const val TITLE_CHARS = 80
         private const val OFFLINE_STOP_MS = 120_000L
 
         @Volatile
