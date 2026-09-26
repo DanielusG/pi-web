@@ -1,19 +1,25 @@
 # Pi Mobile: piano per l'efficienza energetica
 
-**Stato (2026-09-25): fasi 1–4 implementate**, nella forma decisa dall'admin:
+**Stato (2026-09-26): fasi 1–4 e 5.1, 5.3 implementate e misurate sull'emulatore**, nella forma
+decisa dall'admin:
 - tutti gli indicatori statici (pallino, "Thinking", spinner di tool e subagent);
 - correzioni della fase 2 (timer dello streaming, notifica, servizio vocale, parse fuori dal
   main thread, `/subagents` doppio);
 - background guidato dagli eventi con il nuovo `GET /api/agent/running/events`, senza fallback:
   con un pi-web che non lo ha l'app mostra "Update pi-web";
-- streaming a 10 aggiornamenti al secondo che rielabora solo la coda del messaggio; anche
-  l'output dei tool va a 10 aggiornamenti al secondo.
+- streaming a 10 aggiornamenti al secondo che rielabora solo la coda del messaggio, con lo
+  scroll al fondo nello stesso frame (4.4); anche l'output dei tool va a 10 aggiornamenti al
+  secondo, e le sue ultime righe si cercano dalla fine;
+- lato server, due parametri opzionali che solo l'app usa (il web non cambia, un pi-web vecchio
+  li ignora): `GET /api/agent/[id]?lite=1` senza system prompt (5.3) e
+  `GET /api/agent/[id]/events?toolUpdates=tail` con le ultime 16 righe negli update dei tool
+  (5.1, dal piano `PLAN-android-bash-tail-updates.md`).
 
-Le fasi 5 (lato server: coda bash, filtri, reconcile snello) e 6 non sono ancora fatte. Le
-repliche della fase 1 e della fase 4 sono state fatte prima della verifica sul telefono, su
-richiesta dell'admin.
+Restano: 3.3 (reconcile raggruppati, ora poco utile: ogni reconcile pesa ~0,7 KB), 4.5, 5.2 (non
+serve più: il watcher non apre stream per sessione) e la fase 6. La verifica sul telefono resta
+all'admin.
 
-Misure sull'emulatore con i piloti (prima → dopo):
+Misure sull'emulatore (prima = baseline del report, dopo = build di `main` con le modifiche):
 
 | Scenario | Prima | Dopo |
 |---|---|---|
@@ -21,12 +27,27 @@ Misure sull'emulatore con i piloti (prima → dopo):
 | Chat ferma, primo piano o background | ~1 200 risvegli/min | 7–9 risvegli/min |
 | Run in background, a chat chiusa | 38 richieste/min, 226 KB/min | 0 richieste, solo il battito SSE |
 | Schermo spento con run: notifiche pubblicate | 42 | 1 |
-| Streaming 21 KB: main thread | 20,5 s/min | 5,9 s/min |
-| Streaming: costo per aggiornamento | 6 → 29 ms, lineare | 9 → 13 ms, quasi costante |
 | Servizio vocale dopo la fine dell'audio | ~10 min | ~1 s |
+| Chat, run agentica: frame | 3 335/min | 324/min |
+| Chat, run agentica: CPU dell'app | 22,2 s/min | 3,1 s/min |
+| Chat, run agentica: rete | 171 KB/min | 119 KB/min |
+| Stato della sessione, su questo repository | 43 434 B a risposta, ~18/min | 708 B a risposta |
+| Chat, streaming 21 KB: frame | 3 168/min | 736/min (~12,8 fps, di cui ~2–3 del cursore) |
+| Chat, streaming 21 KB: costo per aggiornamento | 6 → 29 ms, lineare | 4,3 → 6,6 ms, quasi costante |
+| Chat, bash verboso: frame | 2 746/min | 542/min |
+| Chat, bash verboso: CPU dell'app | 20,3 s/min | 5,3 s/min |
+| Chat, bash verboso: rete | 7 101 KB/min (3,7 MB per comando) | 1 018 KB/min |
 
-Le repliche (indicatori statici durante le run, output dei tool a 10 Hz) sono solo compilate:
-misure e verifica sul telefono sono ancora da fare.
+Note sulle misure:
+- Il cursore lampeggiante del campo di testo, che resta a fuoco dopo l'invio, aggiunge ~2–3
+  frame al secondo durante tutta la run.
+- Il bash verboso di prova produce solo 33 KB di output; con output più lunghi (fino ai 50 KB
+  che il bash conserva) il guadagno della coda cresce.
+- La CPU sull'emulatore è indicativa (host condiviso); frame, byte e richieste no.
+
+Verifica visiva sull'emulatore fatta: "Thinking" statico, pallino del tool, markdown in
+streaming, scroll che segue il fondo, si stacca quando l'utente scorre e riprende con il
+pulsante, output bash con le ultime 8 righe (16 aperto) e risultato completo a fine comando.
 
 Le misure dietro ogni punto sono in `battery-profiling-report.md` (qui citate come F1…F11). Il
 piano integra, senza riscriverli, i piani già decisi in `docs/doc-temp-perf/docs/`, in
