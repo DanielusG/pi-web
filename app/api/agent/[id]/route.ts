@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
+import { liteAgentState } from "@/lib/agent-state-lite";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -69,9 +70,9 @@ export async function POST(
   }
 }
 
-// GET /api/agent/[id] - Get current agent state
+// GET /api/agent/[id] - Get current agent state; `?lite=1` leaves out the system prompt
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -83,7 +84,8 @@ export async function GET(
     }
 
     const state = await session.send({ type: "get_state" });
-    return NextResponse.json({ running: true, state });
+    const lite = new URL(req.url).searchParams.get("lite") === "1";
+    return NextResponse.json({ running: true, state: lite ? liteAgentState(state) : state });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
