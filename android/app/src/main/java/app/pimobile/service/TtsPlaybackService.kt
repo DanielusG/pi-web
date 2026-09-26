@@ -15,6 +15,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import app.pimobile.MainActivity
 import app.pimobile.data.TtsSessionHolder
+import app.pimobile.media.StreamedWavExtractors
 import app.pimobile.media.TtsDataSource
 
 /**
@@ -93,7 +94,7 @@ class TtsPlaybackService : MediaSessionService() {
                         .setMimeType(MimeTypes.AUDIO_WAV)
                         .setMediaMetadata(metadata)
                         .build()
-                    p.setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
+                    p.setMediaSource(ProgressiveMediaSource.Factory(factory, StreamedWavExtractors).createMediaSource(item))
                     p.playbackParameters = PlaybackParameters(speed, 1f)
                     p.prepare()
                     p.playWhenReady = true
