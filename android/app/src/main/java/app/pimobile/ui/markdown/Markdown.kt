@@ -1,6 +1,6 @@
 package app.pimobile.ui.markdown
 
-import android.util.Log
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,17 +38,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
@@ -85,6 +98,7 @@ import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownInlineContent
 import com.mikepenz.markdown.model.markdownPadding
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownElementTypes
@@ -97,32 +111,33 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 import com.mikepenz.markdown.compose.Markdown as LibraryMarkdown
 
-/** Inline-content key of a formula: this prefix followed by the formula. */
-private const val MATH_KEY = "math:"
+/** How a formula inside text is drawn; its inline-content key is the prefix followed by the formula. */
+private enum class MathKind(val prefix: String) {
+    /** `$…$`: text style. */
+    INLINE("math:"),
+    /** `$$…$$` inside a paragraph: display style. */
+    DISPLAY("math-display:"),
+    /** Any formula in a table cell: text style, at the cell's text size. */
+    CELL("math-cell:"),
+}
+
+/** Display formulas wider than the screen shrink down to this, then scroll. */
+private const val MIN_DISPLAY_SCALE = 0.75f
+
+/** Where Compose keeps inline-content ids in an AnnotatedString (INLINE_CONTENT_TAG, internal to foundation). */
+private const val INLINE_CONTENT_TAG = "androidx.compose.foundation.text.inlineContent"
 
 private val InlineCodeSize = TextUnit(0.9f, TextUnitType.Em)
 
 private val QuoteMarkup = setOf(MarkdownTokenTypes.BLOCK_QUOTE, MarkdownTokenTypes.EOL, MarkdownTokenTypes.WHITE_SPACE)
 
 /**
- * Turns off the LaTeX renderer's precise glyph bounds. On Android they write the whole font file to
- * disk and reload it for every glyph run, with no cache (GlyphBoundsProvider.android.kt in
- * huarangmeng/latex 1.5.4): a document with a few dozen formulas took seconds to open. The renderer
- * then uses text-layout metrics, as it does until its font bytes have loaded.
- *
- * Sets the library's private "bytes already loaded" flag, so it must run before the first formula is
- * composed; proguard-rules.pro keeps the field.
+ * Starts loading the LaTeX renderer's font files, which it only does once a formula is composed:
+ * formulas laid out before they arrive are laid out again with precise glyph bounds.
  */
-fun disablePreciseGlyphBounds() {
-    try {
-        Class.forName("com.hrm.latex.renderer.model.LatexFontFamilyKt")
-            .getDeclaredField("fontBytesLoaded")
-            .apply { isAccessible = true }
-            .setBoolean(null, true)
-    } catch (e: ReflectiveOperationException) {
-        // A library update renamed the flag: formulas still render, only slower.
-        Log.w("Markdown", "Could not disable precise glyph bounds", e)
-    }
+@Composable
+fun PreloadLatexFonts() {
+    rememberLatexMeasurer()
 }
 
 /**
@@ -192,6 +207,7 @@ private fun MarkdownDocument(
         LatexConfig(fontSize = body.fontSize, theme = LatexTheme.light(color = t.text))
     }
     val displayMath = remember(inlineMath) { inlineMath.copy(fontSize = body.fontSize * 1.15f) }
+    val cellMath = remember(inlineMath, typography) { inlineMath.copy(fontSize = typography.bodyMedium.fontSize) }
     val measurer = rememberLatexMeasurer(inlineMath)
 
     val currentOpenFile by rememberUpdatedState(onOpenFile)
@@ -287,7 +303,7 @@ private fun MarkdownDocument(
             success = { success, blockComponents, _ ->
                 val blocks = remember(success) { success.node.children.filter { it.type != MarkdownTokenTypes.EOL } }
                 layout(blocks) { node ->
-                    MathScope(success.content, node, measurer, inlineMath) {
+                    MathScope(success.content, node, measurer, inlineMath, cellMath) {
                         MarkdownElement(node, blockComponents, success.content, includeSpacer = false)
                     }
                 }
@@ -306,15 +322,21 @@ private fun MathScope(
     node: ASTNode,
     measurer: LatexMeasurerState,
     config: LatexConfig,
+    cellConfig: LatexConfig,
     block: @Composable () -> Unit,
 ) {
     val formulas = remember(content, node) { buildSet { collectMath(content, node, this) } }
     if (formulas.isEmpty()) {
         block()
     } else {
-        val mathContent = remember(formulas, measurer, config) {
-            formulas.mapNotNull { latex ->
-                measurer.inlineContent(latex, config)?.let { inline -> MATH_KEY + latex to inline }
+        val mathContent = remember(formulas, measurer, config, cellConfig) {
+            formulas.mapNotNull { (kind, latex) ->
+                val inline = when (kind) {
+                    MathKind.INLINE -> measurer.inlineContent(inlineLatex(latex), config)
+                    MathKind.DISPLAY -> measurer.inlineContent(normalizeLatex(latex), config)
+                    MathKind.CELL -> measurer.inlineContent(inlineLatex(latex), cellConfig)
+                }
+                inline?.let { kind.prefix + latex to it }
             }.toMap()
         }
         val annotator = remember(mathContent) { mathAnnotator(mathContent.keys) }
@@ -326,32 +348,81 @@ private fun MathScope(
     }
 }
 
-/** Draws INLINE_MATH / BLOCK_MATH nodes as the inline content in [measured] (keys are MATH_KEY + formula). */
+/** Draws INLINE_MATH / BLOCK_MATH nodes as the inline content in [measured] (keys: [MathKind] prefix + formula). */
 private fun mathAnnotator(measured: Set<String>): MarkdownAnnotator =
     markdownAnnotator { content, child ->
         if (child.type != GFMElementTypes.INLINE_MATH && child.type != GFMElementTypes.BLOCK_MATH) {
             return@markdownAnnotator false
         }
         val latex = mathSource(content, child)
+        val key = mathKind(child).prefix + latex
         // A formula the renderer cannot measure stays readable as source.
-        if ((MATH_KEY + latex) in measured) appendInlineContent(MATH_KEY + latex, latex)
+        if (key in measured) appendInlineContent(key, latex)
         else append(child.getTextInNode(content))
         true
     }
 
 @Composable
 private fun DisplayMath(latex: String, config: LatexConfig) {
-    // Wide formulas scroll sideways instead of shrinking.
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(vertical = 4.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Latex(latex = latex, config = config)
+    val source = remember(latex) { normalizeLatex(latex) }
+    val scroll = rememberScrollState()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val available = constraints.maxWidth
+        Box(
+            Modifier
+                .fillMaxWidth()
+                // Changes once, after the first layout, and only for a formula that still overflows.
+                .then(if (scroll.maxValue > 0) Modifier.fadingEdges(scroll) else Modifier)
+                .horizontalScroll(scroll)
+                .padding(vertical = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Latex(latex = source, config = config, modifier = Modifier.shrinkToFit(available))
+        }
     }
 }
+
+/**
+ * Scales a formula wider than [available] px down to fit, but not below MIN_DISPLAY_SCALE: past that
+ * it scrolls sideways, with faded edges as the hint. Scaled when drawn, so it is measured only once.
+ */
+private fun Modifier.shrinkToFit(available: Int): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val scale = if (placeable.width <= available) 1f
+    else (available.toFloat() / placeable.width).coerceAtLeast(MIN_DISPLAY_SCALE)
+    val width = (placeable.width * scale).roundToInt()
+    val height = (placeable.height * scale).roundToInt()
+    layout(width, height) {
+        // The layer scales around its center: shift it so the scaled formula starts at 0, 0.
+        placeable.placeWithLayer((width - placeable.width) / 2, (height - placeable.height) / 2) {
+            scaleX = scale
+            scaleY = scale
+        }
+    }
+}
+
+/** Fades out the sides where [scroll] has more to show. */
+private fun Modifier.fadingEdges(scroll: ScrollState): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val fade = 32.dp.toPx().coerceAtMost(size.width / 4)
+            if (scroll.canScrollBackward) {
+                drawRect(
+                    Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), endX = fade),
+                    size = Size(fade, size.height),
+                    blendMode = BlendMode.DstOut,
+                )
+            }
+            if (scroll.canScrollForward) {
+                drawRect(
+                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = size.width - fade, endX = size.width),
+                    topLeft = Offset(size.width - fade, 0f),
+                    size = Size(fade, size.height),
+                    blendMode = BlendMode.DstOut,
+                )
+            }
+        }
 
 @Composable
 private fun Heading(
@@ -386,12 +457,18 @@ private fun BlockQuote(model: MarkdownComponentModel, bar: Color) {
     }
 }
 
-private fun collectMath(content: String, node: ASTNode, into: MutableSet<String>) {
+private fun collectMath(content: String, node: ASTNode, into: MutableSet<Pair<MathKind, String>>) {
     if (node.type == GFMElementTypes.INLINE_MATH || node.type == GFMElementTypes.BLOCK_MATH) {
-        into += mathSource(content, node)
+        into += mathKind(node) to mathSource(content, node)
     } else {
         node.children.forEach { collectMath(content, it, into) }
     }
+}
+
+private fun mathKind(node: ASTNode): MathKind = when {
+    generateSequence(node.parent) { it.parent }.any { it.type == GFMElementTypes.TABLE } -> MathKind.CELL
+    node.type == GFMElementTypes.BLOCK_MATH -> MathKind.DISPLAY
+    else -> MathKind.INLINE
 }
 
 /** The formula between the `$` / `$$` delimiters of an INLINE_MATH or BLOCK_MATH node. */
@@ -487,33 +564,56 @@ private fun TableBlock(content: String, node: ASTNode) {
     val inlineContent = LocalMarkdownInlineContent.current.inlineContent
     val headerStyle = typography.labelMedium.copy(color = t.textSecondary)
     val cellStyle = typography.bodyMedium.copy(color = t.text)
+    val cells = remember(content, rows, inlineContent, headerStyle, cellStyle) {
+        rows.mapIndexed { rowIndex, row ->
+            val style = if (rowIndex == 0) headerStyle else cellStyle
+            row.map { content.buildMarkdownAnnotatedString(it, style, settings).trimmed() }
+        }
+    }
 
     val columns = rows.maxOf { it.size }
-    val natural = (0 until columns).map { column ->
-        val chars = rows.maxOf { row -> row.getOrNull(column)?.let { it.endOffset - it.startOffset } ?: 0 }
-        (chars * 8 + 28).coerceIn(64, 280).dp
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val extents = remember(cells, inlineContent, textMeasurer, density) {
+        val padding = with(density) { 24.dp.toPx() }
+        val narrowest = with(density) { 40.dp.toPx() }
+        (0 until columns).map { column ->
+            var natural = narrowest
+            var min = 0f
+            cells.forEachIndexed { rowIndex, row ->
+                val cell = row.getOrNull(column) ?: return@forEachIndexed
+                val style = if (rowIndex == 0) headerStyle else cellStyle
+                val placeholders = cell.placeholders(inlineContent)
+                natural = maxOf(natural, textMeasurer.measure(cell, style, softWrap = false, placeholders = placeholders).size.width.toFloat())
+                min = maxOf(min, widestPiece(cell, style, placeholders, textMeasurer, density))
+            }
+            ColumnExtent(natural + padding, minOf(min, natural) + padding)
+        }
     }
-    val naturalWidth = natural.fold(0.dp) { total, width -> total + width }
     val shape = RoundedCornerShape(12.dp)
+    val scroll = rememberScrollState()
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .clip(shape)
             .border(1.dp, t.border, shape),
     ) {
-        // Measured outside the scroll (which has unbounded width): narrow
-        // tables stretch to the full width, wide ones scroll.
-        val available = maxWidth - 2.dp
-        val widths = if (naturalWidth < available) natural.map { it * (available / naturalWidth) } else natural
+        // Measured outside the scroll, which has unbounded width.
+        val widths = with(density) {
+            tableWidths(extents, (maxWidth - 2.dp).toPx()).map { it.toDp() }
+        }
         val tableWidth = widths.fold(0.dp) { total, width -> total + width }
-        Column(Modifier.horizontalScroll(rememberScrollState())) {
-            rows.forEachIndexed { rowIndex, row ->
+        Column(
+            Modifier
+                .then(if (scroll.maxValue > 0) Modifier.fadingEdges(scroll) else Modifier)
+                .horizontalScroll(scroll),
+        ) {
+            rows.indices.forEach { rowIndex ->
                 val style = if (rowIndex == 0) headerStyle else cellStyle
                 Row(Modifier.background(if (rowIndex == 0) t.code else Color.Transparent)) {
                     widths.forEachIndexed { column, width ->
-                        val cell = row.getOrNull(column)
                         Text(
-                            cell?.let { content.buildMarkdownAnnotatedString(it, style, settings).trimmed() } ?: AnnotatedString(""),
+                            cells[rowIndex].getOrNull(column) ?: AnnotatedString(""),
                             style = style,
                             inlineContent = inlineContent,
                             modifier = Modifier
@@ -527,6 +627,40 @@ private fun TableBlock(content: String, node: ASTNode) {
         }
     }
 }
+
+/** Widest piece of a cell that cannot wrap: one of its formulas or words. */
+private fun widestPiece(
+    cell: AnnotatedString,
+    style: TextStyle,
+    placeholders: List<AnnotatedString.Range<Placeholder>>,
+    measurer: TextMeasurer,
+    density: Density,
+): Float {
+    var widest = 0f
+    for (placeholder in placeholders) {
+        val width = placeholder.item.width
+        if (width.isSp) widest = maxOf(widest, with(density) { width.toPx() })
+    }
+    // A formula's alternate text is its source, not words. Only the longest words are measured:
+    // each one is a text layout.
+    WORD.findAll(cell.text)
+        .filter { word -> placeholders.none { it.start <= word.range.last && word.range.first < it.end } }
+        .sortedByDescending { it.value.length }
+        .take(3)
+        .forEach { word ->
+            val piece = cell.subSequence(word.range.first, word.range.last + 1)
+            widest = maxOf(widest, measurer.measure(piece, style, softWrap = false).size.width.toFloat())
+        }
+    return widest
+}
+
+private val WORD = Regex("""\S+""")
+
+/** The inline content of this text as placeholders, to measure it outside a Text. */
+private fun AnnotatedString.placeholders(inline: Map<String, InlineTextContent>): List<AnnotatedString.Range<Placeholder>> =
+    getStringAnnotations(INLINE_CONTENT_TAG, 0, length).mapNotNull { range ->
+        inline[range.item]?.let { AnnotatedString.Range(it.placeholder, range.start, range.end) }
+    }
 
 /** Drops the padding spaces around a cell's content, keeping its styles. */
 private fun AnnotatedString.trimmed(): AnnotatedString {
