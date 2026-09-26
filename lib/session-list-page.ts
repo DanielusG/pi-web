@@ -18,6 +18,8 @@ export interface ProjectPage {
   root: string;
   /** Top-level sessions of the project, not just the ones in `sessions`. */
   total: number;
+  /** Top-level sessions active since `since`; present only when it was asked for. */
+  recent?: number;
   /** Most recent activity among all its top-level sessions. */
   modified: string;
   sessions: SessionInfo[];
@@ -29,6 +31,8 @@ export interface SessionListPageOptions {
   offset?: number;
   /** Only this project (a `ProjectPage.key`): the next page of one group. */
   project?: string;
+  /** Epoch ms: the window stops at the first session older than this, and `recent` counts the newer ones. */
+  since?: number;
 }
 
 export function sessionProjectKey(session: SessionInfo): string {
@@ -42,7 +46,7 @@ export function sessionProjectKey(session: SessionInfo): string {
  */
 export function pageSessionsByProject(
   sessions: SessionInfo[],
-  { perProject, offset = 0, project }: SessionListPageOptions,
+  { perProject, offset = 0, project, since }: SessionListPageOptions,
 ): { projects: ProjectPage[]; recentCwds: string[] } {
   const topLevel = sessions
     .filter((session) => session.relation?.kind !== "subagent")
@@ -58,17 +62,25 @@ export function pageSessionsByProject(
   // Map order is first-seen order, which the sort made newest-activity first.
   for (const [key, group] of groups) {
     if (project !== undefined && key !== project) continue;
+    const recent = since === undefined ? undefined : countSince(group, since);
     projects.push({
       key,
       root: group[0].projectRoot ?? group[0].cwd,
       total: group.length,
+      ...(recent === undefined ? {} : { recent }),
       modified: group[0].modified,
-      sessions: group.slice(offset, offset + perProject),
+      sessions: group.slice(offset, Math.min(offset + perProject, recent ?? group.length)),
     });
   }
   const recentCwds = [...new Set(topLevel.map((session) => session.cwd).filter(Boolean))]
     .slice(0, RECENT_CWDS_LIMIT);
   return { projects, recentCwds };
+}
+
+/** Sessions of a newest-first group modified at or after `since` (epoch ms): a prefix of it. */
+function countSince(group: SessionInfo[], since: number): number {
+  const firstOlder = group.findIndex((session) => !(Date.parse(session.modified) >= since));
+  return firstOlder === -1 ? group.length : firstOlder;
 }
 
 /**

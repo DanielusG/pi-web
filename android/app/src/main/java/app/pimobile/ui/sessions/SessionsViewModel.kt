@@ -37,9 +37,10 @@ data class SessionRow(
 
 /**
  * One project of the paged list: [sessions] holds the pages loaded so far, newest first,
- * out of [total] top-level sessions on the server.
+ * out of [total] top-level sessions on the server. The first [recent] of them are the
+ * ones active in the last [SessionPages.RECENT_HOURS] hours: the rows shown by default.
  */
-data class ProjectGroup(val key: String, val root: String, val total: Int, val sessions: List<SessionRow>)
+data class ProjectGroup(val key: String, val root: String, val total: Int, val recent: Int, val sessions: List<SessionRow>)
 
 data class SessionsUiState(
     val loading: Boolean = true,
@@ -47,8 +48,10 @@ data class SessionsUiState(
     val groups: List<ProjectGroup> = emptyList(),
     val running: Set<String> = emptySet(),
     val waiting: Set<String> = emptySet(),
-    /** Rows shown per project key, when more than [SessionPages.FIRST_PAGE]. */
+    /** Rows shown per project key, when "Show more" went past its [ProjectGroup.recent] ones. */
     val shown: Map<String, Int> = emptyMap(),
+    /** Projects with no recent session are folded under "Older projects" until opened. */
+    val olderOpen: Boolean = false,
     /** Projects whose next page is being fetched. */
     val loadingMore: Set<String> = emptySet(),
     val recentCwds: List<String> = emptyList(),
@@ -81,6 +84,8 @@ class SessionsViewModel(
     }
 
     fun showLess(key: String) = _state.update { it.copy(shown = it.shown - key) }
+
+    fun toggleOlder() = _state.update { it.copy(olderOpen = !it.olderOpen) }
 
     fun clearError() = _state.update { it.copy(error = null) }
 
@@ -132,7 +137,8 @@ class SessionsViewModel(
         _state.update { it.copy(refreshing = force && !it.loading) }
         try {
             val body = api.get(
-                "/api/sessions?perProject=${SessionPages.FIRST_PAGE}&firstMessageChars=${SessionPages.FIRST_MESSAGE_CHARS}" +
+                "/api/sessions?perProject=${SessionPages.FIRST_PAGE}&recentHours=${SessionPages.RECENT_HOURS}" +
+                    "&firstMessageChars=${SessionPages.FIRST_MESSAGE_CHARS}" +
                     if (force) "&force=1" else "",
             ).asObj() ?: throw IllegalStateException("Empty response from /api/sessions")
             val pages = SessionPages.parse(body) ?: throw OutdatedServer()
@@ -171,7 +177,7 @@ class SessionsViewModel(
 
     private suspend fun more(key: String) {
         val group = _state.value.groups.firstOrNull { it.key == key } ?: return
-        val wanted = minOf((_state.value.shown[key] ?: SessionPages.FIRST_PAGE) + SessionPages.MORE_PAGE, group.total)
+        val wanted = minOf(SessionPages.shown(group, _state.value.shown[key]) + SessionPages.MORE_PAGE, group.total)
         if (wanted > group.sessions.size) {
             _state.update { it.copy(loadingMore = it.loadingMore + key) }
             try {
@@ -206,12 +212,21 @@ class SessionsViewModel(
 
 /**
  * The paged session list of `GET /api/sessions?perProject=` (lib/session-list-page.ts):
- * a few sessions per project with the project's total, and further pages on request.
+ * each project's recent sessions with the project's total, and further pages on request.
  */
 object SessionPages {
-    /** Rows a project shows before "Show more", and the size of the first page. */
-    const val FIRST_PAGE = 5
+    /** A project shows the sessions active in this many hours before "Show more". */
+    const val RECENT_HOURS = 24
+
+    /** Cap of the first page: a project busier than this continues with "Show more". */
+    const val FIRST_PAGE = 50
     const val MORE_PAGE = 10
+
+    /**
+     * Rows a project shows: its recent ones, or more after "Show more". A reload can
+     * make more sessions recent than were shown on request, and never hides them.
+     */
+    fun shown(group: ProjectGroup, requested: Int?): Int = maxOf(requested ?: 0, group.recent)
 
     /** A row shows two lines of it; the server cuts the rest (skill expansions reach 400 KB). */
     const val FIRST_MESSAGE_CHARS = 200
@@ -221,7 +236,14 @@ object SessionPages {
         val json = element as? JsonObject ?: return@mapNotNull null
         val key = json.str("key") ?: return@mapNotNull null
         val sessions = json.arr("sessions").orEmpty().mapNotNull { (it as? JsonObject)?.let(::toRow) }
-        ProjectGroup(key, json.str("root") ?: key, json.int("total") ?: sessions.size, sessions)
+        ProjectGroup(
+            key = key,
+            root = json.str("root") ?: key,
+            total = json.int("total") ?: sessions.size,
+            // Capped by the first page. A server without `recentHours` sends none: all it sent is shown.
+            recent = minOf(json.int("recent") ?: sessions.size, sessions.size),
+            sessions = sessions,
+        )
     }
 
     /** [page] appended to [group]; a session that moved up since the last page is not listed twice. */

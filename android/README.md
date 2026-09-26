@@ -22,8 +22,10 @@ It has **not yet been tested against a real pi-web with a real model.**
   scrolling with it, that lists every running or waiting session across
   projects (tap to open, long-press for the same rename/delete sheet; hidden
   when nothing is active, capped at a few rows with internal scroll),
-  five sessions per project with "Show 10 more" and "Show less": the list arrives a
-  page at a time (`GET /api/sessions?perProject=`), first messages cut to what a row
+  each project's sessions of the last 24 hours with "Show 10 more" and "Show less",
+  projects with nothing in 24 hours folded under "Older projects" at the bottom (open
+  when nothing is recent): the list arrives a page at a time
+  (`GET /api/sessions?perProject=&recentHours=`), first messages cut to what a row
   shows, so a project with thousands of sessions is never downloaded whole; and
   long-press on a session for rename/delete
   (bottom sheet: pre-filled rename field with the web's no-op check, delete with

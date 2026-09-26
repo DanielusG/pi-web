@@ -28,7 +28,8 @@ function intParam(searchParams: URLSearchParams, name: string, min: number, max:
 /**
  * The list with the Android client's opt-in trimming applied (lib/session-list-page.ts):
  * `ids` keeps only those sessions, `firstMessageChars` shortens first messages, and
- * `perProject` (with `offset`, `project`) answers with one page per project instead.
+ * `perProject` (with `offset`, `project`) answers with one page per project instead,
+ * and `recentHours` stops each window at the sessions active in that many hours.
  * Without them, the full list. An older server ignores them and sends the full list.
  */
 function sessionListing(sessions: SessionInfo[], searchParams: URLSearchParams) {
@@ -41,10 +42,12 @@ function sessionListing(sessions: SessionInfo[], searchParams: URLSearchParams) 
     : list.map((session) => withCompactFirstMessage(session, firstMessageChars));
   const perProject = intParam(searchParams, "perProject", 1, 100);
   if (perProject === undefined) return { sessions: compact(selected) };
+  const recentHours = intParam(searchParams, "recentHours", 1, 24 * 366);
   const { projects, recentCwds } = pageSessionsByProject(selected, {
     perProject,
     offset: intParam(searchParams, "offset", 0, Number.MAX_SAFE_INTEGER),
     project: searchParams.get("project") ?? undefined,
+    since: recentHours === undefined ? undefined : Date.now() - recentHours * 3_600_000,
   });
   return {
     projects: projects.map((project) => ({ ...project, sessions: compact(project.sessions) })),
