@@ -77,7 +77,6 @@ import app.pimobile.ui.theme.StatusDot
 import app.pimobile.ui.theme.piTextFieldColors
 import kotlinx.coroutines.launch
 
-private const val COLLAPSED_COUNT = 5
 private val GroupShape = RoundedCornerShape(14.dp)
 
 /** A session running or waiting, with the project root it belongs to. */
@@ -157,7 +156,12 @@ fun SessionsScreen(
                         }
                     }
                     state.groups.isEmpty() && state.error != null -> item("error") {
-                        ErrorState(state.error!!, onRetry = { vm.refresh(force = true) }, onSettings = onSettings)
+                        ErrorState(
+                            title = if (state.outdated) "Update pi-web" else "Can't reach the server",
+                            message = state.error!!,
+                            onRetry = { vm.refresh(force = true) },
+                            onSettings = onSettings,
+                        )
                     }
                     state.groups.isEmpty() -> item("empty") {
                         Text(
@@ -169,16 +173,17 @@ fun SessionsScreen(
                     }
                 }
                 state.groups.forEach { group ->
-                    item(key = "project:${group.root}") {
-                        val expanded = group.root in state.expanded
+                    item(key = "project:${group.key}") {
                         ProjectGroupView(
                             group = group,
-                            expanded = expanded,
+                            shown = state.shown[group.key] ?: SessionPages.FIRST_PAGE,
+                            loadingMore = group.key in state.loadingMore,
                             running = state.running,
                             waiting = state.waiting,
                             onOpen = onOpen,
                             onLongClick = { sheetRow = it },
-                            onToggle = { vm.toggleProject(group.root) },
+                            onMore = { vm.showMore(group.key) },
+                            onLess = { vm.showLess(group.key) },
                             onBrowse = { onBrowse(group.root) },
                         )
                     }
@@ -353,12 +358,15 @@ private fun ActiveSessionsView(
 @Composable
 private fun ProjectGroupView(
     group: ProjectGroup,
-    expanded: Boolean,
+    /** Rows to show; the rest of the loaded ones stay hidden until "Show more". */
+    shown: Int,
+    loadingMore: Boolean,
     running: Set<String>,
     waiting: Set<String>,
     onOpen: (id: String, cwd: String) -> Unit,
     onLongClick: (SessionRow) -> Unit,
-    onToggle: () -> Unit,
+    onMore: () -> Unit,
+    onLess: () -> Unit,
     onBrowse: () -> Unit,
 ) {
     val t = Pi.tokens
@@ -383,7 +391,7 @@ private fun ProjectGroupView(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text("${group.sessions.size}", style = MaterialTheme.typography.labelSmall, color = t.textTertiary)
+            Text("${group.total}", style = MaterialTheme.typography.labelSmall, color = t.textTertiary)
             if (group.root.isNotEmpty()) {
                 Spacer(Modifier.width(6.dp))
                 Row(
@@ -405,7 +413,7 @@ private fun ProjectGroupView(
                 .clip(GroupShape)
                 .border(1.dp, t.border, GroupShape),
         ) {
-            val visible = if (expanded) group.sessions else group.sessions.take(COLLAPSED_COUNT)
+            val visible = group.sessions.take(shown)
             visible.forEachIndexed { index, row ->
                 if (index > 0) HorizontalDivider(color = t.border)
                 SessionRowView(
@@ -416,17 +424,36 @@ private fun ProjectGroupView(
                     onLongClick = { onLongClick(row) },
                 )
             }
-            if (group.sessions.size > COLLAPSED_COUNT) {
+            // Sessions arrive a page at a time: a project with thousands never loads them all.
+            val remaining = group.total - visible.size
+            val canLess = visible.size > SessionPages.FIRST_PAGE
+            if (remaining > 0 || canLess) {
                 HorizontalDivider(color = t.border)
-                Text(
-                    if (expanded) "Show less" else "Show all ${group.sessions.size}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = t.textSecondary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onToggle)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                )
+                Row(Modifier.fillMaxWidth()) {
+                    if (remaining > 0) {
+                        Text(
+                            if (loadingMore) "Loading…" else "Show ${minOf(remaining, SessionPages.MORE_PAGE)} more",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = t.textSecondary,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable(enabled = !loadingMore, onClick = onMore)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    if (canLess) {
+                        Text(
+                            "Show less",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = t.textSecondary,
+                            modifier = Modifier
+                                .clickable(onClick = onLess)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -481,13 +508,13 @@ private fun SessionRowView(row: SessionRow, running: Boolean, waiting: Boolean, 
 }
 
 @Composable
-private fun ErrorState(message: String, onRetry: () -> Unit, onSettings: () -> Unit) {
+private fun ErrorState(title: String, message: String, onRetry: () -> Unit, onSettings: () -> Unit) {
     val t = Pi.tokens
     Column(
         Modifier.padding(horizontal = 4.dp, vertical = 48.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Can't reach the server", style = MaterialTheme.typography.titleLarge, color = t.text)
+        Text(title, style = MaterialTheme.typography.titleLarge, color = t.text)
         Text(message, style = MaterialTheme.typography.bodyMedium, color = t.textSecondary)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
             PiPrimaryButton("Retry", onClick = onRetry)
