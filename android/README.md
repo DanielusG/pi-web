@@ -44,7 +44,7 @@ It has **not yet been tested against a real pi-web with a real model.**
   before the trigger are dropped. Note: on OnePlus the Plus Key (AI key) has fixed
   options and cannot be mapped to a third-party app.
 - **Chat:**
-  - Markdown (headings, lists, code blocks, tables, quotes, links) and selectable text.
+  - Markdown (headings, lists, task lists, inline code, code blocks, tables, quotes, links) and selectable text.
   - LaTeX math: inline formulas in text style, display formulas shrunk to fit (down to 75 %)
     and then scrolled behind a faded edge, tables that wrap their text to fit the screen.
   - Collapsible thinking; deferred thinking loads its full text on tap.
@@ -237,6 +237,7 @@ app/src/main/java/app/pimobile/
   data/FilePaths.kt        pi-web's path, link and @mention helpers
   ui/files/                explorer, viewer (source/preview/diff), media views, share
   ui/markdown/Markdown.kt  small markdown renderer
+  ui/markdown/CodeSpanPainter.kt inline code boxes sized to the code font, like pi-web's
   ui/markdown/LatexSource.kt formula rewrites for the LaTeX renderer (spaces, minus, inline style)
   ui/markdown/LatexGlyphBounds.kt precise glyph bounds with each font loaded once
   ui/markdown/TableLayout.kt column widths like a browser's automatic table layout

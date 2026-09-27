@@ -46,12 +46,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -60,10 +64,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.pimobile.data.FilePaths
 import app.pimobile.ui.theme.GeistMono
@@ -90,7 +97,9 @@ import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
 import com.mikepenz.markdown.compose.elements.MarkdownText
 import com.mikepenz.markdown.compose.elements.listDepth
+import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
 import com.mikepenz.markdown.model.DefaultMarkdownColors
+import com.mikepenz.markdown.model.DefaultMarkdownExtendedSpans
 import com.mikepenz.markdown.model.DefaultMarkdownTypography
 import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.State
@@ -98,6 +107,7 @@ import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownInlineContent
 import com.mikepenz.markdown.model.markdownPadding
+import com.mikepenz.markdown.utils.EntityConverter
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import org.intellij.markdown.IElementType
@@ -129,6 +139,21 @@ private const val INLINE_CONTENT_TAG = "androidx.compose.foundation.text.inlineC
 
 private val InlineCodeSize = TextUnit(0.9f, TextUnitType.Em)
 
+/** Code blocks and fences; the text color comes from the theme. */
+private val CodeTextStyle = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 20.sp)
+
+/**
+ * Heading sizes as multiples of the body text, like pi-web's em-based `.markdown-body h*` and its
+ * `.markdown-file-preview` override: no heading is ever smaller than a paragraph. h4–h6 are body
+ * sized, set apart by weight only.
+ */
+enum class HeadingScale(val h1: Float, val h2: Float, val h3: Float) {
+    /** Chat messages: headings stay close to the text around them. */
+    Chat(1.25f, 1.125f, 1f),
+    /** Whole documents (the file preview): a clearer outline. */
+    Document(1.8f, 1.4f, 1.15f),
+}
+
 private val QuoteMarkup = setOf(MarkdownTokenTypes.BLOCK_QUOTE, MarkdownTokenTypes.EOL, MarkdownTokenTypes.WHITE_SPACE)
 
 /**
@@ -157,8 +182,9 @@ fun Markdown(
     /** Relative links must stay inside this directory. */
     relativeRoot: String? = baseDir,
     onOpenFile: ((String) -> Unit)? = null,
+    headings: HeadingScale = HeadingScale.Chat,
 ) {
-    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile) { blocks, block ->
+    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile, headings) { blocks, block ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             blocks.forEach { block(it) }
         }
@@ -174,8 +200,9 @@ fun LazyMarkdown(
     baseDir: String? = null,
     relativeRoot: String? = baseDir,
     onOpenFile: ((String) -> Unit)? = null,
+    headings: HeadingScale = HeadingScale.Chat,
 ) {
-    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile) { blocks, block ->
+    MarkdownDocument(text, baseDir, relativeRoot, onOpenFile, headings) { blocks, block ->
         LazyColumn(modifier, contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(blocks) { block(it) }
         }
@@ -189,6 +216,7 @@ private fun MarkdownDocument(
     baseDir: String?,
     relativeRoot: String?,
     onOpenFile: ((String) -> Unit)?,
+    headings: HeadingScale,
     layout: @Composable (blocks: List<ASTNode>, block: @Composable (ASTNode) -> Unit) -> Unit,
 ) {
     val t = Pi.tokens
@@ -231,18 +259,19 @@ private fun MarkdownDocument(
             tableBackground = t.code,
         )
     }
-    val markdownTypography = remember(t, typography) {
-        val heading = typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, color = t.text)
+    val markdownTypography = remember(t, typography, headings) {
+        fun heading(scale: Float) = body.copy(fontSize = body.fontSize * scale, lineHeight = 1.35.em, fontWeight = FontWeight.SemiBold)
+        val minor = heading(1f)
         val marker = body.copy(color = t.textTertiary)
         DefaultMarkdownTypography(
-            h1 = typography.titleLarge.copy(color = t.text),
-            h2 = typography.titleMedium.copy(fontSize = 17.sp, color = t.text),
-            h3 = heading,
-            h4 = heading,
-            h5 = heading,
-            h6 = heading,
+            h1 = heading(headings.h1),
+            h2 = heading(headings.h2),
+            h3 = heading(headings.h3),
+            h4 = minor,
+            h5 = minor,
+            h6 = minor,
             text = body,
-            code = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 20.sp, color = t.text),
+            code = CodeTextStyle.copy(color = t.text),
             inlineCode = TextStyle(fontFamily = GeistMono, fontSize = InlineCodeSize),
             quote = body.copy(color = t.textSecondary),
             paragraph = body,
@@ -252,6 +281,16 @@ private fun MarkdownDocument(
             textLink = TextLinkStyles(SpanStyle(color = t.accent, textDecoration = TextDecoration.Underline)),
             table = typography.bodyMedium.copy(color = t.text),
         )
+    }
+    val inline = remember(markdownTypography, colors) {
+        InlineMarkup(markdownTypography.inlineCode.toSpanStyle().copy(background = colors.inlineCodeBackground), markdownTypography.textLink)
+    }
+    val baseAnnotator = remember(inline) { inline.annotator() }
+    // Every text drawn by the library, and table cells, paint inline code through this.
+    val codeSpans = remember(t) {
+        val painter = CodeSpanPainter(InlineCodeSize.value, t.border)
+        // One ExtendedSpans per text, which keeps that text's draw instructions.
+        DefaultMarkdownExtendedSpans { remember(painter) { ExtendedSpans(painter) } }
     }
 
     val components = remember(t, displayMath) {
@@ -282,6 +321,7 @@ private fun MarkdownDocument(
             },
             horizontalRule = { HorizontalDivider(color = t.border) },
             table = { TableBlock(it.content, it.node) },
+            checkbox = { TaskCheckBox(it) },
             // Raw HTML blocks are shown as source.
             custom = { type, model ->
                 if (type == MarkdownElementTypes.HTML_BLOCK) {
@@ -296,14 +336,18 @@ private fun MarkdownDocument(
             state = state,
             colors = colors,
             typography = markdownTypography,
-            padding = markdownPadding(block = 0.dp, list = 0.dp, listItemTop = 3.dp, listItemBottom = 3.dp, listIndent = 0.dp),
+            // All the space between list items is above them: space below would pile up at the end
+            // of a nested list, where the inner and outer items both close.
+            padding = markdownPadding(block = 0.dp, list = 0.dp, listItemTop = 6.dp, listItemBottom = 0.dp, listIndent = 0.dp),
             components = components,
+            extendedSpans = codeSpans,
+            annotator = baseAnnotator,
             // Streaming grows the text on every chunk; the default size animation fights the auto-scroll.
             animations = markdownAnimations(animateTextSize = { this }),
             success = { success, blockComponents, _ ->
                 val blocks = remember(success) { success.node.children.filter { it.type != MarkdownTokenTypes.EOL } }
                 layout(blocks) { node ->
-                    MathScope(success.content, node, measurer, inlineMath, cellMath) {
+                    MathScope(success.content, node, measurer, inlineMath, cellMath, inline) {
                         MarkdownElement(node, blockComponents, success.content, includeSpacer = false)
                     }
                 }
@@ -323,6 +367,7 @@ private fun MathScope(
     measurer: LatexMeasurerState,
     config: LatexConfig,
     cellConfig: LatexConfig,
+    inline: InlineMarkup,
     block: @Composable () -> Unit,
 ) {
     val formulas = remember(content, node) { buildSet { collectMath(content, node, this) } }
@@ -339,7 +384,7 @@ private fun MathScope(
                 inline?.let { kind.prefix + latex to it }
             }.toMap()
         }
-        val annotator = remember(mathContent) { mathAnnotator(mathContent.keys) }
+        val annotator = remember(mathContent, inline) { inline.annotator(mathContent.keys) }
         CompositionLocalProvider(
             LocalMarkdownAnnotator provides annotator,
             LocalMarkdownInlineContent provides markdownInlineContent(mathContent),
@@ -348,19 +393,89 @@ private fun MathScope(
     }
 }
 
-/** Draws INLINE_MATH / BLOCK_MATH nodes as the inline content in [measured] (keys: [MathKind] prefix + formula). */
-private fun mathAnnotator(measured: Set<String>): MarkdownAnnotator =
-    markdownAnnotator { content, child ->
-        if (child.type != GFMElementTypes.INLINE_MATH && child.type != GFMElementTypes.BLOCK_MATH) {
-            return@markdownAnnotator false
+/**
+ * Inline markup that the library's annotator renders wrong, handled before it sees the node, in
+ * every text: paragraphs, headings, list items, quotes and table cells. The library walks the
+ * tokens inside inline code as if they were text, so `~` vanishes, `_` turns into `*` and
+ * `<tag>` disappears; it also drops a lone `~`, the address of an email autolink and `<br>`, and
+ * leaves entities such as `&amp;` undecoded.
+ */
+internal class InlineMarkup(private val codeSpan: SpanStyle, private val links: TextLinkStyles) {
+    /** [math]: the formulas measured for the block, drawn as inline content (keys: [MathKind] prefix + formula). */
+    fun annotator(math: Set<String> = emptySet()): MarkdownAnnotator =
+        markdownAnnotator { content, child -> annotate(content, child, math) }
+
+    private fun AnnotatedString.Builder.annotate(content: String, child: ASTNode, math: Set<String>): Boolean {
+        when (child.type) {
+            GFMElementTypes.INLINE_MATH, GFMElementTypes.BLOCK_MATH -> {
+                val latex = mathSource(content, child)
+                val key = mathKind(child).prefix + latex
+                // A formula the renderer cannot measure stays readable as source.
+                if (key in math) appendInlineContent(key, latex) else append(child.getTextInNode(content))
+            }
+            MarkdownElementTypes.CODE_SPAN -> {
+                val code = codeSpanText(content, child) ?: return false
+                // Padded with a space on each side like the library does: CodeSpanPainter draws around them.
+                withStyle(codeSpan) {
+                    append(' ')
+                    append(code)
+                    append(' ')
+                }
+            }
+            MarkdownTokenTypes.EMAIL_AUTOLINK -> {
+                val address = child.getTextInNode(content).toString()
+                withLink(LinkAnnotation.Url("mailto:$address", links)) { append(address) }
+            }
+            // An email autolink's brackets: the parser leaves them as plain tokens beside the address.
+            MarkdownTokenTypes.LT, MarkdownTokenTypes.GT -> {
+                val siblings = child.parent?.children ?: return false
+                val next = siblings.getOrNull(siblings.indexOf(child) + if (child.type == MarkdownTokenTypes.LT) 1 else -1)
+                if (next?.type != MarkdownTokenTypes.EMAIL_AUTOLINK) return false
+            }
+            MarkdownTokenTypes.TEXT -> {
+                if ((child.startOffset until child.endOffset).none { content[it] == '&' }) return false
+                append(EntityConverter.replaceEntities(child.getTextInNode(content), processEntities = true, processEscapes = true))
+            }
+            // Delimiters of a strikethrough / emphasis are markup; anywhere else they are text.
+            GFMTokenTypes.TILDE -> {
+                if (child.parent?.type == GFMElementTypes.STRIKETHROUGH) return false
+                append(child.getTextInNode(content))
+            }
+            MarkdownTokenTypes.EMPH -> {
+                val parent = child.parent?.type
+                if (parent == MarkdownElementTypes.EMPH || parent == MarkdownElementTypes.STRONG) return false
+                append(child.getTextInNode(content))
+            }
+            MarkdownTokenTypes.HTML_TAG -> {
+                if (!LINE_BREAK_TAG.matches(child.getTextInNode(content))) return false
+                append('\n')
+            }
+            else -> return false
         }
-        val latex = mathSource(content, child)
-        val key = mathKind(child).prefix + latex
-        // A formula the renderer cannot measure stays readable as source.
-        if (key in measured) appendInlineContent(key, latex)
-        else append(child.getTextInNode(content))
-        true
+        return true
     }
+
+    private companion object {
+        val LINE_BREAK_TAG = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+    }
+}
+
+/**
+ * The text of an inline code span, verbatim as CommonMark defines it: line endings become spaces,
+ * and one space is stripped from each side when both sides have one. Null if the node is not
+ * delimited by backticks.
+ */
+private fun codeSpanText(content: String, node: ASTNode): String? {
+    val open = node.children.firstOrNull()
+    val close = node.children.lastOrNull()
+    if (open == null || close == null || open === close ||
+        open.type != MarkdownTokenTypes.BACKTICK || close.type != MarkdownTokenTypes.BACKTICK
+    ) return null
+    val code = content.substring(open.endOffset, close.startOffset).replace("\r\n", " ").replace('\n', ' ')
+    return if (code.length >= 2 && code.first() == ' ' && code.last() == ' ' && code.isNotBlank()) {
+        code.substring(1, code.length - 1)
+    } else code
+}
 
 @Composable
 private fun DisplayMath(latex: String, config: LatexConfig) {
@@ -457,6 +572,30 @@ private fun BlockQuote(model: MarkdownComponentModel, bar: Color) {
     }
 }
 
+/** A task-list marker drawn as a box, like pi-web's, where the library writes `[x]` as text. */
+@Composable
+private fun TaskCheckBox(model: MarkdownComponentModel) {
+    val t = Pi.tokens
+    val checked = remember(model.content, model.node) {
+        model.node.getTextInNode(model.content).contains("[x]", ignoreCase = true)
+    }
+    // Centered on the item's first line, where a bullet would be.
+    val line = with(LocalDensity.current) { model.typography.list.lineHeight.toDp() }
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        Modifier
+            .padding(top = ((line - 16.dp) / 2).coerceAtLeast(0.dp), end = 10.dp)
+            .size(16.dp)
+            .clip(shape)
+            .background(if (checked) t.accent.copy(alpha = 0.1f) else t.background)
+            .border(1.dp, if (checked) t.accent.copy(alpha = 0.55f) else t.borderStrong, shape)
+            .semantics { contentDescription = if (checked) "Done" else "Not done" },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Icon(PiIcons.Check, contentDescription = null, tint = t.accent, modifier = Modifier.size(12.dp))
+    }
+}
+
 private fun collectMath(content: String, node: ASTNode, into: MutableSet<Pair<MathKind, String>>) {
     if (node.type == GFMElementTypes.INLINE_MATH || node.type == GFMElementTypes.BLOCK_MATH) {
         into += mathKind(node) to mathSource(content, node)
@@ -513,7 +652,7 @@ fun CodeBlock(lang: String, code: String, modifier: Modifier = Modifier, header:
         }
         Text(
             code,
-            style = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 20.sp, color = t.text),
+            style = CodeTextStyle.copy(color = t.text),
             softWrap = false,
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
@@ -563,7 +702,7 @@ private fun TableBlock(content: String, node: ASTNode) {
     val settings = annotatorSettings()
     val inlineContent = LocalMarkdownInlineContent.current.inlineContent
     val headerStyle = typography.labelMedium.copy(color = t.textSecondary)
-    val cellStyle = typography.bodyMedium.copy(color = t.text)
+    val cellStyle = LocalMarkdownTypography.current.table
     val cells = remember(content, rows, inlineContent, headerStyle, cellStyle) {
         rows.mapIndexed { rowIndex, row ->
             val style = if (rowIndex == 0) headerStyle else cellStyle
@@ -612,13 +751,13 @@ private fun TableBlock(content: String, node: ASTNode) {
                 val style = if (rowIndex == 0) headerStyle else cellStyle
                 Row(Modifier.background(if (rowIndex == 0) t.code else Color.Transparent)) {
                     widths.forEachIndexed { column, width ->
-                        Text(
+                        // The library's text, as in paragraphs: it also paints inline code and math.
+                        MarkdownText(
                             cells[rowIndex].getOrNull(column) ?: AnnotatedString(""),
-                            style = style,
-                            inlineContent = inlineContent,
-                            modifier = Modifier
+                            Modifier
                                 .width(width)
                                 .padding(horizontal = 12.dp, vertical = 9.dp),
+                            style = style,
                         )
                     }
                 }
@@ -662,9 +801,13 @@ private fun AnnotatedString.placeholders(inline: Map<String, InlineTextContent>)
         inline[range.item]?.let { AnnotatedString.Range(it.placeholder, range.start, range.end) }
     }
 
-/** Drops the padding spaces around a cell's content, keeping its styles. */
+/**
+ * Drops the padding spaces around a cell's content, keeping its styles. The spaces inside inline
+ * code, which has a background, stay: they pad its box (see [InlineMarkup]).
+ */
 private fun AnnotatedString.trimmed(): AnnotatedString {
-    val start = text.indexOfFirst { !it.isWhitespace() }
-    if (start == -1) return AnnotatedString("")
-    return subSequence(start, text.indexOfLast { !it.isWhitespace() } + 1)
+    val boxed = spanStyles.filter { it.item.background.isSpecified }
+    val kept = { i: Int -> !text[i].isWhitespace() || boxed.any { i >= it.start && i < it.end } }
+    val start = text.indices.firstOrNull(kept) ?: return AnnotatedString("")
+    return subSequence(start, text.indices.last(kept) + 1)
 }

@@ -81,6 +81,7 @@ import app.pimobile.data.FileKind
 import app.pimobile.data.FilePaths
 import app.pimobile.ui.baseName
 import app.pimobile.ui.chat.DiffView
+import app.pimobile.ui.markdown.HeadingScale
 import app.pimobile.ui.markdown.LazyMarkdown
 import app.pimobile.ui.shortPath
 import app.pimobile.ui.theme.GeistMono
@@ -269,6 +270,7 @@ fun FileViewerScreen(
                                     baseDir = directory,
                                     relativeRoot = state.root.ifEmpty { directory },
                                     onOpenFile = onOpenFile,
+                                    headings = HeadingScale.Document,
                                 )
                             }
                         }
