@@ -29,6 +29,7 @@ object TtsClient {
             if (config.ttsModel.isNotBlank()) put("model", config.ttsModel)
             put("input", text)
             if (config.ttsVoice.isNotBlank()) put("voice", config.ttsVoice)
+            if (config.ttsPreProcess) put("pre_process_prompt", true)
             put("response_format", "wav_stream")
             put("stream", true)
         }.toString()

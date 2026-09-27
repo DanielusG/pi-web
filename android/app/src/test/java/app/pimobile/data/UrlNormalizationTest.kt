@@ -1,6 +1,10 @@
 package app.pimobile.data
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class UrlNormalizationTest {
@@ -100,5 +104,24 @@ class UrlNormalizationTest {
     fun `tts endpoint preserves custom subpaths and ports`() {
         assertEquals("https://proxy.example.com/tts/v1/audio/speech", TtsClient.buildEndpoint("https://proxy.example.com/tts"))
         assertEquals("https://proxy.example.com/tts/v1/audio/speech", TtsClient.buildEndpoint("https://proxy.example.com/tts/v1"))
+    }
+
+    // --- TTS Request Body (TtsClient.requestFor) ---
+
+    @Test
+    fun `tts request body omits pre_process_prompt by default`() {
+        val request = TtsClient.requestFor(ServerConfig(ttsUrl = "http://192.168.1.11:8880"), "hello")
+        val body = Json.parseToJsonElement(request.body).jsonObject
+        assertNull(body["pre_process_prompt"])
+    }
+
+    @Test
+    fun `tts request body sends pre_process_prompt when enabled`() {
+        val request = TtsClient.requestFor(
+            ServerConfig(ttsUrl = "http://192.168.1.11:8880", ttsPreProcess = true),
+            "hello",
+        )
+        val body = Json.parseToJsonElement(request.body).jsonObject
+        assertEquals("true", body["pre_process_prompt"]?.jsonPrimitive?.content)
     }
 }

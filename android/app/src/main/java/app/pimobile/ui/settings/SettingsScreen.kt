@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -34,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +64,7 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
     var ttsUrl by rememberSaveable { mutableStateOf(current.ttsUrl) }
     var ttsModel by rememberSaveable { mutableStateOf(current.ttsModel) }
     var ttsVoice by rememberSaveable { mutableStateOf(current.ttsVoice) }
+    var ttsPreProcess by rememberSaveable { mutableStateOf(current.ttsPreProcess) }
     var showPassword by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -183,6 +186,20 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                     modifier = Modifier.weight(1f),
                 )
             }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("LLM preprocessing", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Sends pre_process_prompt: true so the server rewrites the text with its LLM before speaking (omnivoice only — the server must be started with LLM credentials).",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = t.textTertiary,
+                    )
+                }
+                Switch(checked = ttsPreProcess, onCheckedChange = { ttsPreProcess = it })
+            }
             Text(
                 "OpenAI-compatible TTS server (POST /v1/audio/speech) for the Listen action. " +
                     "Model and voice are sent as-is; leave them empty for the server defaults. " +
@@ -202,12 +219,13 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                         testing = true
                         error = null
                         val candidate = ServerConfig(
-                            ServerConfig.normalizeUrl(url),
-                            password,
-                            ServerConfig.normalizeAsrUrl(asrUrl),
-                            ServerConfig.normalizeTtsUrl(ttsUrl),
-                            ttsModel.trim(),
-                            ttsVoice.trim(),
+                            baseUrl = ServerConfig.normalizeUrl(url),
+                            password = password,
+                            asrUrl = ServerConfig.normalizeAsrUrl(asrUrl),
+                            ttsUrl = ServerConfig.normalizeTtsUrl(ttsUrl),
+                            ttsModel = ttsModel.trim(),
+                            ttsVoice = ttsVoice.trim(),
+                            ttsPreProcess = ttsPreProcess,
                         )
                         val previous = app.api.config
                         app.api.config = candidate

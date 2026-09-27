@@ -1,6 +1,7 @@
 package app.pimobile.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,6 +22,12 @@ data class ServerConfig(
     val ttsModel: String = DEFAULT_TTS_MODEL,
     /** TTS voice id sent in the request; blank lets the server pick its default. */
     val ttsVoice: String = DEFAULT_TTS_VOICE,
+    /**
+     * When true, sends `pre_process_prompt: true` so the server rewrites the
+     * text with its LLM before synthesis. Ignored by servers that don't
+     * support it; omnivoice applies it only when started with LLM credentials.
+     */
+    val ttsPreProcess: Boolean = false,
 ) {
     val isConfigured: Boolean get() = baseUrl.isNotBlank()
 
@@ -65,6 +72,7 @@ class SettingsStore(private val context: Context) {
     private val ttsUrlKey = stringPreferencesKey("tts_url")
     private val ttsModelKey = stringPreferencesKey("tts_model")
     private val ttsVoiceKey = stringPreferencesKey("tts_voice")
+    private val ttsPreProcessKey = booleanPreferencesKey("tts_pre_process")
     private val ttsSpeedKey = stringPreferencesKey("tts_speed")
     private val lastCwdKey = stringPreferencesKey("last_cwd")
     private val assistCwdKey = stringPreferencesKey("assist_cwd")
@@ -78,6 +86,7 @@ class SettingsStore(private val context: Context) {
             ttsUrl = it[ttsUrlKey] ?: ServerConfig.DEFAULT_TTS_URL,
             ttsModel = it[ttsModelKey] ?: ServerConfig.DEFAULT_TTS_MODEL,
             ttsVoice = it[ttsVoiceKey] ?: ServerConfig.DEFAULT_TTS_VOICE,
+            ttsPreProcess = it[ttsPreProcessKey] ?: false,
         )
     }
 
@@ -107,6 +116,7 @@ class SettingsStore(private val context: Context) {
             it[ttsUrlKey] = config.ttsUrl
             it[ttsModelKey] = config.ttsModel
             it[ttsVoiceKey] = config.ttsVoice
+            it[ttsPreProcessKey] = config.ttsPreProcess
         }
     }
 
