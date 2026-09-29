@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pimobile.data.Block
@@ -66,6 +67,7 @@ import app.pimobile.ui.markdown.CodeBlock
 import app.pimobile.ui.markdown.Markdown
 import app.pimobile.ui.markdown.StreamingMarkdown
 import app.pimobile.ui.theme.GeistMono
+import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.ShimmerText
@@ -112,7 +114,7 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
                 SkillCommand(item.key, command, item.text)
             } else if (item.text.isNotBlank() || item.images.isEmpty()) {
                 SelectionContainer {
-                    Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
+                    Text(item.text, style = chatBody(), color = t.text)
                 }
             }
         }
@@ -243,7 +245,10 @@ private fun SkillCommand(key: String, command: String, expansion: String) {
         ) {
             Text(
                 name,
-                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = GeistMono, fontSize = 15.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = GeistMono,
+                    fontSize = 15.sp * LocalChatFontScale.current,
+                ),
                 color = t.accent,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -258,7 +263,7 @@ private fun SkillCommand(key: String, command: String, expansion: String) {
         }
         if (args.isNotEmpty()) {
             SelectionContainer {
-                Text(args, style = MaterialTheme.typography.bodyLarge, color = t.text)
+                Text(args, style = chatBody(), color = t.text)
             }
         }
     }
@@ -390,7 +395,7 @@ private fun TurnWrittenFiles(files: List<String>, onOpen: (String) -> Unit) {
             ) {
                 Icon(PiIcons.FileText, contentDescription = null, tint = t.textSecondary, modifier = Modifier.size(12.dp))
                 Spacer(Modifier.width(5.dp))
-                Text(FilePaths.name(path), style = MonoSmall.copy(fontSize = 12.sp), color = t.text, maxLines = 1)
+                Text(FilePaths.name(path), style = monoSmall(12.sp), color = t.text, maxLines = 1)
             }
         }
     }
@@ -454,7 +459,9 @@ private fun ThinkingBlock(text: String, needsLoad: Boolean, streaming: Boolean, 
                 )
                 Text(
                     shown,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = MaterialTheme.typography.bodyMedium.fontSize * LocalChatFontScale.current,
+                    ),
                     color = t.textSecondary,
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
@@ -494,6 +501,22 @@ internal fun lastLines(text: String, count: Int): String {
 
 private val MonoSmall = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 18.sp)
 private val MonoOutput = TextStyle(fontFamily = GeistMono, fontSize = 12.5.sp, lineHeight = 19.sp)
+
+/**
+ * Styles scaled by the chat font setting: message text, tool names, paths and output follow
+ * it; the labelSmall chrome (timestamps, durations) stays fixed.
+ */
+@Composable
+private fun monoSmall(size: TextUnit = MonoSmall.fontSize): TextStyle =
+    MonoSmall.copy(fontSize = size * LocalChatFontScale.current)
+
+@Composable
+private fun monoOutput(): TextStyle = MonoOutput.copy(fontSize = MonoOutput.fontSize * LocalChatFontScale.current)
+
+@Composable
+private fun chatBody(): TextStyle = MaterialTheme.typography.bodyLarge.copy(
+    fontSize = MaterialTheme.typography.bodyLarge.fontSize * LocalChatFontScale.current,
+)
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -572,7 +595,7 @@ private fun ToolCard(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            Text(call.name.ifBlank { "tool" }, style = MonoSmall.copy(fontWeight = FontWeight.Medium), color = t.text)
+            Text(call.name.ifBlank { "tool" }, style = monoSmall().copy(fontWeight = FontWeight.Medium), color = t.text)
             Spacer(Modifier.width(8.dp))
             val summary = if (generatingInput) "Generating input…" else toolSummaryLine(call.name, call.input)
             val filePath = remember(call.name, call.input, cwd) {
@@ -583,7 +606,7 @@ private fun ToolCard(
                     // The path opens the file; the rest of the header still toggles the card. Edits open on their diff.
                     Text(
                         summary,
-                        style = MonoSmall.copy(textDecoration = TextDecoration.Underline),
+                        style = monoSmall().copy(textDecoration = TextDecoration.Underline),
                         color = t.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -592,14 +615,14 @@ private fun ToolCard(
                             .clickable { onOpenFile(filePath, isEdit) },
                     )
                 } else {
-                    Text(summary, style = MonoSmall, color = t.textTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(summary, style = monoSmall(), color = t.textTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             resultDiff?.let { files ->
                 Spacer(Modifier.width(8.dp))
-                Text("+${files.sumOf { it.added }}", style = MonoSmall.copy(fontSize = 12.sp), color = t.success)
+                Text("+${files.sumOf { it.added }}", style = monoSmall(12.sp), color = t.success)
                 Spacer(Modifier.width(4.dp))
-                Text("-${files.sumOf { it.removed }}", style = MonoSmall.copy(fontSize = 12.sp), color = t.danger)
+                Text("-${files.sumOf { it.removed }}", style = monoSmall(12.sp), color = t.danger)
             }
             if (seconds > 0) {
                 Spacer(Modifier.width(8.dp))
@@ -680,7 +703,7 @@ private fun ResultBody(result: ToolResult) {
             val shape = RoundedCornerShape(10.dp)
             Text(
                 clip(text),
-                style = MonoOutput,
+                style = monoOutput(),
                 color = t.danger,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -704,7 +727,7 @@ private fun OutputArea(text: String) {
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Text(text, style = MonoOutput, color = t.textSecondary, softWrap = false)
+        Text(text, style = monoOutput(), color = t.textSecondary, softWrap = false)
     }
 }
 
@@ -723,7 +746,7 @@ private fun ToolInput(call: Block.ToolCall) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(key, style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
                 Spacer(Modifier.width(10.dp))
-                Text(text, style = MonoSmall, color = t.text)
+                Text(text, style = monoSmall(), color = t.text)
             }
         } else {
             Text(key, style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
@@ -750,11 +773,11 @@ fun BashCard(item: ChatItem.Bash) {
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("$", style = MonoSmall, color = t.textTertiary)
+            Text("$", style = monoSmall(), color = t.textTertiary)
             Spacer(Modifier.width(10.dp))
             Text(
                 item.command,
-                style = MonoSmall,
+                style = monoSmall(),
                 color = t.text,
                 maxLines = if (expanded) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,

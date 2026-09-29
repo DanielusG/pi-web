@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -48,6 +50,7 @@ import app.pimobile.ui.sessions.SessionsScreen
 import app.pimobile.ui.sessions.SessionsViewModel
 import app.pimobile.ui.settings.ServerOutdatedScreen
 import app.pimobile.ui.settings.SettingsScreen
+import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.PiTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -256,33 +259,36 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                     carriedNotice = null
                 }
                 val insert by entry.savedStateHandle.getStateFlow<String?>(INSERT_KEY, null).collectAsState()
-                ChatScreen(
-                    vm,
-                    tts = app.tts,
-                    onBack = { nav.popBackStack() },
-                    onOpenSession = { target ->
-                        // Replace this chat (web: /clone switches the active session).
-                        carriedNotice = target.notice
-                        nav.navigate(chatRoute(target.sessionId, target.cwd)) {
-                            popUpTo(entry.destination.id) { inclusive = true }
-                        }
-                    },
-                    onOpenSubagent = { subagentId ->
-                        // Push, not replace: the back button returns to this session.
-                        nav.navigate(chatRoute(subagentId, vm.state.value.cwd.ifEmpty { cwd }))
-                    },
-                    onOpenFiles = {
-                        val chat = vm.state.value
-                        nav.navigate(filesRoute(chat.cwd.ifEmpty { cwd }, chat.sessionId, mention = true))
-                    },
-                    onOpenFile = { path, diff ->
-                        val chat = vm.state.value
-                        nav.navigate(fileRoute(path, chat.cwd.ifEmpty { cwd }, chat.sessionId, diff, mention = true))
-                    },
-                    pendingInsert = insert,
-                    onInsertConsumed = { entry.savedStateHandle[INSERT_KEY] = null },
-                    autoFocusComposer = focus,
-                )
+                val chatFontScale by app.settings.chatFontScale.collectAsStateWithLifecycle(initialValue = 1f)
+                CompositionLocalProvider(LocalChatFontScale provides chatFontScale) {
+                    ChatScreen(
+                        vm,
+                        tts = app.tts,
+                        onBack = { nav.popBackStack() },
+                        onOpenSession = { target ->
+                            // Replace this chat (web: /clone switches the active session).
+                            carriedNotice = target.notice
+                            nav.navigate(chatRoute(target.sessionId, target.cwd)) {
+                                popUpTo(entry.destination.id) { inclusive = true }
+                            }
+                        },
+                        onOpenSubagent = { subagentId ->
+                            // Push, not replace: the back button returns to this session.
+                            nav.navigate(chatRoute(subagentId, vm.state.value.cwd.ifEmpty { cwd }))
+                        },
+                        onOpenFiles = {
+                            val chat = vm.state.value
+                            nav.navigate(filesRoute(chat.cwd.ifEmpty { cwd }, chat.sessionId, mention = true))
+                        },
+                        onOpenFile = { path, diff ->
+                            val chat = vm.state.value
+                            nav.navigate(fileRoute(path, chat.cwd.ifEmpty { cwd }, chat.sessionId, diff, mention = true))
+                        },
+                        pendingInsert = insert,
+                        onInsertConsumed = { entry.savedStateHandle[INSERT_KEY] = null },
+                        autoFocusComposer = focus,
+                    )
+                }
             }
             // Back to the chat below, with the mention for its composer.
             val mentionInChat: (String) -> Unit = { text ->

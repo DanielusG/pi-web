@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.pimobile.data.FilePaths
 import app.pimobile.ui.theme.GeistMono
+import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import com.hrm.latex.renderer.Latex
@@ -221,7 +222,8 @@ private fun MarkdownDocument(
 ) {
     val t = Pi.tokens
     val typography = MaterialTheme.typography
-    val body = typography.bodyLarge.copy(color = t.text)
+    val fontScale = LocalChatFontScale.current
+    val body = typography.bodyLarge.copy(color = t.text, fontSize = typography.bodyLarge.fontSize * fontScale)
 
     // Parsed synchronously: the library's async parse leaves the item empty for a frame (the chat
     // list jumps) and would flash on every streamed chunk.
@@ -235,7 +237,7 @@ private fun MarkdownDocument(
         LatexConfig(fontSize = body.fontSize, theme = LatexTheme.light(color = t.text))
     }
     val displayMath = remember(inlineMath) { inlineMath.copy(fontSize = body.fontSize * 1.15f) }
-    val cellMath = remember(inlineMath, typography) { inlineMath.copy(fontSize = typography.bodyMedium.fontSize) }
+    val cellMath = remember(inlineMath, typography, fontScale) { inlineMath.copy(fontSize = typography.bodyMedium.fontSize * fontScale) }
     val measurer = rememberLatexMeasurer(inlineMath)
 
     val currentOpenFile by rememberUpdatedState(onOpenFile)
@@ -259,7 +261,7 @@ private fun MarkdownDocument(
             tableBackground = t.code,
         )
     }
-    val markdownTypography = remember(t, typography, headings) {
+    val markdownTypography = remember(t, typography, headings, fontScale) {
         fun heading(scale: Float) = body.copy(fontSize = body.fontSize * scale, lineHeight = 1.35.em, fontWeight = FontWeight.SemiBold)
         val minor = heading(1f)
         val marker = body.copy(color = t.textTertiary)
@@ -271,7 +273,7 @@ private fun MarkdownDocument(
             h5 = minor,
             h6 = minor,
             text = body,
-            code = CodeTextStyle.copy(color = t.text),
+            code = CodeTextStyle.copy(color = t.text, fontSize = CodeTextStyle.fontSize * fontScale),
             inlineCode = TextStyle(fontFamily = GeistMono, fontSize = InlineCodeSize),
             quote = body.copy(color = t.textSecondary),
             paragraph = body,
@@ -279,7 +281,7 @@ private fun MarkdownDocument(
             bullet = marker,
             list = body,
             textLink = TextLinkStyles(SpanStyle(color = t.accent, textDecoration = TextDecoration.Underline)),
-            table = typography.bodyMedium.copy(color = t.text),
+            table = typography.bodyMedium.copy(color = t.text, fontSize = typography.bodyMedium.fontSize * fontScale),
         )
     }
     val inline = remember(markdownTypography, colors) {
@@ -652,7 +654,10 @@ fun CodeBlock(lang: String, code: String, modifier: Modifier = Modifier, header:
         }
         Text(
             code,
-            style = CodeTextStyle.copy(color = t.text),
+            style = CodeTextStyle.copy(
+                color = t.text,
+                fontSize = CodeTextStyle.fontSize * LocalChatFontScale.current,
+            ),
             softWrap = false,
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())

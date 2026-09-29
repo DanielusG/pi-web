@@ -137,6 +137,7 @@ import app.pimobile.ui.relativeTime
 import app.pimobile.ui.shortPath
 import app.pimobile.ui.theme.Geist
 import app.pimobile.ui.theme.GeistMono
+import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.PiPrimaryButton
@@ -1440,7 +1441,7 @@ private fun Composer(
                     .focusRequester(focusRequester)
                     .onFocusChanged { focused = it.isFocused }
                     .onPreviewKeyEvent(onKey),
-                textStyle = typography.bodyLarge.copy(color = t.text),
+                textStyle = typography.bodyLarge.copy(color = t.text, fontSize = typography.bodyLarge.fontSize * LocalChatFontScale.current),
                 cursorBrush = SolidColor(t.text),
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -1449,7 +1450,7 @@ private fun Composer(
                         if (draft.text.isEmpty()) {
                             Text(
                                 if (state.running) "Steer the agent…" else "Ask pi anything…",
-                                style = typography.bodyLarge,
+                                style = typography.bodyLarge.copy(fontSize = typography.bodyLarge.fontSize * LocalChatFontScale.current),
                                 color = t.textTertiary,
                             )
                         }
@@ -1706,7 +1707,10 @@ private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (Mod
                         Column(Modifier.weight(1f)) {
                             Text(
                                 option.name,
-                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * LocalChatFontScale.current,
+                                ),
                                 color = t.text
                             )
                             Text(
@@ -1848,7 +1852,10 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             title,
-                            style = typography.bodyLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                            style = typography.bodyLarge.copy(
+                                fontSize = 14.sp * LocalChatFontScale.current,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
                             color = t.text,
                             modifier = Modifier
                                 .heightIn(max = maxTitleHeight)
@@ -1931,7 +1938,11 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                             minLines = 6,
                             shape = RoundedCornerShape(9.dp),
                             colors = piTextFieldColors(),
-                            textStyle = typography.bodyMedium.copy(fontFamily = GeistMono, color = t.text),
+                            textStyle = typography.bodyMedium.copy(
+                                fontFamily = GeistMono,
+                                color = t.text,
+                                fontSize = typography.bodyMedium.fontSize * LocalChatFontScale.current,
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .focusRequester(focusRequester),

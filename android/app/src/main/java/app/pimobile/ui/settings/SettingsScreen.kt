@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,9 +44,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pimobile.PiApp
 import app.pimobile.data.ServerConfig
+import app.pimobile.data.SettingsStore
 import app.pimobile.data.asObj
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
@@ -52,6 +57,7 @@ import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.PiPrimaryButton
 import app.pimobile.ui.theme.piTextFieldColors
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnected: () -> Unit) {
@@ -68,6 +74,19 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
     var showPassword by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val fontScale by app.settings.chatFontScale.collectAsStateWithLifecycle(initialValue = 1f)
+    // Taps can outrun the DataStore write: step from the last requested value until the flow confirms it.
+    var pendingFontScale by remember { mutableStateOf<Float?>(null) }
+    val shownFontScale = pendingFontScale ?: fontScale
+    LaunchedEffect(fontScale) {
+        if (pendingFontScale == fontScale) pendingFontScale = null
+    }
+
+    fun stepChatFont(direction: Int) {
+        val next = ((shownFontScale + direction * SettingsStore.CHAT_FONT_SCALE_STEP) * 10).roundToInt() / 10f
+        pendingFontScale = next
+        scope.launch { app.settings.saveChatFontScale(next) }
+    }
 
     Scaffold(
         containerColor = t.background,
@@ -259,6 +278,32 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                     Icon(PiIcons.Alert, null, tint = t.danger, modifier = Modifier.padding(top = 2.dp).size(16.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = t.text)
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            FieldLabel("Chat font size")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                TextButton(
+                    onClick = { stepChatFont(-1) },
+                    enabled = shownFontScale > SettingsStore.MIN_CHAT_FONT_SCALE + 0.001f,
+                ) {
+                    Text("A−", style = MaterialTheme.typography.bodyMedium, color = t.text)
+                }
+                Text(
+                    "${(shownFontScale * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.text,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(
+                    onClick = { stepChatFont(1) },
+                    enabled = shownFontScale < SettingsStore.MAX_CHAT_FONT_SCALE - 0.001f,
+                ) {
+                    Text("A+", style = MaterialTheme.typography.bodyMedium, color = t.text)
                 }
             }
             // The project list comes from the saved server, so only once one is set.

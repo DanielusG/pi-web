@@ -3,6 +3,7 @@ package app.pimobile.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -76,6 +77,7 @@ class SettingsStore(private val context: Context) {
     private val ttsSpeedKey = stringPreferencesKey("tts_speed")
     private val lastCwdKey = stringPreferencesKey("last_cwd")
     private val assistCwdKey = stringPreferencesKey("assist_cwd")
+    private val chatFontScaleKey = floatPreferencesKey("chat_font_scale")
 
     val config: Flow<ServerConfig> = context.serverStore.data.map {
         // A missing key means "use the default"; an explicitly saved empty string disables the feature.
@@ -106,6 +108,19 @@ class SettingsStore(private val context: Context) {
 
     suspend fun saveTtsSpeed(speed: Float) {
         context.chatStore.edit { it[ttsSpeedKey] = speed.toString() }
+    }
+
+    /** Chat font size as a multiple of the base sizes; missing key falls back to 1.0. */
+    val chatFontScale: Flow<Float> = context.chatStore.data.map { it[chatFontScaleKey] ?: 1f }
+
+    suspend fun saveChatFontScale(scale: Float) {
+        context.chatStore.edit { it[chatFontScaleKey] = scale.coerceIn(MIN_CHAT_FONT_SCALE, MAX_CHAT_FONT_SCALE) }
+    }
+
+    companion object {
+        const val MIN_CHAT_FONT_SCALE = 0.5f
+        const val MAX_CHAT_FONT_SCALE = 1.5f
+        const val CHAT_FONT_SCALE_STEP = 0.1f
     }
 
     suspend fun save(config: ServerConfig) {

@@ -87,6 +87,13 @@ val DarkTokens = PiTokens(
 
 val LocalPiTokens = staticCompositionLocalOf { LightTokens }
 
+/**
+ * Chat text size, as a multiple of the base sizes (Settings → "Chat font size").
+ * Provided around the chat screen only; surfaces outside it read the 1f default
+ * and are unaffected.
+ */
+val LocalChatFontScale = staticCompositionLocalOf { 1f }
+
 object Pi {
     val tokens: PiTokens
         @Composable @ReadOnlyComposable get() = LocalPiTokens.current
