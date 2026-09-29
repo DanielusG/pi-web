@@ -340,6 +340,16 @@ fun ChatScreen(
     // Edit from here rewinds the session, so a confirmation guards it.
     var editRequest by remember { mutableStateOf<EditRequest?>(null) }
     val canNavigate = !state.running && !state.commandPending
+    // While the extension dialog is open, the message that opened it (ending in a tool call) has no
+    // footer, so the composer is blocked and its text can't be TTS'd. Target the last assistant
+    // message with text for a slim Listen-only footer.
+    val dialogListenKey = remember(state.items, state.dialog) {
+        if (state.dialog == null) null
+        else state.items.asReversed().firstOrNull {
+            it is ChatItem.Assistant && !it.streaming &&
+                it.blocks.any { block -> block is Block.Text && block.text.isNotBlank() }
+        }?.key
+    }
     var selectedToolId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(canNavigate) { if (!canNavigate) selectedToolId = null }
     var showTree by remember { mutableStateOf(false) }
@@ -585,6 +595,7 @@ fun ChatScreen(
                             { key, text -> tts.play(key, text, state.title) }
                         } else null,
                         ttsLoadingKey = (ttsState as? TtsUiState.Loading)?.key,
+                        dialogListenKey = dialogListenKey,
                     )
 
                     is ChatItem.Bash -> BashCard(item)

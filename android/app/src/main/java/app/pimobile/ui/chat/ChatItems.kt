@@ -296,6 +296,8 @@ fun AssistantMessage(
     onListen: ((key: String, text: String) -> Unit)? = null,
     /** The message key currently being synthesized (spinner in its footer). */
     ttsLoadingKey: String? = null,
+    /** While the extension dialog is open: the key of the last assistant message that gets a slim Listen-only footer. */
+    dialogListenKey: String? = null,
 ) {
     val t = Pi.tokens
     val openLink: ((String) -> Unit)? = onOpenFile?.let { open -> { path: String -> open(path, false) } }
@@ -362,14 +364,27 @@ fun AssistantMessage(
         }
         val error = item.errorMessage
         if (item.stopReason == "error" && !error.isNullOrBlank()) ErrorNote(error)
+        val listenText = item.blocks.filterIsInstance<Block.Text>().joinToString("\n\n") { it.text.trim() }.trim()
         // The agent loop ended here. Native-only: the web shows the footer on user bubbles alone.
         if (!item.streaming && item.stopReason != "toolUse") {
-            val listenText = item.blocks.filterIsInstance<Block.Text>().joinToString("\n\n") { it.text.trim() }.trim()
             MessageFooter(
                 copyText = listenText,
                 timestamp = item.timestamp,
                 onEditFromHere = item.entryId?.let { id -> onEditFromHere?.let { edit -> { edit(id) } } },
                 onListen = if (listenText.isNotBlank()) onListen?.let { cb -> { cb(item.key, listenText) } } else null,
+                listenLoading = ttsLoadingKey == item.key,
+                modifier = Modifier.offset(x = (-8).dp),
+            )
+        }
+        // The dialog blocks the composer, and the message that opened it ends in a tool call, so it
+        // never gets the footer above: while the dialog is open, give its text a slim Listen-only
+        // footer so the answer can be heard before answering.
+        if (item.key == dialogListenKey && item.stopReason == "toolUse" && onListen != null && listenText.isNotBlank()) {
+            MessageFooter(
+                copyText = "",
+                timestamp = null,
+                onEditFromHere = null,
+                onListen = { onListen(item.key, listenText) },
                 listenLoading = ttsLoadingKey == item.key,
                 modifier = Modifier.offset(x = (-8).dp),
             )
