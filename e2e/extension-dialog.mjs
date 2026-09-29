@@ -64,7 +64,7 @@ export async function checkExtensionDialogs(page, artifacts, width) {
       if (mode === "input" || mode === "editor") {
         await dialog.getByRole("textbox").fill("Preserved draft");
         await dialog.getByRole("button", { name: "Collapse", exact: true }).click();
-        await page.getByRole("button", { name: new RegExp(`Awaiting response.*E2E ${mode}`) }).click();
+        await page.getByRole("button", { name: "Expand", exact: true }).click();
         assert.equal(await dialog.getByRole("textbox").inputValue(), "Preserved draft");
       }
       if (mode === "input" || mode === "editor") await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
@@ -86,7 +86,9 @@ export async function checkExtensionDialogs(page, artifacts, width) {
     }, initialCountdown);
     const before = commands.length;
     await timed.getByRole("button", { name: "Collapse", exact: true }).click();
-    await page.getByRole("button", { name: /Awaiting response.*E2E timeout.*expires in/ }).waitFor();
+    const pill = page.getByRole("button", { name: "Expand", exact: true });
+    await pill.waitFor();
+    await pill.getByText(/expires in \d+s/).waitFor();
     const afterTimeout = page.getByRole("dialog", { name: "E2E after timeout", exact: true });
     await afterTimeout.waitFor();
     assert.equal(commands.slice(before).some(command => command.type === "extension_ui_response"), false, "Only the server closes expired requests");
