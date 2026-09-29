@@ -161,6 +161,7 @@ export async function computeFileContextUsage(
         if (
           assistant.stopReason !== "aborted" &&
           assistant.stopReason !== "error" &&
+          assistant.usage &&
           calculateContextTokens(assistant.usage as never) > 0
         ) {
           hasPostCompactionUsage = true;
