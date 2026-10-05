@@ -232,7 +232,9 @@ private fun AssistProjectSheet(
                 OutlinedTextField(
                     value = path,
                     onValueChange = { path = it; vm.clearError() },
-                    placeholder = { Text("Other directory, e.g. ~/projects/app") },
+                    // M3 lets a placeholder wrap even in a singleLine field: short and at the
+                    // input's size keeps the field one line tall.
+                    placeholder = { Text("Other directory", style = MaterialTheme.typography.bodyMedium) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     colors = piTextFieldColors(),

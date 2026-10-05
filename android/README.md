@@ -30,8 +30,9 @@ It has **not yet been tested against a real pi-web with a real model.**
   long-press on a session for rename/delete
   (bottom sheet: pre-filled rename field with the web's no-op check, delete with
   inline confirmation).
-- **New session:** pick a recent working directory or type a path (validated by the
-  server). The session is created on the first message.
+- **New session:** pick any project of the session list — all of them come back from the paged
+  `GET /api/sessions?perProject=`, newest activity first, with the session count — filtered by name
+  or path; or type a path (validated by the server). The session is created on the first message.
 - **System assistant trigger:** the app declares `android.intent.action.ASSIST`, so on
   devices where the user can choose the default assistant (Settings > Apps > Default
   apps > Assistant app) Pi Mobile can be picked. The system triggers — swipe up from

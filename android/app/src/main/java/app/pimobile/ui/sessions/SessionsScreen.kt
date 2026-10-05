@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
@@ -203,7 +205,8 @@ fun SessionsScreen(
 
     if (showNew) {
         NewSessionSheet(
-            recentCwds = state.recentCwds,
+            projects = state.groups,
+            loading = state.loading,
             onDismiss = { showNew = false },
             validate = vm::validateCwd,
             onStart = { cwd ->
@@ -560,9 +563,15 @@ private fun ErrorState(title: String, message: String, onRetry: () -> Unit, onSe
     }
 }
 
+/**
+ * Every project of the paged session list as a pickable directory: `GET /api/sessions?perProject=`
+ * sends all project groups, newest activity first, so the list is complete and the filter is what
+ * makes it usable to scroll. A directory outside the list is typed and validated by `/api/cwd/validate`.
+ */
 @Composable
 private fun NewSessionSheet(
-    recentCwds: List<String>,
+    projects: List<ProjectGroup>,
+    loading: Boolean,
     onDismiss: () -> Unit,
     validate: suspend (String) -> String?,
     onStart: (String) -> Unit,
@@ -570,10 +579,24 @@ private fun NewSessionSheet(
     val t = Pi.tokens
     val scope = rememberCoroutineScope()
     var path by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
+    // The server's whole project list arrives in one response; the filter narrows it in the app.
+    val matches = remember(query, projects) {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) projects
+        else projects.filter {
+            baseName(it.root).lowercase().contains(needle) ||
+                it.root.lowercase().contains(needle) ||
+                shortPath(it.root).lowercase().contains(needle)
+        }
+    }
     var busy by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        // Fully expanded, so the weighted list gets the height it asks for and the typed-path row
+        // stays above the keyboard instead of being pushed off screen.
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = t.background,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = {
@@ -586,12 +609,12 @@ private fun NewSessionSheet(
             )
         },
     ) {
+        // Header, filter and the typed path stay put; only the project rows scroll.
         Column(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding()
-                .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
         ) {
             Text("New session", style = MaterialTheme.typography.titleLarge, color = t.text)
@@ -599,44 +622,105 @@ private fun NewSessionSheet(
                 "Pick the working directory on the server",
                 style = MaterialTheme.typography.bodyMedium,
                 color = t.textSecondary,
-                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
             )
-            if (recentCwds.isNotEmpty()) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(GroupShape)
-                        .border(1.dp, t.border, GroupShape),
-                ) {
-                    recentCwds.forEachIndexed { index, cwd ->
-                        if (index > 0) HorizontalDivider(color = t.border)
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { onStart(cwd) }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(PiIcons.Folder, null, tint = t.textTertiary, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text(baseName(cwd), style = MaterialTheme.typography.labelLarge, color = t.text)
-                                Text(
-                                    shortPath(cwd),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontWeight = FontWeight.Normal),
-                                    color = t.textTertiary,
-                                )
+            // M3 lets a placeholder wrap even in a singleLine field, so it stays short and at the
+            // input's own size: a long one makes the field two lines tall.
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Filter projects", style = MaterialTheme.typography.bodyMedium) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = piTextFieldColors(),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                leadingIcon = { Icon(PiIcons.Search, null, tint = t.textTertiary, modifier = Modifier.size(18.dp)) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(PiIcons.Close, contentDescription = "Clear", tint = t.textTertiary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            // The space left between the filter and the typed path: the list fills it when there are
+            // many matches and hugs its rows when there are few, so the box never grows empty.
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                if (matches.isNotEmpty()) {
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .clip(GroupShape)
+                            .border(1.dp, t.border, GroupShape),
+                    ) {
+                        itemsIndexed(matches, key = { _, group -> group.key }) { index, group ->
+                            if (index > 0) HorizontalDivider(color = t.border)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onStart(group.root) }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(PiIcons.Folder, null, tint = t.textTertiary, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        baseName(group.root).ifEmpty { "Unknown project" },
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = t.text,
+                                    )
+                                    Text(
+                                        shortPath(group.root),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontWeight = FontWeight.Normal),
+                                        color = t.textTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text("${group.total}", style = MaterialTheme.typography.labelSmall, color = t.textTertiary)
                             }
                         }
                     }
+                } else {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(GroupShape)
+                            .border(1.dp, t.border, GroupShape)
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        when {
+                            loading && query.isBlank() -> {
+                                CircularProgressIndicator(strokeWidth = 2.dp, color = t.textTertiary, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Text("Loading projects…", style = MaterialTheme.typography.bodyMedium, color = t.textSecondary)
+                            }
+                            query.isNotBlank() -> Text(
+                                "No project matches “$query”",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = t.textSecondary,
+                            )
+                            else -> Text(
+                                "No project yet — type a directory below",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = t.textSecondary,
+                            )
+                        }
+                    }
                 }
-                Spacer(Modifier.height(16.dp))
             }
+            Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = path,
                     onValueChange = { path = it },
-                    placeholder = { Text("Other directory, e.g. ~/projects/app") },
+                    placeholder = { Text("Other directory", style = MaterialTheme.typography.bodyMedium) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     colors = piTextFieldColors(),

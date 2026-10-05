@@ -54,7 +54,6 @@ data class SessionsUiState(
     val olderOpen: Boolean = false,
     /** Projects whose next page is being fetched. */
     val loadingMore: Set<String> = emptySet(),
-    val recentCwds: List<String> = emptyList(),
     val error: String? = null,
     /** The server answered with the full list: it predates the paged one this app needs. */
     val outdated: Boolean = false,
@@ -160,7 +159,6 @@ class SessionsViewModel(
                     shown = groups.mapNotNull { group ->
                         shown[group.key]?.let { group.key to minOf(it, group.sessions.size) }
                     }.toMap(),
-                    recentCwds = body.arr("recentCwds").strings(),
                     running = body.arr("runningSessionIds").strings().toSet(),
                     error = null,
                     outdated = false,

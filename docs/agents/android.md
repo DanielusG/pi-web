@@ -24,11 +24,25 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
   The tail is applied inside upstream's `toClientToolExecutionEvent()` after the nested-call drop,
   the codemode cap and the coalescing, so upstream's slimming rules and the tail compose.
 
+## Material 3 in this app (`compose-bom 2025.10.01`)
+- `OutlinedTextField(singleLine = true)` constrains the typed value only: a long placeholder still
+  wraps and makes the field two lines tall. Keep placeholders short and give the placeholder `Text`
+  its style — this version has no `placeholderTextStyle` argument.
+- `ModalBottomSheet` has no `skipPartiallyExpanded` argument: pass
+  `sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)`. A sheet whose footer
+  must stay above the keyboard needs the list weighted (`weight(1f, fill = false)` so it shrinks to
+  its rows when few match), not a fixed `heightIn` — a fixed height gets clipped once the keyboard
+  takes its space.
+
 ## Session list paging (`lib/session-list-page.ts`)
 A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
 - `GET /api/sessions?perProject=N` answers with `projects` (key, root, total, most recent activity,
   and a window of N top-level sessions each; subagent runs are left out) plus `recentCwds`, instead
   of `sessions`. `project=<key>&offset=K` pages one project.
+- Every project comes back in one response, only the session windows are cut — so the app's
+  new-session sheet lists `projects` roots with its own filter (`SessionsScreen.kt`) and needs no
+  extra request. `recentCwds` is capped at 12 distinct session cwds and is what installs before the
+  full-project sheet picked from: keep emitting it while such an APK is still in use.
 - `recentHours=H` stops each first window at the sessions active in the last H hours (server clock)
   and adds their count as `recent`, which the app shows by default. Projects with `recent: 0` still
   come back, with an empty window, and the app folds them under "Older projects".
