@@ -219,6 +219,17 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 
 ---
 
+## Pending cleanups
+
+- **`recentCwds` is deprecated** (`lib/session-list-page.ts`, the 12 distinct session cwds in the
+  `perProject` response). The Android new-session sheet builds its list from `projects` roots now, so
+  only installs predating that sheet read the field: keep emitting it while such an APK is in use,
+  then drop it from `pageSessionsByProject` and `app/api/sessions/route.ts`.
+- **A refused path shows nothing in the Android new-session sheet**: `SessionsViewModel.validateCwd`
+  puts the reason in `state.error` and `NewSessionSheet` never reads it (`AssistProjectSheet` does).
+
+---
+
 ## Old Safari (iOS 16.2)
 
 - `/` renders entirely on the client, so one script chunk the browser cannot parse is a blank page. Next 16 targets Safari 16.4+; the `browserslist` in `package.json` lowers Safari and iOS to 16.2 so SWC turns class `static {}` blocks into private static fields. That covers Next's client runtime; other node_modules keep their syntax unless listed in `transpilePackages` (mermaid and `@mermaid-js/parser` are, for their lazy diagram chunks). Keep the other browserslist entries at Next's defaults.
