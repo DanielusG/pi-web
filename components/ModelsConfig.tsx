@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useId, useRef } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
@@ -17,6 +17,7 @@ import {
   setCompatBool,
   trackAddedModels,
   collectModelRenames,
+  renameProviderEntry,
   updateHeaderRow,
   type HeaderRow,
   type ModelCostDraft,
@@ -44,11 +45,13 @@ import {
 import {
   EnabledModelsBanner,
   EnabledModelsProviderSwitch,
+  EnabledModelsProviderSwitchNote,
   EnabledModelsSection,
   useEnabledModels,
   type EnabledModelsController,
 } from "./EnabledModelsSection";
 import { providerBadgeLabel } from "./enabled-models-helpers";
+import { OAuthPastePanel } from "./OAuthPastePanel";
 import { ProviderIcon } from "./ProviderIcon";
 import { ProviderUsageSummary } from "./ProviderUsageSummary";
 
@@ -181,7 +184,7 @@ const inputStyle = {
   padding: "6px 9px",
   background: "var(--bg-panel)",
   border: "1px solid var(--border)",
-  borderRadius: 7,
+  borderRadius: 5,
   color: "var(--text)",
   fontSize: 12,
   outline: "none",
@@ -303,19 +306,19 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ── Provider detail ───────────────────────────────────────────────────────────
 
-function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddModels, enabledModels }: {
-  name: string; provider: ProviderEntry;
-  onChange: (p: ProviderEntry) => void; onRename: (n: string) => void; onDelete: () => void;
+function ProviderDetail({ name, editingName, provider, onChange, onEditingNameChange, onRename, onDelete, onAddModels, enabledModels }: {
+  name: string; editingName: string; provider: ProviderEntry;
+  onChange: (p: ProviderEntry) => void; onEditingNameChange: (n: string) => void;
+  onRename: (n: string) => void; onDelete: () => void;
   onAddModels: (models: DiscoveredModel[]) => void; enabledModels: EnabledModelsController;
 }) {
   const { t } = useI18n();
-  const [editingName, setEditingName] = useState(name);
   const [discoveryState, setDiscoveryState] = useState<ModelDiscoveryState>({ phase: "idle" });
   const [discoveryQuery, setDiscoveryQuery] = useState("");
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const discoveryRequestIdRef = useRef(0);
   const selectShownRef = useRef<HTMLInputElement>(null);
-  useEffect(() => setEditingName(name), [name]);
+  const switchNoteId = useId();
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
 
   useEffect(() => {
@@ -331,7 +334,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
   }, [name, provider.baseUrl, provider.api, provider.apiKey]);
 
   const handleDiscoverModels = useCallback(async () => {
-    if (!provider.baseUrl?.trim() || discoveryState.phase === "loading") return;
+    if (discoveryState.phase === "loading") return;
     const requestId = ++discoveryRequestIdRef.current;
     setDiscoveryState({ phase: "loading" });
     setSelectedModelIds([]);
@@ -347,7 +350,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
         setDiscoveryState({ phase: "error", message: data.error ?? `HTTP ${res.status}` });
         return;
       }
-      setDiscoveryState({ phase: "success", models: data.models, endpoint: data.endpoint ?? provider.baseUrl });
+      setDiscoveryState({ phase: "success", models: data.models, endpoint: data.endpoint ?? provider.baseUrl ?? "" });
     } catch (error) {
       if (requestId !== discoveryRequestIdRef.current) return;
       setDiscoveryState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
@@ -398,18 +401,21 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <ConfigDetailHeader>
-        <ConfigDetailHeaderInfo>
-          <SectionTitle>{t("i18n.provider")}</SectionTitle>
-        </ConfigDetailHeaderInfo>
-        <ConfigDetailActions>
-          <EnabledModelsProviderSwitch providerId={name} controller={enabledModels} />
-          <ConfigButton variant="danger" size="small" onClick={onDelete}>{t("i18n.delete")}</ConfigButton>
-        </ConfigDetailActions>
-      </ConfigDetailHeader>
+      <div className="config-detail-heading">
+        <ConfigDetailHeader>
+          <ConfigDetailHeaderInfo>
+            <SectionTitle>{t("i18n.provider")}</SectionTitle>
+          </ConfigDetailHeaderInfo>
+          <ConfigDetailActions>
+            <EnabledModelsProviderSwitch providerId={name} controller={enabledModels} noteId={switchNoteId} />
+            <ConfigButton variant="danger" size="small" onClick={onDelete}>{t("i18n.delete")}</ConfigButton>
+          </ConfigDetailActions>
+        </ConfigDetailHeader>
+        <EnabledModelsProviderSwitchNote providerId={name} controller={enabledModels} id={switchNoteId} />
+      </div>
 
        <Field label={t("i18n.providerName")}>
-        <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
+        <TextInput value={editingName} onChange={onEditingNameChange} placeholder="provider-name" mono />
         {editingName !== name && editingName.trim() && (
           <button onClick={() => onRename(editingName.trim())}
             style={{ marginTop: 4, padding: "3px 10px", background: "var(--accent)", border: "none", borderRadius: 4, color: "var(--accent-contrast)", cursor: "pointer", fontSize: 11, alignSelf: "flex-start" }}>
@@ -421,6 +427,9 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
       <Field label="Base URL">
         <TextInput value={provider.baseUrl ?? ""} onChange={(v) => set("baseUrl", v || undefined)}
           placeholder="https://api.example.com/v1" mono />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          Leave empty for a built-in provider to use the endpoint pi ships
+        </span>
       </Field>
 
       <Field label="API Key">
@@ -449,11 +458,11 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
         {discoveryState.phase !== "success" && (
           <button
             onClick={handleDiscoverModels}
-            disabled={!provider.baseUrl?.trim() || discoveryState.phase === "loading"}
+            disabled={discoveryState.phase === "loading"}
             style={{
-              alignSelf: "flex-start", height: 30, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 7,
-              background: "var(--bg-panel)", color: !provider.baseUrl?.trim() || discoveryState.phase === "loading" ? "var(--text-dim)" : "var(--text-muted)",
-              cursor: !provider.baseUrl?.trim() || discoveryState.phase === "loading" ? "not-allowed" : "pointer", fontSize: 11,
+              alignSelf: "flex-start", height: 30, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 5,
+              background: "var(--bg-panel)", color: discoveryState.phase === "loading" ? "var(--text-dim)" : "var(--text-muted)",
+              cursor: discoveryState.phase === "loading" ? "not-allowed" : "pointer", fontSize: 11,
             }}
           >
             {discoveryState.phase === "loading" ? t("models.discoveryFetching") : t("models.discoveryFetch")}
@@ -461,7 +470,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
         )}
 
         {discoveryState.phase === "error" && (
-          <div style={{ padding: "7px 9px", border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)", borderRadius: 5, color: "var(--danger)", fontSize: 11, lineHeight: 1.4 }}>
+          <div style={{ padding: "7px 9px", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 5, color: "var(--danger)", fontSize: 11, lineHeight: 1.4 }}>
             {discoveryState.message}
           </div>
         )}
@@ -476,7 +485,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
               style={{ ...inputStyle, width: "100%", minWidth: 0 }}
             />
 
-            <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-panel)" }}>
+            <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)" }}>
               <label
                 style={{
                   minHeight: 32, padding: "5px 9px", display: "flex", alignItems: "center", gap: 8,
@@ -623,7 +632,7 @@ function ThinkingLevelMapEditor({
               alignItems: "center",
               gap: 8,
               padding: "5px 4px",
-              borderRadius: 10,
+              borderRadius: 6,
               background: "transparent",
               border: "1px solid transparent",
             }}
@@ -640,7 +649,7 @@ function ThinkingLevelMapEditor({
               </span>
             </div>
 
-            <div style={{ display: "flex", borderRadius: 7, border: "1px solid var(--border)", overflow: "hidden", flexShrink: 0 }}>
+            <div style={{ display: "flex", borderRadius: 5, border: "1px solid var(--border)", overflow: "hidden", flexShrink: 0 }}>
               <button
                 onClick={() => setLevel(level, "omit")}
                 style={{ ...btnBase, ...(state === "omit" ? btnActive : {}) }}
@@ -655,7 +664,7 @@ function ThinkingLevelMapEditor({
               </button>
             </div>
 
-            <div style={{ display: "flex", borderRadius: 7, border: `1px solid ${state === "string" ? "var(--accent)" : "var(--border)"}`, overflow: "hidden", transition: "border-color 0.1s" }}>
+            <div style={{ display: "flex", borderRadius: 5, border: `1px solid ${state === "string" ? "var(--accent)" : "var(--border)"}`, overflow: "hidden", transition: "border-color 0.1s" }}>
               <button
                 onClick={() => setLevel(level, strVal || level)}
                 style={{ ...btnBase, ...(state === "string" ? btnActive : {}), borderRight: "1px solid var(--border)", flexShrink: 0 }}
@@ -742,8 +751,8 @@ function HeaderListEditor({ headers, onChange }: {
   const rowBtnStyle = {
     padding: "6px 9px",
     background: "none",
-    border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)",
-    borderRadius: 5,
+    border: "1px solid rgba(239,68,68,0.3)",
+    borderRadius: 4,
     color: "var(--danger)",
     cursor: "pointer",
     fontSize: 11,
@@ -764,7 +773,7 @@ function HeaderListEditor({ headers, onChange }: {
         ...current,
         { id: nextRowIdRef.current++, name: "", value: "" },
       ])}
-        style={{ padding: "5px 9px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, alignSelf: "flex-start" }}>
+        style={{ padding: "5px 9px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, alignSelf: "flex-start" }}>
         + Add header
       </button>
     </div>
@@ -1047,7 +1056,7 @@ function ModelDetail({
                 height: 28,
                 padding: "0 8px",
                 border: `1px solid ${testState.phase === "error" ? "#fecaca" : testState.phase === "success" ? "#bbf7d0" : "var(--border)"}`,
-                borderRadius: 5,
+                borderRadius: 4,
                 background: testState.phase === "error" ? "#fee2e2" : testState.phase === "success" ? "#dcfce7" : "#e5e7eb",
                 color: "#111827",
                 fontSize: 11,
@@ -1092,7 +1101,7 @@ function ModelDetail({
             onClick={() => void handleCatalogFill()}
             disabled={!model.id.trim() || catalogState.phase === "loading"}
             style={{
-              height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 7,
+              height: 28, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5,
               background: "var(--bg-panel)",
               color: !model.id.trim() || catalogState.phase === "loading" ? "var(--text-dim)" : "var(--text-muted)",
               cursor: !model.id.trim() || catalogState.phase === "loading" ? "not-allowed" : "pointer",
@@ -1431,8 +1440,8 @@ function OAuthDetail({ provider, onRefresh, enabledModels }: {
         </ConfigDetailHeaderInfo>
         <ConfigDetailActions>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.loggedIn ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-            <span style={{ fontSize: 11, color: provider.loggedIn ? "#4ade80" : "var(--text-dim)" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.loggedIn ? "var(--success)" : "var(--border)", display: "inline-block" }} />
+            <span style={{ fontSize: 11, color: provider.loggedIn ? "var(--success)" : "var(--text-dim)" }}>
                {provider.loggedIn ? t("i18n.connected") : t("i18n.notConnected")}
             </span>
           </div>
@@ -1488,7 +1497,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels }: {
                 <button
                   key={option.id}
                   onClick={() => submitSelection(loginState.token, option.id)}
-                  style={{ padding: "6px 9px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 7, color: "var(--text)", cursor: "pointer", fontSize: 12, textAlign: "left" }}
+                  style={{ padding: "6px 9px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", cursor: "pointer", fontSize: 12, textAlign: "left" }}
                 >
                   {option.label}
                 </button>
@@ -1497,46 +1506,33 @@ function OAuthDetail({ provider, onRefresh, enabledModels }: {
           </div>
         )}
         {(loginState.phase === "auth" || loginState.phase === "prompt") && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              {loginState.phase === "auth"
-                ? "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below."
-                : loginState.message}
-            </p>
-            {loginState.phase === "auth" && (
-              <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
+          <OAuthPastePanel
+            message={loginState.phase === "auth"
+              ? "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below."
+              : loginState.message}
+            hint={loginState.phase === "auth" ? (
+              <>
                 If the browser window did not open,{" "}
-                <a href={loginState.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", wordBreak: "break-all" }}>
+                <a href={loginState.url} target="_blank" rel="noopener noreferrer">
                   click here to open the login page
                 </a>
                 .
-              </p>
-            )}
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                ref={inputRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") submitCode(loginState.token, inputValue); }}
-                placeholder={loginState.phase === "auth" ? "http://localhost:1455/auth/callback?code=…" : (loginState.placeholder ?? "Enter value…")}
-                style={{ flex: 1, padding: "6px 9px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 7, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box" }}
-              />
-              <button
-                onClick={() => submitCode(loginState.token, inputValue)}
-                disabled={!inputValue.trim()}
-                style={{ padding: "6px 12px", background: inputValue.trim() ? "var(--accent)" : "var(--bg-panel)", border: "none", borderRadius: 5, color: inputValue.trim() ? "var(--accent-contrast)" : "var(--text-dim)", cursor: inputValue.trim() ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 600, flexShrink: 0 }}
-              >
-                 {t("i18n.submit")}
-              </button>
-            </div>
-          </div>
+              </>
+            ) : undefined}
+            value={inputValue}
+            placeholder={loginState.phase === "auth" ? "http://localhost:1455/auth/callback?code=…" : (loginState.placeholder ?? "Enter value…")}
+            submitLabel={t("i18n.submit")}
+            inputRef={inputRef}
+            onValueChange={setInputValue}
+            onSubmit={() => void submitCode(loginState.token, inputValue)}
+          />
         )}
         {loginState.phase === "device_code" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
               Open the verification page and enter this code:
             </p>
-            <div style={{ padding: "8px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 7, color: "var(--text)", fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: 0 }}>
+            <div style={{ padding: "8px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: 0 }}>
               {loginState.userCode}
             </div>
             <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
@@ -1634,8 +1630,8 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels }: {
         </ConfigDetailHeaderInfo>
         <ConfigDetailActions>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-            <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "var(--success)" : "var(--border)", display: "inline-block" }} />
+            <span style={{ fontSize: 11, color: provider.configured ? "var(--success)" : "var(--text-dim)" }}>
                {provider.configured ? t("i18n.configured") : t("i18n.notConfigured")}
             </span>
           </div>
@@ -1674,7 +1670,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels }: {
           disabled={saving || !apiKey.trim() || savedOk}
           style={{
             padding: "6px 12px",
-            background: savedOk ? "#16a34a" : apiKey.trim() ? "var(--accent)" : "var(--bg-panel)",
+            background: savedOk ? "var(--success)" : apiKey.trim() ? "var(--accent)" : "var(--bg-panel)",
             border: "none", borderRadius: 5,
             color: savedOk ? "#fff" : apiKey.trim() ? "var(--accent-contrast)" : "var(--text-dim)",
             cursor: (saving || !apiKey.trim() || savedOk) ? "not-allowed" : "pointer",
@@ -1691,7 +1687,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels }: {
         </button>
       </div>
 
-      {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
+      {error && <p style={{ margin: 0, fontSize: 12, color: "var(--danger)" }}>{error}</p>}
 
       <ProviderUsageSummary providerId={provider.id} enabled={provider.configured} />
 
@@ -1734,7 +1730,7 @@ function AddProviderPicker({
     padding: "10px 12px",
     background: "var(--bg-panel)",
     border: "1px solid var(--border)",
-    borderRadius: 9,
+    borderRadius: 7,
     boxSizing: "border-box",
     cursor: "pointer",
     minWidth: 0,
@@ -1756,7 +1752,7 @@ function AddProviderPicker({
         onClose();
       }}
     >
-      <div style={{ width: 820, maxWidth: "calc(100vw - 32px)", maxHeight: "min(72vh, calc(100vh - 32px))", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "var(--shadow-lg)", overflow: "hidden" }}>
+      <div style={{ width: 820, maxWidth: "calc(100vw - 32px)", maxHeight: "min(72vh, calc(100vh - 32px))", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.22)", overflow: "hidden" }}>
         {/* Search */}
         <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
@@ -1791,7 +1787,7 @@ function AddProviderPicker({
                     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>OpenAI / Anthropic compatible</div>
                      <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{t("i18n.customEndpoint")}</div>
                   </div>
-                  <span style={{ width: 26, height: 26, borderRadius: 7, background: "var(--bg-hover)", border: "1px dashed var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 5, background: "var(--bg-hover)", border: "1px dashed var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)" }}>
                       <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
@@ -1871,6 +1867,11 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
    * from an unrelated edit without guessing.
    */
   const savedModelIdsRef = useRef<Map<string, (string | null)[]>>(new Map());
+  /**
+   * The provider name field while it differs from the provider's id. Save
+   * applies it like every other visible edit; Rename applies it right away.
+   */
+  const [providerNameDraft, setProviderNameDraft] = useState<{ provider: string; name: string } | null>(null);
 
   const refreshAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
@@ -1922,40 +1923,35 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
   }, []);
 
-  const renameProvider = useCallback((oldName: string, newName: string) => {
+  /** Moves a provider in `draft`; returns the moved config, or null when the id is taken. */
+  const applyProviderRename = useCallback((draft: ModelsJson, oldName: string, newName: string): ModelsJson | null => {
     // Remember where each saved provider ended up, so the enabledModels entries
     // can follow it on save instead of pointing at an id that no longer exists.
-    const renames = renamesRef.current;
-    let original = oldName;
-    for (const [from, to] of renames) {
-      if (to !== oldName) continue;
-      original = from;
-      break;
-    }
-    if (original === newName) renames.delete(original);
-    else if (savedProvidersRef.current.has(original)) renames.set(original, newName);
-    const slots = savedModelIdsRef.current.get(oldName);
-    if (slots) {
-      savedModelIdsRef.current.delete(oldName);
-      savedModelIdsRef.current.set(newName, slots);
-    }
-    setConfig((prev) => {
-      const entries = Object.entries(prev.providers ?? {});
-      const idx = entries.findIndex(([k]) => k === oldName);
-      if (idx === -1) return prev;
-      entries[idx] = [newName, entries[idx][1]];
-      return { ...prev, providers: Object.fromEntries(entries) };
-    });
+    const next = renameProviderEntry(draft, {
+      savedProviders: savedProvidersRef.current,
+      renames: renamesRef.current,
+      slots: savedModelIdsRef.current,
+    }, oldName, newName);
+    if (!next) return null;
+    setConfig(next);
+    setProviderNameDraft(null);
     setSelection((prev) => {
       if (!prev) return prev;
       if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: newName };
       if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: newName };
       return prev;
     });
+    return next;
   }, []);
+
+  const renameProvider = useCallback((oldName: string, newName: string) => {
+    if (applyProviderRename(config, oldName, newName)) setSaveError(null);
+    else setSaveError(t("models.providerNameTaken", { name: newName }));
+  }, [applyProviderRename, config, t]);
 
   const deleteProvider = useCallback((name: string) => {
     savedModelIdsRef.current.delete(name);
+    setProviderNameDraft((prev) => prev?.provider === name ? null : prev);
     setConfig((prev) => {
       const providers = { ...(prev.providers ?? {}) };
       delete providers[name];
@@ -2027,11 +2023,24 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     setSaving(true);
     setSaveError(null);
     setSavedOk(false);
+    // A provider name typed but not applied with Rename is still a visible
+    // edit: move the provider before writing, like every other field.
+    let draft = config;
+    const pendingName = providerNameDraft?.name.trim();
+    if (providerNameDraft && pendingName && config.providers?.[providerNameDraft.provider]) {
+      const renamed = applyProviderRename(config, providerNameDraft.provider, pendingName);
+      if (!renamed) {
+        setSaveError(t("models.providerNameTaken", { name: pendingName }));
+        setSaving(false);
+        return;
+      }
+      draft = renamed;
+    }
     try {
       const res = await fetch("/api/models-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify(draft),
       });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
@@ -2042,9 +2051,9 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         // renamed, models added, deleted or renamed. Re-verify the stored
         // patterns against the new catalog and re-read.
         const renames = [...renamesRef.current].map(([from, to]) => ({ from, to }));
-        const modelRenames = collectModelRenames(config, savedModelIdsRef.current, renamesRef.current);
-        savedProvidersRef.current = new Set(Object.keys(config.providers ?? {}));
-        savedModelIdsRef.current = savedModelIds(config);
+        const modelRenames = collectModelRenames(draft, savedModelIdsRef.current, renamesRef.current);
+        savedProvidersRef.current = new Set(Object.keys(draft.providers ?? {}));
+        savedModelIdsRef.current = savedModelIds(draft);
         renamesRef.current.clear();
         enabledModels.resync(renames, modelRenames);
       }
@@ -2053,7 +2062,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     } finally {
       setSaving(false);
     }
-  }, [config, enabledModels, loadError]);
+  }, [applyProviderRename, config, enabledModels, loadError, providerNameDraft, t]);
 
   const providers = Object.entries(config.providers ?? {});
   // `12/40` next to a provider makes a narrowed selector visible at a glance.
@@ -2084,8 +2093,10 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         <ProviderDetail
           key={selection.name}
           name={selection.name}
+          editingName={providerNameDraft?.provider === selection.name ? providerNameDraft.name : selection.name}
           provider={provider}
           onChange={(p) => updateProvider(selection.name, p)}
+          onEditingNameChange={(n) => setProviderNameDraft(n === selection.name ? null : { provider: selection.name, name: n })}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
           onAddModels={(models) => addDiscoveredModels(selection.name, models)}
@@ -2197,7 +2208,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
                              {m.id || t("i18n.newModel")}
                           </ConfigSidebarText>
                           {m.reasoning && (
-                            <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 5, flexShrink: 0 }}>T</span>
+                            <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}
                         </ConfigSidebarItem>
                       );

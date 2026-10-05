@@ -21,5 +21,9 @@ test("agent SSE reuses one TextEncoder per stream", () => {
 
 test("agent SSE sends tool output tails only to clients that ask for them", () => {
   assert.match(agentEventsSource, /searchParams\.get\("toolUpdates"\) === "tail" \? "tail" : "full"/);
-  assert.match(agentEventStreamSource, /toClientAgentEvent\(event, options\)/);
+  // The per-client choice reaches the projection, and every projected event goes
+  // through the coalescing sender (`clientOptions` is named apart from the
+  // per-write `options` that carries `droppable`).
+  assert.match(agentEventStreamSource, /toClientAgentEvent\(event, clientOptions\)/);
+  assert.match(agentEventStreamSource, /if \(clientEvent\) sendClientEvent\(clientEvent\)/);
 });

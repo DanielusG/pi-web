@@ -4,7 +4,7 @@ import { createContext, memo, useContext, useMemo, type ComponentProps, type Mou
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
-import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, markdownUserRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { ImagePreview } from "./ImagePreview";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 
@@ -16,6 +16,8 @@ interface MarkdownBodyProps {
   isStreaming?: boolean;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
+  /** Render every line ending as a line break, for text the user typed. */
+  keepLineBreaks?: boolean;
 }
 
 function MarkdownImage({
@@ -42,13 +44,12 @@ function MarkdownImage({
   );
 }
 
-// Memoized: history messages must not re-run the full react-markdown pipeline
-// (remark + rehype + katex) when a parent re-renders for unrelated state.
-// Shallow compare is sufficient — children/cwd/className are strings (value
-// equality), isStreaming is a boolean, and onOpenFile is a stable useCallback
-// in the chat context. The streaming bubble still re-parses per chunk, which
-// is unavoidable without incremental markdown rendering.
-export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+// Memoized (fork perf deviation): history messages must not re-run the full react-markdown
+// pipeline (remark + rehype + katex) when a parent re-renders for unrelated state. Shallow
+// compare is sufficient — children/cwd/className/keepLineBreaks are strings, isStreaming is
+// a boolean, and onOpenFile is a stable useCallback in the chat context. The streaming bubble
+// still re-parses per chunk, which is unavoidable without incremental markdown rendering.
+export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, keepLineBreaks }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
@@ -126,7 +127,7 @@ export const MarkdownBody = memo(function MarkdownBody({ children, className, is
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
       <ReactMarkdown
-        remarkPlugins={markdownRemarkPlugins}
+        remarkPlugins={keepLineBreaks ? markdownUserRemarkPlugins : markdownRemarkPlugins}
         rehypePlugins={markdownRehypePlugins}
         urlTransform={onOpenFile ? markdownUrlTransform : undefined}
         components={components}
