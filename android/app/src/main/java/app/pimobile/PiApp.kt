@@ -1,6 +1,7 @@
 package app.pimobile
 
 import android.app.Application
+import app.pimobile.data.ChatResumeStore
 import app.pimobile.data.PiApi
 import app.pimobile.data.SettingsStore
 import app.pimobile.data.TtsPlayer
@@ -17,6 +18,8 @@ import kotlinx.coroutines.runBlocking
 /** Manual DI container: one API client, one settings store and one TTS player per process. */
 class PiApp : Application() {
     val api = PiApi()
+    /** Where each chat was left, for the process: see [ChatResumeStore]. */
+    val resumeStore = ChatResumeStore()
     lateinit var settings: SettingsStore
         private set
     /** Initialized lazily: [settings] is assigned in [onCreate]. */

@@ -263,6 +263,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                 CompositionLocalProvider(LocalChatFontScale provides chatFontScale) {
                     ChatScreen(
                         vm,
+                        app.resumeStore,
                         tts = app.tts,
                         onBack = { nav.popBackStack() },
                         onOpenSession = { target ->

@@ -120,12 +120,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.ChatResumeStore
 import app.pimobile.data.FilePaths
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.SubagentInfo
 import app.pimobile.data.ToolResult
 import app.pimobile.data.TtsPlayer
 import app.pimobile.data.TtsUiState
+import app.pimobile.data.chatListKeys
+import app.pimobile.data.sessionKeyFor
 import app.pimobile.notify.AppVisibility
 import app.pimobile.notify.Notifications
 import app.pimobile.ui.baseName
@@ -161,6 +164,8 @@ private val NoTtsState = MutableStateFlow<TtsUiState>(TtsUiState.Idle)
 @Composable
 fun ChatScreen(
     vm: ChatViewModel,
+    /** Where each session was left, for the process: see [ChatResumeStore]. */
+    resumeStore: ChatResumeStore,
     onBack: () -> Unit,
     onOpenSession: (OpenSession) -> Unit = {},
     onOpenFiles: () -> Unit = {},
@@ -187,7 +192,13 @@ fun ChatScreen(
             if (tts?.onError == handler) tts.onError = null
         }
     }
+    // Where this session was left when it last left the screen, and its unsent draft. Read once:
+    // the store is a plain map, so nothing here recomposes while the list scrolls.
+    val resumeKey = remember(state.sessionId, state.cwd) { sessionKeyFor(state.sessionId, state.cwd) }
+    val resume = remember(resumeKey) { resumeStore.peek(resumeKey) }
     val listState = rememberLazyListState()
+    // Follow the bottom unless the user scrolled up to read, or a saved position says otherwise.
+    val follow = rememberBottomFollow(listState, resume)
     // A TextFieldValue, so inserting a slash command can put the cursor after it.
     var draft by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     val composerFocus = remember { FocusRequester() }
@@ -286,6 +297,28 @@ fun ChatScreen(
             }
         }
     }
+    // Leaving the screen — navigating away, the app going background, the entry popped — puts the
+    // position and the draft in the store; the chat reads them back when it composes again.
+    LaunchedEffect(lifecycleOwner, resumeKey) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                awaitCancellation()
+            } finally {
+                resumeStore.save(resumeKey, follow.resumeState(draft.text, draft.selection.min))
+            }
+        }
+    }
+    // A fresh session takes its id with the first prompt: what was saved under its directory moves.
+    // Only migrate if this screen instance actually started fresh (without an id).
+    val startedFresh = remember { state.sessionId == null }
+    var movedToId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(startedFresh, state.sessionId, state.cwd) {
+        if (!startedFresh) return@LaunchedEffect
+        val id = state.sessionId ?: return@LaunchedEffect
+        if (movedToId == id) return@LaunchedEffect
+        resumeStore.move(sessionKeyFor(null, state.cwd), id)
+        movedToId = id
+    }
     // Completion notifications are skipped for the session on screen, and its pending
     // one-shot notifications are stale the moment it is.
     LaunchedEffect(lifecycleOwner, state.sessionId) {
@@ -365,17 +398,25 @@ fun ChatScreen(
             onInsertConsumed()
         }
     }
+    // Last of the effects that fill the composer: whatever is already there wins — the nav entry's
+    // own saved draft, a rewind's text (`restoredDraft`), a mention from the file screens.
+    LaunchedEffect(resume) {
+        val text = resume?.draft?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (draft.text.isBlank()) draft = TextFieldValue(text, TextRange(resume.cursor.coerceIn(0, text.length)))
+    }
     val writtenFiles = remember(state.items, state.toolResults, state.cwd) {
         turnWrittenFiles(state.items, state.toolResults, state.cwd)
     }
 
-    // Follow the bottom unless the user scrolled up to read.
-    val follow = rememberBottomFollow(listState)
     val showEmpty = !state.loading && state.items.isEmpty() && state.streaming == null
-    // Index of the list's last item, the "bottom" spacer: keep in step with the LazyColumn below.
-    val lastIndex = listOf(state.loading, state.hasMore, showEmpty).count { it } +
-        state.items.size + (if (state.streaming != null) 1 else 0)
-    SideEffect { follow.onComposed(lastIndex, state.items, state.streaming, state.liveTools, state.toolResults) }
+    // The list's keys in order: the one source for its last index and for the scroll anchors.
+    // Remembered so the instance stays put while the list is unchanged (see [BottomFollow]).
+    val listKeys = remember(state.items, state.loading, state.hasMore, showEmpty, state.streaming) {
+        chatListKeys(state.loading, state.hasMore, showEmpty, state.items.map { it.key }, state.streaming != null)
+    }
+    SideEffect {
+        follow.onComposed(listKeys.size - 1, listKeys, state.items, state.streaming, state.liveTools, state.toolResults)
+    }
 
     // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
     // the palette until the query changes, like Escape on the web.

@@ -53,7 +53,15 @@ It has **not yet been tested against a real pi-web with a real model.**
     bash output streams live as its last lines (`?toolUpdates=tail`), the whole output
     arrives when the tool finishes.
   - `!bash` executions and compaction notices.
-  - "Load earlier messages" paging.
+  - "Load earlier messages" paging, which keeps the message under the top edge where it was
+    instead of sliding the content away.
+  - Position and unsent composer text restored per session when the chat comes back — from the
+    list, from another chat opened over it (a notification tap), after Back, and when the app is
+    reopened while its process is alive. Anchored by the message's entryId, so whatever the agent
+    writes afterwards does not move it; the follow starts detached when a position was saved,
+    which is what keeps it from snapping back to the end (`ChatResumeStore` on `PiApp`,
+    in-process only, the last 24 sessions). If that message is gone (compaction, a branch switch)
+    or was on pages the chat no longer loads, it opens at its end as before.
 - **Live runs:**
   - Token streaming at about 10 UI updates per second, each re-rendering only the
     message's last block and scrolling in the same frame.
