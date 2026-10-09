@@ -1,6 +1,7 @@
 # Plan: merge upstream v0.11.0 → main, preserving fork deviations
 
-Data: 2026-10-09 · Stato: **APPROVED** (Daniele: "Proceed") · Implementation not started yet.
+Data: 2026-10-09 · Stato: **COMPLETED** — merge commit `f4c8868` (signed), tag `v0.11.0-fork`.
+Outcome details: [REPORT-upstream-merge-v0.11.0.md](REPORT-upstream-merge-v0.11.0.md).
 
 ## Starting point (verified)
 
