@@ -45,7 +45,7 @@ test("preserves title newlines like pi's TUI and keeps long titles from hiding t
   // content-sized card.
   assert.match(source, /const EXTENSION_DIALOG_MAX_HEIGHT = "min\(45vh, 360px\)";/);
   assert.match(source, /const EXTENSION_DIALOG_TITLE_MAX_HEIGHT = `calc\(\$\{EXTENSION_DIALOG_MAX_HEIGHT\} \* 0\.4\)`;/);
-  assert.match(header, /maxHeight: EXTENSION_DIALOG_MAX_HEIGHT,/);
+  assert.match(header, /maxHeight: full \? "min\(80vh, 760px\)" : EXTENSION_DIALOG_MAX_HEIGHT,/);
   // Upstream #890 applies to the fork card too: the header has to shrink and scroll, or a
   // long title pushes the option list past the card's overflow edge.
   assert.match(header, /flexShrink: 1, minHeight: 0/);
@@ -56,7 +56,8 @@ test("preserves title newlines like pi's TUI and keeps long titles from hiding t
 });
 
 test("resets collapse state when a new extension request arrives", () => {
-  assert.match(dialogSource, /setCollapsed\(false\);\s*}, \[request\]\)/);
+  // A new request also drops the previous dialog's grown width and maximize state.
+  assert.match(dialogSource, /setCollapsed\(false\);[\s\S]*?setFull\(false\);\s*setFitWidth\(null\);\s*}, \[request\]\)/);
   assert.match(source, /<ExtensionCustomPanel key=\{extensionCustomUi\.id\}/);
   assert.match(customSource, /if \(!collapsed\) inputRef\.current\?\.focus\(\);\s*}, \[collapsed\]\)/);
 });
@@ -75,4 +76,40 @@ test("shows how many extension requests wait behind the one on screen", () => {
   assert.match(collapsedButton, /<ExtensionWaitingCount count=\{waitingCount\} \/>\s+\{countdown\}/);
   assert.match(customCollapsed, /<ExtensionWaitingCount count=\{waitingCount\} \/>\s+<span[^>]*>\s+\{t\("chat\.extensionExpand"\)\}/);
   assert.match(customExpanded, /chat\.extensionPanel"\)\}<\/div>\s+<div[^>]*>\s+<ExtensionWaitingCount count=\{waitingCount\} \/>/);
+});
+
+test("fits dialogs to their code blocks and lets the user maximize them (#947)", () => {
+  const dialogOnly = dialogSource.slice(0, dialogSource.indexOf("function ExtensionCustomPanel"));
+  // Plain pi compatibility: nothing about size travels in the request or comes from an extension.
+  assert.doesNotMatch(source, /dialogSize/);
+
+  // Fork layout: the inline card keeps the chat column's width and grows past it only
+  // through the measured fit, or to the whole row when the user maximizes it.
+  assert.ok(dialogOnly.includes("maxWidth: full"), "the card's width follows the maximize toggle");
+  assert.ok(
+    dialogOnly.includes("`max(var(--chat-content-max-width, 820px), ${fitWidth}px)`"),
+    "a grown dialog stays at least as wide as the chat column",
+  );
+  assert.ok(
+    dialogOnly.includes('maxHeight: full ? "min(80vh, 760px)" : EXTENSION_DIALOG_MAX_HEIGHT'),
+    "the card's height follows the maximize toggle inside the composer slot",
+  );
+  // Only blocks that scroll sideways count, and the fit never shrinks again while it is read.
+  assert.match(dialogOnly, /querySelectorAll<HTMLElement>\("pre, \.markdown-table-wrap"\)/);
+  assert.match(dialogOnly, /block\.scrollWidth - block\.clientWidth/);
+  assert.match(dialogOnly, /prev !== null && prev >= needed \? prev : needed/);
+  // Highlighted code swaps in after the first paint, so the fit watches the body.
+  assert.match(dialogOnly, /new MutationObserver\(fit\)[\s\S]*?observe\(body, \{ childList: true, subtree: true, characterData: true \}\)/);
+
+  // The maximize/restore button sits next to the collapse chevron and only affects this dialog.
+  const header = dialogOnly.slice(dialogOnly.indexOf('role="dialog"'), dialogOnly.indexOf("{request.method === \"confirm\""));
+  assert.match(header, /onClick=\{toggleFull\}[\s\S]*?t\("chat\.extensionMaximize"\)[\s\S]*?t\("chat\.extensionRestoreSize"\)[\s\S]*?<ExtensionSizeIcon expanded=\{full\} \/>[\s\S]*?onClick=\{\(\) => setCollapsed\(true\)\}/);
+  assert.doesNotMatch(source, /localStorage|pi-extension-/);
+});
+
+test("shows a custom panel's lines whole instead of scrolling when they are wider than 920px (#947)", () => {
+  // The extension wraps its lines to the width it asked for, so the panel only has to be
+  // as wide as the widest of them, capped to the content region.
+  assert.match(customSource, /width: "max-content",\s+minWidth: "min\(920px, 100%\)",\s+maxWidth: "100%"/);
+  assert.doesNotMatch(customSource.slice(0, customSource.indexOf("\n}\n")), /toggleFull|extensionMaximize/);
 });

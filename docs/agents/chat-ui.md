@@ -28,8 +28,24 @@ bar unmounts while a blocking request is open; dialog state (`value` / `collapse
   confined to the content region above the composer.
 - The native Android client mirrors the same inline layout
   (`android/app/src/main/java/app/pimobile/ui/chat/ChatScreen.kt`) — see [android.md](android.md).
-- `ChatAppearance.test.mjs` expects 3 uses of `var(--chat-content-max-width, 820px)` in
-  `ChatWindow.tsx` (the third is the dialog wrapper, which must not use a literal `maxWidth: 820`).
+- `ChatAppearance.test.mjs` expects 4 uses of `var(--chat-content-max-width, 820px)` in
+  `ChatWindow.tsx` (the messages container, the empty-page hero row, and the dialog's two width
+  rules). None may be a literal `maxWidth: 820`.
+- Upstream's #947 (a dialog sized to its own content) is **ported into the inline layout**, not taken
+  as upstream wrote it. `lib/extension-dialog-fit.ts` measures the `pre` and `.markdown-table-wrap`
+  blocks that scroll sideways (`fitExtensionDialogWidth`, with a `MutationObserver` on the body for
+  code highlighted after first paint and `document.fonts.ready`), and the fork's card applies the
+  result as `maxWidth: full ? "100%" : fitWidth !== null
+  ? `max(var(--chat-content-max-width, 820px), ${fitWidth}px)` : "var(--chat-content-max-width, 820px)"`
+  with `margin: "0 auto"` — the card keeps the chat column by default and grows past it only when its
+  own content needs the room. Upstream's `EXTENSION_DIALOG_BASE_WIDTH` (560px) is unused here: the
+  fork's starting width is the column's, not a fixed 560.
+- Upstream's maximize toggle came along: `full` / `toggleFull` with `ExtensionSizeIcon` beside the
+  collapse chevron. In the fork it raises the card to `maxHeight: "min(80vh, 760px)"` and lets it fill
+  the row, instead of upstream's `"100%"` / `min(760px, 100%)` overlay geometry. A new request resets
+  `collapsed`, `full` and `fitWidth` together.
+- The status bar's command buttons (#1030: `onCommand={handleSend}`, `commandsDisabled={sessionBusy}`)
+  are adopted unchanged; they work with the composer slot occupied by the dialog.
 
 ## Message and composer geometry
 - **User bubble**: asymmetric radius `"14px 14px 4px 14px"` with a `color-mix(in srgb, var(--accent)

@@ -12,6 +12,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The arguments a `write` file-text view can stand in for. Upstream's rule (#1024):
+ * any other argument (a mode, a title) would vanish from that view, so those calls
+ * keep the JSON.
+ */
+const WRITE_VIEW_KEYS = new Set(["path", "file_path", "content"]);
+
 function firstString(...values: unknown[]): string | null {
   for (const v of values) {
     if (typeof v === "string" && v.length > 0) return v;
@@ -138,9 +145,9 @@ export function getToolArgsView(toolName: string, input: unknown): ToolArgsView 
       break;
     }
     case "write": {
-      const path = firstString(input.path);
+      const path = firstString(input.path, input.file_path);
       const content = typeof input.content === "string" ? input.content : null;
-      if (content !== null) {
+      if (content !== null && content !== "" && Object.keys(input).every((key) => WRITE_VIEW_KEYS.has(key))) {
         return { kind: "pre", label: path ?? undefined, text: content };
       }
       break;
