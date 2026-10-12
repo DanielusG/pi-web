@@ -89,12 +89,14 @@ Fork-only previews live beside upstream's truncation recovery and compaction foo
 `useAgentSession`'s `handleSend` (`handleNavigateRef`, with rollback when the prompt is rejected), so
 the fork's per-message navigate prop was redundant and is gone.
 
-## MarkdownBody is memoized
+## MarkdownBody is memoized — upstream's own now
 `components/MarkdownBody.tsx` wraps the component in `memo` so history messages do not re-run the
 react-markdown pipeline (remark + rehype + katex) when a parent re-renders for unrelated state.
 Shallow compare is enough: `children` / `cwd` / `className` / `keepLineBreaks` are strings,
-`isStreaming` is a boolean, `onOpenFile` is a stable `useCallback`. Keep the wrapper when merging —
-upstream's version is unmemoized.
+`isStreaming` is a boolean, `onOpenFile` is a stable `useCallback`. Since v0.12.0 upstream memoizes
+it too (`MarkdownBlock` is the memo'd inner component, `lib/markdown-blocks.ts` splits a growing
+reply into blocks that re-parse on their own), so merging a new upstream version takes theirs.
+What stays ours is `keepLineBreaks` — the prop is on both sides.
 
 ## AppShell
 The fork's header cleanup removed the `systemPrompt` state and `SystemPromptPanel` from

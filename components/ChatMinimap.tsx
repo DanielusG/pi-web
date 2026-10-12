@@ -15,7 +15,8 @@ import styles from "./ChatMinimap.module.css";
 
 interface Props {
   messages: AgentMessage[];
-  streamingMessage: Partial<AgentMessage> | null;
+  /** The reply being streamed, read when the turns are measured: it never re-renders the minimap. */
+  getStreamingMessage: () => Partial<AgentMessage> | null;
   scrollContainer: RefObject<HTMLDivElement | null>;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
   onRevealHistory: () => void;
@@ -245,9 +246,9 @@ function layoutNodes(allNodes: NodeInfo[], minimapHeight: number): NodeLayout {
   };
 }
 
-export function ChatMinimap({
+export const ChatMinimap = memo(function ChatMinimap({
   messages,
-  streamingMessage,
+  getStreamingMessage,
   scrollContainer,
   messageRefs,
   onRevealHistory,
@@ -280,12 +281,8 @@ export function ChatMinimap({
     headingIndex?: number;
   } | null>(null);
 
-  const allMessages = useMemo(
-    () => (streamingMessage ? [...messages, streamingMessage] : messages) as (AgentMessage | Partial<AgentMessage>)[],
-    [messages, streamingMessage],
-  );
-  const allMessagesRef = useRef(allMessages);
-  allMessagesRef.current = allMessages;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const nodeLayout = useMemo(
     () => layoutNodes(allNodes, minimapHeight),
@@ -349,7 +346,11 @@ export function ChatMinimap({
       let refIndex = 0;
       let currentTurn: TurnInfo | null = null;
 
-      for (const message of allMessagesRef.current) {
+      const streamingMessage = getStreamingMessage();
+      const allMessages: (AgentMessage | Partial<AgentMessage>)[] = streamingMessage
+        ? [...messagesRef.current, streamingMessage]
+        : messagesRef.current;
+      for (const message of allMessages) {
         const isAnchor = isMessageGroupAnchor(message);
         if (!isAnchor && message.role !== "assistant") continue;
         const element = refs?.[refIndex];
@@ -422,7 +423,7 @@ export function ChatMinimap({
         scrollEl.scrollTo({ top: Math.max(0, targetTop - targetOffset), behavior: "smooth" });
       }
     }, 150);
-  }, [lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
+  }, [getStreamingMessage, lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
 
   useEffect(() => {
     const el = scrollContainer.current;
@@ -850,7 +851,7 @@ export function ChatMinimap({
       )}
     </div>
   );
-}
+});
 
 // Hook to create a stable array of refs for messages.
 // O(1) in the steady state (count unchanged): the old implementation

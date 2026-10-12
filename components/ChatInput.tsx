@@ -646,10 +646,8 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
   );
 }
 
-// Memoized: ChatWindow re-renders on every streamed token; all of these props
-// are referentially stable during pure delta streaming (callback refs, state
-// slices, string/boolean scalars), so the 2600-line input subtree now skips
-// re-rendering between message completions.
+// Memoized: its props hold still while a reply streams or a tool runs, and the
+// chat around it re-renders through both.
 export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   defaultModel, onSetDefaultModel,

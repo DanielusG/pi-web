@@ -34,6 +34,11 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
   rows stay correct — its `ChatViewModel` reads only `toolCallId` / `toolName` from the end event.
   The tail is applied inside upstream's `toClientToolExecutionEvent()` after the nested-call drop,
   the codemode cap and the coalescing, so upstream's slimming rules and the tail compose.
+- Upstream's own wire slimming (v0.12.0, #1176) sends a non-assistant `message_start` as
+  `{ type, message: { role } }` only — an image `read` used to go out twice, once in the start
+  snapshot and again in `message_end`. The app is unaffected: `ChatViewModel` opens the streaming
+  assembler only when `message.role == "assistant"`, and an assistant start still carries the
+  whole snapshot. `lib/agent-event-wire.test.mjs` pins both forms next to the fork's tail tests.
 
 ## Material 3 in this app (`compose-bom 2025.10.01`)
 - `OutlinedTextField(singleLine = true)` constrains the typed value only: a long placeholder still
