@@ -1,9 +1,9 @@
 import { createRunStatusStream } from "@/lib/run-status-stream";
 import { getSessionListVersion } from "@/lib/session-reader";
 import {
+  getAwaitingInputRpcSessionIds,
   getCompletionNotificationSuppressedRpcSessionIds,
   getRunningRpcSessionIds,
-  getWaitingRpcSessionIds,
 } from "@/lib/rpc-manager";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     sessionListVersion: getSessionListVersion(),
     runningSessionIds: getRunningRpcSessionIds(),
     completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
-    waitingSessionIds: getWaitingRpcSessionIds(),
+    waitingSessionIds: getAwaitingInputRpcSessionIds(),
   }));
 
   return new Response(stream, {

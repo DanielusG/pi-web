@@ -8,6 +8,7 @@ import {
   mergeSessionLists,
 } from "@/lib/session-reader";
 import {
+  getAwaitingInputRpcSessionIds,
   getCompletionNotificationSuppressedRpcSessionIds,
   getRpcSessionInfos,
   getRunningRpcSessionIds,
@@ -43,7 +44,7 @@ function sessionListing(sessions: SessionInfo[], searchParams: URLSearchParams) 
   const perProject = intParam(searchParams, "perProject", 1, 100);
   if (perProject === undefined) return { sessions: compact(selected) };
   const recentHours = intParam(searchParams, "recentHours", 1, 24 * 366);
-  const { projects, recentCwds } = pageSessionsByProject(selected, {
+  const { projects } = pageSessionsByProject(selected, {
     perProject,
     offset: intParam(searchParams, "offset", 0, Number.MAX_SAFE_INTEGER),
     project: searchParams.get("project") ?? undefined,
@@ -51,7 +52,6 @@ function sessionListing(sessions: SessionInfo[], searchParams: URLSearchParams) 
   });
   return {
     projects: projects.map((project) => ({ ...project, sessions: compact(project.sessions) })),
-    recentCwds,
   };
 }
 
@@ -79,6 +79,7 @@ export async function GET(req: Request) {
       ...sessionListing(sessions, searchParams),
       sessionListVersion,
       runningSessionIds: getRunningRpcSessionIds(),
+      awaitingInputSessionIds: getAwaitingInputRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
     };
     const response = jsonResponse(req, body, { headers: { "Cache-Control": "no-store" } });

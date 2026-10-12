@@ -68,12 +68,17 @@ The header is a **pill badge** (mono 11, radius 5, `var(--bg-subtle)` fill, erro
 wrapping upstream's `mcpLabel` server/tool split (`var(--success)` normally, `var(--danger)` on
 error, `title` carrying the raw `mcp__` name). After it:
 - the preview span reads `patchLabel ?? (codemode ? codemodeScriptPreview(code) : summary)`, where
-  `summary` comes from `toolSummaryLine()` in `lib/tool-display.ts` — **not** upstream's
-  `getToolPreview()`, which this fork does not have;
+  `summary` comes from `toolSummaryLine()` in `lib/tool-display.ts`. Upstream v0.11.1 grew its own
+  `getToolPreview()` for that fallback; the fork keeps its richer line, so upstream's function came
+  in unused and was deleted during the merge;
 - the fork's status icons (spinner while input streams, ✕ on error, ✓ on result) are kept alongside
   upstream's `codemodeCallCount`, duration and rotating chevron;
 - an expanded codemode call shows its script in a `<pre>` before `ToolArgsBody`, and `ToolArgsBody`
-  is skipped for codemode so the script is not shown twice.
+  is skipped for codemode so the script is not shown twice;
+- the final assistant message is split through upstream's `getFinalAnswerViews()` cache
+  (`lib/turn-views.ts`, adopted at v0.11.1) instead of the fork's inline
+  `splitFinalAssistantBlocks`/`withAssistantBlocks` pair; the fork's own `previewText()` custom-message
+  preview was dropped too, as upstream's `isHiddenCustomMessage` + inline collapsed preview supersede it.
 
 Fork-only previews live beside upstream's truncation recovery and compaction footer:
 `ProposedChangesPreview` (word-level diff of an edit/write result, `lib/word-diff.ts`),

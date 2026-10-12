@@ -7,9 +7,20 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
 
 ## Running-state stream (`lib/run-status-stream.ts`)
 - `GET /api/agent/running/events` sends the `/api/agent/running` snapshot plus `waitingSessionIds`
-  (sessions with an open select/confirm/input/editor dialog) on connect, then again **only when it
-  changes**, detected by an in-memory check once a second. The app does not poll; the web client
-  keeps its own 2.5 s polling of `/api/agent/running`.
+  on connect, then again **only when it changes**, detected by an in-memory check once a second. The
+  app does not poll; the web client keeps its own 2.5 s polling of `/api/agent/running`.
+- Since the v0.11.1 merge the field comes from upstream's `getAwaitingInputRpcSessionIds()` (the name
+  stays for installed APKs): a session counts only while its run is **live** and a dialog is open —
+  select/confirm/input/editor, or a `custom` overlay not yet closed. The fork's own
+  `BLOCKING_DIALOG_METHODS` list was dropped, so two things changed at once:
+  - `custom` overlays count now. The app cannot show or settle one (`ChatViewModel.kt` reads only
+    select/confirm/input/editor), yet `RunWatcherService` still notifies for them — accepted on
+    purpose: the notification says "go to the desktop/web client to answer", which is true.
+  - `isAwaitingInput()` gates on `isRunning()` where the fork's `getWaitingRpcSessionIds()` used
+    `isAlive()`, so **any** dialog parked on an alive-but-idle wrapper (not just `custom`) drops out
+    of the set, and the app cancels the notification for it. Upstream's own
+    `lib/rpc-manager-extension-ui.test.mjs` asserts this; `app/api/agent/running-events-route.test.mjs`
+    pins the field name to upstream's producer.
 - The app refuses to start against a server without this route, so keep it when merging upstream.
 
 ## Per-request trimming for runs
@@ -37,12 +48,11 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
 ## Session list paging (`lib/session-list-page.ts`)
 A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
 - `GET /api/sessions?perProject=N` answers with `projects` (key, root, total, most recent activity,
-  and a window of N top-level sessions each; subagent runs are left out) plus `recentCwds`, instead
-  of `sessions`. `project=<key>&offset=K` pages one project.
+  and a window of N top-level sessions each; subagent runs are left out) instead of `sessions`.
+  `project=<key>&offset=K` pages one project.
 - Every project comes back in one response, only the session windows are cut — so the app's
   new-session sheet lists `projects` roots with its own filter (`SessionsScreen.kt`) and needs no
-  extra request. `recentCwds` is capped at 12 distinct session cwds and is what installs before the
-  full-project sheet picked from: keep emitting it while such an APK is still in use.
+  extra request. `recentCwds` was dropped at the v0.11.1 merge: no installed APK read it any more.
 - `recentHours=H` stops each first window at the sessions active in the last H hours (server clock)
   and adds their count as `recent`, which the app shows by default. Projects with `recent: 0` still
   come back, with an empty window, and the app folds them under "Older projects".

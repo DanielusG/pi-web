@@ -9,6 +9,9 @@ test("run status SSE exposes the running snapshot plus waiting sessions without 
   for (const field of ["sessionListVersion", "runningSessionIds", "completionNotificationSuppressedSessionIds", "waitingSessionIds"]) {
     assert.match(source, new RegExp(`${field}:`));
   }
+  // The producer is upstream's getAwaitingInputRpcSessionIds() since v0.11.1; the field
+  // name stays `waitingSessionIds` because installed APKs read it (RunStatus.kt).
+  assert.match(source, /waitingSessionIds: getAwaitingInputRpcSessionIds\(\)/);
   assert.match(source, /if \(req\.signal\.aborted\) return new Response\(null, \{ status: 204 \}\)/);
   assert.match(source, /"Cache-Control": "no-cache, no-transform"/);
   assert.match(source, /"X-Accel-Buffering": "no"/);

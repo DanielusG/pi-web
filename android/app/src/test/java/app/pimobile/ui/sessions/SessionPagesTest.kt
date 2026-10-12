@@ -17,7 +17,7 @@ class SessionPagesTest {
                 """{"projects":[{"key":"k1","root":"/work/alpha","total":42,"modified":"2026-09-26T10:05:00.000Z","sessions":[""" +
                     """{"id":"a","cwd":"/work/alpha","name":"Named","firstMessage":"hi","modified":"2026-09-26T10:05:00.000Z","messageCount":3},""" +
                     """{"id":"b","cwd":"/work/alpha","firstMessage":"(no messages)","modified":"2026-09-26T10:04:00.000Z"},""" +
-                    """{"cwd":"/work/alpha","firstMessage":"no id"}]}],"recentCwds":["/work/alpha"]}""",
+                    """{"cwd":"/work/alpha","firstMessage":"no id"}]}]}"""
             ),
         )!!
         assertEquals(1, groups.size)

@@ -7,8 +7,6 @@ import type { SessionInfo } from "./types";
  * messages the app cuts to one line anyway. The web sidebar keeps the full list.
  */
 
-/** Distinct working directories offered when starting a new session. */
-const RECENT_CWDS_LIMIT = 12;
 const ELLIPSIS = "…";
 
 export interface ProjectPage {
@@ -47,7 +45,7 @@ export function sessionProjectKey(session: SessionInfo): string {
 export function pageSessionsByProject(
   sessions: SessionInfo[],
   { perProject, offset = 0, project, since }: SessionListPageOptions,
-): { projects: ProjectPage[]; recentCwds: string[] } {
+): { projects: ProjectPage[] } {
   const topLevel = sessions
     .filter((session) => session.relation?.kind !== "subagent")
     .sort((a, b) => b.modified.localeCompare(a.modified));
@@ -72,9 +70,7 @@ export function pageSessionsByProject(
       sessions: group.slice(offset, Math.min(offset + perProject, recent ?? group.length)),
     });
   }
-  const recentCwds = [...new Set(topLevel.map((session) => session.cwd).filter(Boolean))]
-    .slice(0, RECENT_CWDS_LIMIT);
-  return { projects, recentCwds };
+  return { projects };
 }
 
 /** Sessions of a newest-first group modified at or after `since` (epoch ms): a prefix of it. */
