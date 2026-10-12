@@ -63,7 +63,7 @@ clicks open a browser tab. `docs/agents/android.md` records both.
 | `npm run lint` | clean | clean |
 | `npm test` | 2979 tests, 2977 pass, 1 fail | 2756 tests, 2754 pass, 1 fail (2775 / 2773 / 1 after the follow-ups below, with 1 skipped) |
 | `android/gradlew test --offline` | rc=0 | rc=0 |
-| `npm run test:e2e` | not run | not run — see the leftovers |
+| `npm run test:e2e` | not run | rc=0 in two clean worktrees (27 checks at `29bd3a8`, 19 at `backup/main-pre-v0.12.0`) — see below |
 | dev server on :30141 | answering | answering (307) — untouched, no `next build` |
 
 The single failure is the pre-existing environment one, unchanged: `lib/web-auth.test.mjs` "enables
@@ -122,13 +122,19 @@ first. What it found, and what was fixed in the commit after this report:
 
 - Kotlin wiring of the bulk delete (`POST /api/sessions/delete`) and of the new-tab rows — separate
   task, per the decision above.
-- `npm run test:e2e` was **not run**, not because Playwright is missing — it is installed
-  (`^1.62.1`, with `chromium-1243` and `chromium_headless_shell-1243` in `~/.cache/ms-playwright`,
-  CLI reporting 1.63.0) — but because `e2e/run.mjs` starts its own Turbopack dev server and asserts
-  `.next/dev/lock` is absent, so it refuses to run in a checkout with an active dev server (:30141
-  was up, and Next shares the lock within a checkout). `E2E_SERVER_MODE=start` would need
-  `npm run build`, which AGENTS.md forbids in a checkout used for development. To run it: stop
-  :30141, or run it in a separate clean checkout (e.g. a `git worktree` of `9425fac`).
+- `npm run test:e2e` **ran green** at `29bd3a8` (27 checks) and at `backup/main-pre-v0.12.0` (19),
+  each in its own `git worktree` under `/tmp` so the dev server on :30141 and its `.next/dev/lock`
+  stayed untouched — `e2e/run.mjs` starts its own dev server and refuses a checkout with an active
+  one. Two things learned on the way: `npm ci` here installs **no Playwright**, because
+  `npm config get omit` is `dev` (`npm ci --include=dev` is what `e2e/README.md` now says), and
+  `bin/prepare-terminal.js` needs running by hand when npm blocks install scripts.
+  `checkExtensionDialogSizing` failed at first — **not a merge regression**: it failed the same way
+  on the pre-merge branch, because upstream's check assumes its own overlay geometry (560px base,
+  a fixed 20px padding) while the fork renders the dialog inline in the composer slot at the chat
+  column's width. Adapted in `e2e/extension-dialog.mjs` (runtime `--chat-content-max-width`,
+  `availableWidth` reading the parent's content box, no forced growth past 560); the reasoning is
+  in `docs/agents/chat-ui.md`. Custom panels needed no change — they already size with
+  `width: max-content`.
 - The commit is gpg-signed with key `96FBC4F2284E3272`; if it is locked, unlock it
   (`printf '%s\n' "$PASSPHRASE" | ~/.local/bin/gpg-unlock`) or commit with `--no-gpg-sign`.
 - `lib/extension-dialog-fit.ts`'s `EXTENSION_DIALOG_BASE_WIDTH` is still an unused fork export, and

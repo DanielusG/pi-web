@@ -40,6 +40,20 @@ bar unmounts while a blocking request is open; dialog state (`value` / `collapse
   with `margin: "0 auto"` — the card keeps the chat column by default and grows past it only when its
   own content needs the room. Upstream's `EXTENSION_DIALOG_BASE_WIDTH` (560px) is unused here: the
   fork's starting width is the column's, not a fixed 560.
+- **Upstream's sizing check in `e2e/extension-dialog.mjs` needs the fork's geometry**, and was
+  adapted here (`checkExtensionDialogSizing`, green on both `main` and `backup/main-pre-v0.12.0`):
+  prose expects `min(--chat-content-max-width, available)` read at runtime (`columnWidth(page)`,
+  because the chat width is a browser setting) instead of `min(560, available)`; `availableWidth`
+  reads the **parent's content box** (clientWidth minus its own horizontal padding) instead of
+  subtracting the overlay's assumed 20px — the inline card sits in the composer slot and the
+  custom panel in its own centred wrapper, and each pads itself differently. The code dialog no
+  longer asserts "grew past 560": the fixture's code fits inside the 820px column, so growth is
+  only forced by a narrower column or by the region's limit — what must hold is that the code
+  shows whole unless the region caps the card.
+- **Custom panels need no fit**: `ExtensionCustomPanel` sizes itself with `width: "max-content"`,
+  `minWidth: "min(920px, 100%)",` `maxWidth: "100%"` (upstream's #1136 approach), so its wide
+  lines already show whole. `fitExtensionDialogWidth` stays on the dialog card only — the panel
+  failure seen at the v0.12.0 merge was `availableWidth`'s assumed padding, not a missing fit.
 - Upstream's maximize toggle came along: `full` / `toggleFull` with `ExtensionSizeIcon` beside the
   collapse chevron. In the fork it raises the card to `maxHeight: "min(80vh, 760px)"` and lets it fill
   the row, instead of upstream's `"100%"` / `min(760px, 100%)` overlay geometry. A new request resets

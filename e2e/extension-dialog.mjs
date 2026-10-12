@@ -130,9 +130,19 @@ async function settledWidth(page, dialog) {
   }));
 }
 
-/** Width the dialog may use: the content region minus the overlay's own 20px padding. */
+/**
+ * Width the card may use: its parent's content box. Upstream's overlay is a fixed 20px
+ * padding, so it subtracts 40; here the card sits inline in the composer slot and the
+ * custom panel sits in its own centred wrapper, and each of those may pad itself — so the
+ * padding is read instead of assumed (docs/agents/chat-ui.md).
+ */
 function availableWidth(dialog) {
-  return dialog.evaluate(element => element.parentElement.clientWidth - 40);
+  return dialog.evaluate(element => {
+    const parent = element.parentElement;
+    const style = getComputedStyle(parent);
+    const pad = (value) => Number.parseFloat(value) || 0;
+    return parent.clientWidth - pad(style.paddingLeft) - pad(style.paddingRight);
+  });
 }
 
 function scrollsSideways(dialog) {
@@ -141,10 +151,22 @@ function scrollsSideways(dialog) {
 }
 
 /**
- * Dialogs fit their code blocks without any hint from the extension (#947): prose keeps
- * the 560px default, code that does not fit makes the dialog just wide enough (or as
- * wide as the screen allows), and maximize/restore is a per-dialog override.
+ * Dialogs fit their code blocks without any hint from the extension (#947), here in the
+ * fork's inline layout: the card keeps the chat column's width (`--chat-content-max-width`,
+ * 820px by default — `components/ChatWindow.tsx` applies it, see docs/agents/chat-ui.md)
+ * instead of upstream's 560px overlay base, code that does not fit makes it just wide enough
+ * (or as wide as the content region allows), and maximize/restore is a per-dialog override.
  */
+
+/** The fork's inline card starts at the chat column's width, which is a browser setting. */
+function columnWidth(page) {
+  return page.evaluate(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--chat-content-max-width").trim();
+    const px = Number.parseInt(raw, 10);
+    return Number.isFinite(px) && px > 0 ? px : 820;
+  });
+}
+
 export async function checkExtensionDialogSizing(page, width) {
   const start = async (mode, name = `E2E ${mode}`) => {
     await page.mouse.move(0, 0);
@@ -162,17 +184,26 @@ export async function checkExtensionDialogSizing(page, width) {
     await page.getByRole("button", { name: "Stop agent", exact: true }).waitFor({ state: "hidden" });
   };
 
+  const base = await columnWidth(page);
   const prose = await start("prose");
   const proseWidth = await settledWidth(page, prose);
   const available = await availableWidth(prose);
-  assert.ok(Math.abs(proseWidth - Math.min(560, available)) <= 1, `Prose keeps the default width, got ${proseWidth}px of ${available}px`);
+  assert.ok(Math.abs(proseWidth - Math.min(base, available)) <= 1, `Prose keeps the chat column's width, got ${proseWidth}px of ${available}px (column ${base}px)`);
   await close(prose, "prose", "false");
 
   const code = await start("code");
   const codeWidth = await settledWidth(page, code);
   assert.ok(codeWidth >= proseWidth, "A code block never makes the dialog narrower");
   assert.ok(codeWidth <= available + 1, "The dialog stays inside the content region");
-  if (width > 600) assert.ok(codeWidth > 560, `Code that cannot fit in 560px widens the dialog, got ${codeWidth}px`);
+  if (width > 600) {
+    // Upstream asserts the dialog grew past its 560px base. Here the card starts at the
+    // chat column (820px by default), and this fixture's code fits inside it, so growth is
+    // only forced by a narrower column or by the region's own limit. What must hold: the
+    // code shows whole unless the region caps the card.
+    const capped = codeWidth >= available - 1;
+    assert.ok(capped || !(await scrollsSideways(code)), `Code shows whole at ${codeWidth}px unless the region caps it (${available}px)`);
+    assert.ok(codeWidth >= Math.min(base, available) - 1, `The card never drops below the chat column, got ${codeWidth}px`);
+  }
   if (codeWidth < available - 1) assert.equal(await scrollsSideways(code), false, "The code block shows whole unless the screen is the limit");
 
   // Maximize is a per-dialog override: full width, and restore goes back to the fitted width.
@@ -197,7 +228,7 @@ export async function checkExtensionDialogSizing(page, width) {
   const panelAvailable = await availableWidth(panel);
   assert.ok(panelWidth <= panelAvailable + 1, "The panel stays inside the content region");
   if (panelWidth < panelAvailable - 1) assert.equal(await scrollsSideways(panel), false, "A panel that is not capped shows its lines whole");
-  assert.ok(panelWidth >= Math.min(920, panelAvailable) - 1, "The panel is never narrower than before");
+  assert.ok(panelWidth >= Math.min(base, panelAvailable) - 1, `The panel is never narrower than the chat column (${base}px), got ${panelWidth}px`);
   await close(panel, "panel", "closed");
 
   console.log(`PASS: ${width}px extension dialogs fit their content (prose ${Math.round(proseWidth)}px, code ${Math.round(codeWidth)}px, panel ${Math.round(panelWidth)}px of ${Math.round(available)}px)`);

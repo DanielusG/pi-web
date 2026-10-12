@@ -4,10 +4,14 @@ Adapted from @Nuctori's CI/E2E proposal in #617 and #599. The performance
 scanner, reverse reader, sidebar changes, and timing benchmarks are not included.
 
 ```sh
-npm ci
+npm ci --include=dev
 npx playwright install chromium
 npm run test:e2e
 ```
+
+`--include=dev` matters on this machine: `npm config get omit` is `dev`, so a plain `npm ci`
+skips devDependencies and installs no Playwright at all (102 packages instead of the full tree).
+Browsers live in `~/.cache/ms-playwright` and are shared by every checkout.
 
 The script starts and stops its own Turbopack dev server on an available
 loopback port. Run it in a checkout without an active dev server; Next.js
