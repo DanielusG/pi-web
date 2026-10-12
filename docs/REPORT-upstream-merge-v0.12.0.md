@@ -63,6 +63,7 @@ clicks open a browser tab. `docs/agents/android.md` records both.
 | `npm run lint` | clean | clean |
 | `npm test` | 2979 tests, 2977 pass, 1 fail | 2756 tests, 2754 pass, 1 fail |
 | `android/gradlew test --offline` | rc=0 | rc=0 |
+| `npm run test:e2e` | not run | not run — see the leftovers |
 | dev server on :30141 | answering | answering (307) — untouched, no `next build` |
 
 The single failure is the pre-existing environment one, unchanged: `lib/web-auth.test.mjs` "enables
@@ -97,7 +98,13 @@ Safari 16.2: **zero lookbehinds** were added anywhere in the range, so no blank-
 
 - Kotlin wiring of the bulk delete (`POST /api/sessions/delete`) and of the new-tab rows — separate
   task, per the decision above.
-- `npm run test:e2e` cannot run here: Playwright browsers are not installed. Not part of the gate.
+- `npm run test:e2e` was **not run**, not because Playwright is missing — it is installed
+  (`^1.62.1`, with `chromium-1243` and `chromium_headless_shell-1243` in `~/.cache/ms-playwright`,
+  CLI reporting 1.63.0) — but because `e2e/run.mjs` starts its own Turbopack dev server and asserts
+  `.next/dev/lock` is absent, so it refuses to run in a checkout with an active dev server (:30141
+  was up, and Next shares the lock within a checkout). `E2E_SERVER_MODE=start` would need
+  `npm run build`, which AGENTS.md forbids in a checkout used for development. To run it: stop
+  :30141, or run it in a separate clean checkout (e.g. a `git worktree` of `9425fac`).
 - The commit is gpg-signed with key `96FBC4F2284E3272`; if it is locked, unlock it
   (`printf '%s\n' "$PASSPHRASE" | ~/.local/bin/gpg-unlock`) or commit with `--no-gpg-sign`.
 - `lib/extension-dialog-fit.ts`'s `EXTENSION_DIALOG_BASE_WIDTH` is still an unused fork export, and

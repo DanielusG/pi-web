@@ -111,7 +111,12 @@ collides with the fork's habit of asserting CSS token forms — see decision 2),
 `app/api/sessions/delete-route`, `app/api/skills/content/route`, `components/McpConfig` helpers) →
 `android/gradlew test --offline` → the CSS token-form tests. **Never `next build`** during dev; the
 dev server on :30141 stays untouched (`lsof` checked: one healthy `next-server` already listening).
-`npm run test:e2e` cannot run (Playwright browsers are not installed here) — record it in the report.
+`npm run test:e2e` (`node e2e/run.mjs`) is installed here — Playwright `^1.62.1` with chromium
+and chromium_headless_shell in `~/.cache/ms-playwright` — but it starts its own Turbopack dev
+server and asserts that `.next/dev/lock` is absent, so it cannot run in this checkout while the
+dev server on :30141 is up; `E2E_SERVER_MODE=start` needs `next build`, which AGENTS.md forbids in
+a dev checkout. Run it in a separate clean checkout, or after stopping :30141. Record it in the
+report.
 
 Extra checks during resolution:
 - the `<a class="session-tree-main">` rows (#1169) still work with the fork's virtualized rows and
