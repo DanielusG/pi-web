@@ -285,6 +285,16 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 
 - **A refused path shows nothing in the Android new-session sheet**: `SessionsViewModel.validateCwd`
   puts the reason in `state.error` and `NewSessionSheet` never reads it (`AssistProjectSheet` does).
+- **`components/SystemPromptPanel.tsx` is dead here**: the fork's header cleanup left no
+  `systemPrompt` state in `AppShell`, so nothing imports it — only `docs/agents/chat-ui.md` and
+  `components/AppShell.tools-panel.test.mjs` mention it, the second to prove the import is gone.
+  It stays because upstream still ships the file and deleting it turns every future merge into a
+  modify/delete conflict; its `system.*` keys in `lib/i18n/messages/*` are upstream's too.
+- **`app/settings.css` was never retuned to the fork's tokens**: it still carries 15 hardcoded
+  `#ef4444` rules (`--danger` is used inline in `components/SkillsConfig.tsx` instead). Only
+  `.skill-instructions-status.is-error` moved to `var(--danger)` at the v0.12.0 merge, because it
+  sat beside inline `var(--danger)` uses in the same component. Retuning the rest is a separate
+  choice — `app/settings.css` has no test asserting token forms.
 
 ---
 

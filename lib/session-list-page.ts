@@ -83,6 +83,12 @@ function countSince(group: SessionInfo[], since: number): number {
  * The first message as a list shows it: a skill expansion back to its `/skill:`
  * command (the expansion embeds the whole skill file, and a cut one no longer
  * collapses), then at most `maxChars` characters.
+ *
+ * Since v0.12.0 the text handed here is already cut: upstream's
+ * `catalogFirstMessage()` (`lib/session-reader.ts`) trims every catalog row's
+ * first message to 500 code units before the list cache stores it, so a
+ * `?firstMessageChars` above 500 cannot see past that. The callers ask for 200
+ * and 80, which stay inside it.
  */
 export function compactFirstMessage(text: string, maxChars: number): string {
   const display = skillExpansionToCommand(text) ?? text;

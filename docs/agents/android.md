@@ -62,8 +62,12 @@ A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
   and adds their count as `recent`, which the app shows by default. Projects with `recent: 0` still
   come back, with an empty window, and the app folds them under "Older projects".
 - `ids=a,b` keeps only those sessions (notification titles). `firstMessageChars=N` shortens first
-  messages after collapsing a skill expansion to its `/skill:` command, which only works on the
-  complete text.
+  messages after collapsing a skill expansion to its `/skill:` command — but since v0.12.0 upstream
+  pre-cuts every catalog row's first message to **500 code units** in `catalogFirstMessage()`
+  (`lib/session-reader.ts`, called at :254 and by `lib/rpc-manager.ts:2326`) *before* the fork's
+  trim runs, so `N` above 500 cannot recover text the catalog dropped. The app asks 200 for windows
+  and 80 for notification titles, so nothing is lost today; raising a request past 500 needs
+  upstream's cut lifted first. `app/api/sessions/detail-route-fork.test.mjs` pins the ceiling.
 - The app treats a response without `projects` as an outdated server.
 
 ## Subagent runs

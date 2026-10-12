@@ -61,15 +61,17 @@ clicks open a browser tab. `docs/agents/android.md` records both.
 |---|---|---|
 | `tsc --noEmit` | clean | clean |
 | `npm run lint` | clean | clean |
-| `npm test` | 2979 tests, 2977 pass, 1 fail | 2756 tests, 2754 pass, 1 fail |
+| `npm test` | 2979 tests, 2977 pass, 1 fail | 2756 tests, 2754 pass, 1 fail (2775 / 2773 / 1 after the follow-ups below, with 1 skipped) |
 | `android/gradlew test --offline` | rc=0 | rc=0 |
 | `npm run test:e2e` | not run | not run — see the leftovers |
 | dev server on :30141 | answering | answering (307) — untouched, no `next build` |
 
 The single failure is the pre-existing environment one, unchanged: `lib/web-auth.test.mjs` "enables
 password authentication only for a non-empty configured password" (`PI_WEB_PASSWORD` is exported in
-this shell). The suite shrank by 223 tests because upstream deleted assertions and files (the fork
-kept 4 of the 7 files it removed) — not because the fork lost coverage it had asked to keep.
+this shell) and one skipped test. The suite shrank by 223 tests because upstream deleted assertions
+and files. Most of that was coverage upstream chose to drop, but one deleted file carried a
+fork-only assertion the fork did not expect to lose — see item 1 below; the follow-ups restored it
+and three others, back to 2775 tests.
 
 JS files that needed fork-side repairs after the merge, all of them upstream deleting a helper or a
 `readFile` the fork's assertions used: `SidebarMenu.test.mjs` (`cssRule()` and the `source` read),
@@ -93,6 +95,28 @@ all sessions of a project (#1182), skills' full instructions (#1158), HTML previ
 (#1155), a link to a gone session showing no other (#1180), the CLI exit fix (#1179).
 
 Safari 16.2: **zero lookbehinds** were added anywhere in the range, so no blank-page risk.
+
+## Review pass and follow-ups
+
+A read-only subagent reviewed the merge against `backup/main-pre-v0.12.0` and `v0.12.0`: **nothing
+broken** — the fork-only files (`lib/session-list-page.ts`, `session-list-scanner.ts`,
+`cold-context.ts`, `run-status-stream.ts`, `agent-state-lite.ts`, `edit-preview.ts`,
+`tool-display.ts`, `extension-dialog-fit.ts`, `normalize.ts`, `app/api/agent/**`) came through
+byte-identical, the single-session delete still stops a running session (only the bulk route passes
+`{ keepRunning: true }`), and every path that leaves the stream flushes the fork's delta buffer
+first. What it found, and what was fixed in the commit after this report:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | The fork-only gzip assertion on the context route (`jsonResponse`, the Android/iOS transfer fix) went away with `app/api/sessions/context-route.test.mjs`, one of the three deletions accepted | `app/api/sessions/context-route-fork.test.mjs` — gzip plus the `?tail`/`?before` wiring |
+| 2 | Upstream's `catalogFirstMessage()` pre-cuts every catalog row's first message to 500 code units *before* the fork's `?firstMessageChars` runs, so that fork param is now capped at 500 (harmless today: Android asks 200, titles 80) | pinned in `app/api/sessions/detail-route-fork.test.mjs`; the stale comment in `lib/session-list-page.ts` and the bullet in `docs/agents/android.md` corrected |
+| 3 | `docs/agents/sessions.md` never recorded the fork's rAF buffer under the streaming section — the route to a silent loss at the next merge | bullet added: every dispatch that enters or leaves the stream must flush first |
+| 4 | `resume` was the one dispatch without a flush; it held only because the effect is mount-only and `ChatWindow` is keyed per session | `flushPendingDeltas()` before `dispatch({ type: "resume" })` |
+| 5 | `.skill-instructions-status.is-error` used `#ef4444` while the same component colours its other errors with `var(--danger)` | moved to `var(--danger)`; the rest of `app/settings.css` stays hardcoded, recorded in `AGENTS.md` |
+| 6 | The Tools toolbar wiring lost its test with `ToolDefinitionsPanel.test.mjs`; `SystemPromptPanel.tsx` is dead here | `components/AppShell.tools-panel.test.mjs`; the dead component recorded in `AGENTS.md` pending cleanups (kept: deleting upstream's file means a modify/delete conflict every merge) |
+| 7 | Nothing tested the fork-only fields of `GET /api/sessions/[id]`, nor `lib/cold-context.ts` / `lib/tool-display.ts` | `app/api/sessions/detail-route-fork.test.mjs`, `lib/cold-context.test.mjs`, `lib/tool-display.test.mjs` |
+| 8 | This plan's decision 4 described the retune as `--danger` via `color-mix`, which is not what the code does | corrected here and in `docs/PLAN-upstream-merge-v0.12.0.md`: `border-color`/`background: var(--danger)`, `color: #fff` |
+| 9 | Cosmetic: `StreamingReply` appears one frame after the first delta (the rAF buffer's price, ~16 ms), and `message_end` flushes before appending the completed reply so those flushed deltas are dropped by the following `end` | left as is — wasted work, never a wrong message; the flush order is what keeps deltas from landing after the transition |
 
 ## Leftovers
 

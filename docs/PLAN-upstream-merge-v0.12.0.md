@@ -66,7 +66,8 @@ collides with the fork's habit of asserting CSS token forms — see decision 2),
    shape). Wiring Kotlin to the new bulk `POST /api/sessions/delete` (#1182) stays a separate task
    after the migration.
 4. **CSS tokens**: retune upstream's new hardcoded colours — `#ef4444`/`#fff` on the delete-all
-   button in `app/sidebar-menu.css` → `--danger` via `color-mix` (applied). The terminal extra-keys
+   button in `app/sidebar-menu.css` → `border-color`/`background: var(--danger)` with `color: #fff`,
+   the form the fork's `.sidebar-worktree-force` beside it already uses (applied). The terminal extra-keys
    bar in `app/globals.css` (`#181b21`, `#242932`, `#2f3540`, `#60a5fa`) was to go on `--bg-panel` /
    `--border` / `--text` / `--accent`, **revised during implementation**: the terminal is dark on
    purpose in both themes (`.terminal-panel-header` was already hardcoded before the fork's CSS

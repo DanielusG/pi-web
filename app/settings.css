@@ -1088,7 +1088,7 @@
 }
 
 .skill-instructions-status.is-error {
-  color: #ef4444;
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 

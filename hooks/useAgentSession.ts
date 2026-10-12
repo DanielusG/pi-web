@@ -2634,6 +2634,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             agentRunningRef.current = true;
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+            // Flush first: this dispatch runs in a mount-only effect, and a
+            // re-opened session can still have deltas queued from the previous
+            // mount's stream. The store's `resume` keeps its state, so a late
+            // delta landing after it would rewrite the partial.
+            flushPendingDeltas();
             dispatch({ type: "resume" });
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
