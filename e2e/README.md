@@ -9,8 +9,9 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-`--include=dev` matters on this machine: `npm config get omit` is `dev`, so a plain `npm ci`
-skips devDependencies and installs no Playwright at all (102 packages instead of the full tree).
+Keep `--include=dev`: wherever `npm config get omit` is `dev` a plain `npm ci` skips
+devDependencies and installs no Playwright at all. It reads empty on this machine now (npm 12.0.2),
+so a plain `npm ci` installs Playwright here and the flag costs nothing.
 Browsers live in `~/.cache/ms-playwright` and are shared by every checkout.
 
 The script starts and stops its own Turbopack dev server on an available
