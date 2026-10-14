@@ -22,6 +22,11 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
     `lib/rpc-manager-extension-ui.test.mjs` asserts this; `app/api/agent/running-events-route.test.mjs`
     pins the field name to upstream's producer.
 - The app refuses to start against a server without this route, so keep it when merging upstream.
+- `RunStatus.snapshot` has three collectors: the session list, `RunWatcherService`, and the chat's
+  subagent bar. The chat subscribes only while its bar has an **active** row
+  (`ChatViewModel.watchRunState`, gated with `distinctUntilChanged` + `collectLatest`), so a bar of
+  finished runs does not hold the stream open and the server's 1 s in-memory check with it. One
+  connection still serves all of them: a second collector is no second request.
 
 ## Per-request trimming for runs
 - `GET /api/agent/[id]?lite=1` (`lib/agent-state-lite.ts`) leaves out `systemPrompt`: it carries
@@ -77,8 +82,20 @@ On the client the bar above the composer (`SubagentBar` in `ui/chat/ChatScreen.k
 and never expands itself when a run starts — `rememberSaveable { mutableStateOf(false) }`, so the
 header's toggle survives Back from a child's chat and a new session entry starts closed again. The
 web opens `AgentSessionPanel` from a button, so closed-by-default is parity: do not "restore" the
-old always-expanded bar when merging upstream. The header carries the count and `N running`, which
-is what makes a collapsed bar enough.
+old always-expanded bar when merging upstream. The header carries the count, `N running` and
+`N waiting`, which is what makes a collapsed bar enough.
+
+A row whose run is parked on a blocking extension dialog — the permission gate asks in the child's
+own chat, which the row opens on tap — shows the orange dot and `waiting` where it would say the
+accent dot and `running` (`Subagents.isWaiting` / `Subagents.statusLabel`, `t.warning`, like a
+waiting row in the session list). Nothing is fetched for it: the set is the same `waitingSessionIds`
+the notifications use, `getAwaitingInputRpcSessionIds()` of `lib/rpc-manager.ts`, and a subagent's
+wrapper is registered under its **own** session id (`registerRpcWrapper`, from the subagent
+controller's `registerSession`), so the child's dialog lands in the server-wide set. Only an active
+row can turn orange — that set is a subset of the running wrappers, so a stale id on a finished row
+keeps its done icon. `Subagents.order` puts a waiting row above the running ones (newest first
+within each group), and the header counts a parked run as waiting rather than running, so its words
+match the rows' words.
 
 ## Extension dialog mirrors the fork's web layout
 The app renders the extension dialog **inline in the composer slot**, replacing the input bar — not

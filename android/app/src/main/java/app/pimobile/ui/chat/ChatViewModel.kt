@@ -35,6 +35,7 @@ import app.pimobile.data.obj
 import app.pimobile.data.str
 import app.pimobile.data.strings
 import app.pimobile.data.type
+import app.pimobile.notify.RunSnapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,7 +44,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -180,6 +185,11 @@ data class ChatUiState(
     val openSession: OpenSession? = null,
     /** Direct subagents of this session from /api/sessions; empty hides the bar. */
     val subagents: List<SubagentInfo> = emptyList(),
+    /**
+     * Sessions parked on a blocking extension dialog (a permission gate), from the app's
+     * shared run-state stream. A subagent row whose id is here shows the orange dot.
+     */
+    val waiting: Set<String> = emptySet(),
     /** Set when this session is itself a subagent: the top bar shows it. */
     val subagentRelation: SubagentRelation? = null,
 ) {
@@ -217,6 +227,12 @@ class ChatViewModel(
     cwd: String,
     /** Lets the app start its background run watcher (completion notifications). */
     private val onRunActive: () -> Unit = {},
+    /**
+     * [app.pimobile.notify.RunStatus.snapshot]: the server-wide live run state, pushed over one
+     * connection shared with the session list and the notification watcher. Collected by
+     * [watchRunState] only while the subagent bar has an active row.
+     */
+    private val runStatus: StateFlow<RunSnapshot?> = MutableStateFlow(null),
     /** Remembers the last chat cwd for fresh-session launches (assistant trigger). */
     private val saveLastCwd: (String) -> Unit = {},
 ) : ViewModel() {
@@ -453,6 +469,27 @@ class ChatViewModel(
                 // The next event/foreground refresh retries; a dead server must not clear the bar.
             }
         }
+    }
+
+    /**
+     * Which subagents need a person: [app.pimobile.notify.RunStatus.snapshot] carries the sessions
+     * parked on a blocking extension dialog (a permission gate included), pushed by the server on
+     * every change — nothing is polled, and the connection is the one the session list and
+     * [app.pimobile.notify.RunWatcherService] already share. The collection is gated on an active
+     * row so a bar of finished runs never holds the stream open.
+     */
+    suspend fun watchRunState() {
+        _state.map { state -> state.subagents.any { it.active } }
+            .distinctUntilChanged()
+            .collectLatest { live ->
+                if (!live) {
+                    _state.update { it.copy(waiting = emptySet()) }
+                    return@collectLatest
+                }
+                runStatus.filterNotNull().collect { snapshot ->
+                    _state.update { it.copy(waiting = snapshot.waiting) }
+                }
+            }
     }
 
     /** Long-press on an active subagent row; 409 (already settled) is not an error. */

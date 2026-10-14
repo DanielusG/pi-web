@@ -55,6 +55,34 @@ object Subagents {
             .sortedWith(compareByDescending<SubagentInfo> { it.running }.thenByDescending { it.modified })
     }
 
+    /**
+     * True when the row's run is parked on a blocking extension dialog (a permission gate)
+     * and needs a person: [waiting] is the server's `waitingSessionIds`, pushed by
+     * `GET /api/agent/running/events`. Only an active row can be waiting — the server's set
+     * is a subset of the running wrappers, so a finished row never turns orange on a stale id.
+     */
+    fun isWaiting(agent: SubagentInfo, waiting: Set<String>): Boolean =
+        agent.active && agent.id in waiting
+
+    /** The row's status word: a parked run says waiting, not running. */
+    fun statusLabel(agent: SubagentInfo, waiting: Boolean): String = when {
+        waiting -> "waiting"
+        agent.active -> "running"
+        else -> agent.status
+    }
+
+    /**
+     * The bar's row order: a run that needs a person first, then the live ones, then newest
+     * first. [parse] already sorts live-first the way the server sends it; this re-sorts with
+     * the pushed waiting state on top, so the row to answer sits above the others.
+     */
+    fun order(subagents: List<SubagentInfo>, waiting: Set<String>): List<SubagentInfo> =
+        subagents.sortedWith(
+            compareByDescending<SubagentInfo> { isWaiting(it, waiting) }
+                .thenByDescending { it.running }
+                .thenByDescending { it.modified },
+        )
+
     /** Non-null when the session detail's info.relation marks it as a subagent. */
     fun relationOf(info: JsonObject?): SubagentRelation? {
         val relation = info?.obj("relation") ?: return null

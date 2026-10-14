@@ -250,7 +250,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                 val cwd = entry.arguments?.getString("cwd").orEmpty()
                 val focus = entry.arguments?.getBoolean("focus") ?: false
                 val vm = viewModel {
-                    ChatViewModel(app, app.api, id, cwd, app::onRunActive) { last ->
+                    ChatViewModel(app, app.api, id, cwd, app::onRunActive, app.runStatus.snapshot) { last ->
                         navScope.launch { app.settings.saveLastCwd(last) }
                     }
                 }

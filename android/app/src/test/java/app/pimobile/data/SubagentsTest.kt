@@ -6,7 +6,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -118,5 +120,42 @@ class SubagentsTest {
         assertEquals("Investigate auth bug", relation?.description)
         assertNull(Subagents.relationOf(fork))
         assertNull(Subagents.relationOf(null))
+    }
+
+    @Test
+    fun waitingIsTrueForActiveRowsOnly() {
+        val live = subagent("a", "m", running = true, status = "completed")
+        val queued = subagent("b", "m", running = false, status = "queued")
+        val done = subagent("c", "m", running = false, status = "completed")
+        val parsed = Subagents.parse(body(listOf(live, queued, done)))
+        // The server's waiting set is a subset of the running wrappers, so an id on a finished
+        // row is stale data: the row keeps its done icon instead of turning orange.
+        assertTrue(Subagents.isWaiting(parsed.first { it.id == "a" }, setOf("a", "b", "c")))
+        assertTrue(Subagents.isWaiting(parsed.first { it.id == "b" }, setOf("a", "b", "c")))
+        assertFalse(Subagents.isWaiting(parsed.first { it.id == "c" }, setOf("a", "b", "c")))
+        assertFalse(Subagents.isWaiting(parsed.first { it.id == "a" }, emptySet()))
+    }
+
+    @Test
+    fun statusLabelSaysWaitingForAParkedRun() {
+        val live = subagent("a", "m", running = true, status = "completed")
+        val failed = subagent("b", "m", running = false, status = "failed")
+        val parsed = Subagents.parse(body(listOf(live, failed)))
+        val liveRow = parsed.first { it.id == "a" }
+        assertEquals("waiting", Subagents.statusLabel(liveRow, waiting = true))
+        assertEquals("running", Subagents.statusLabel(liveRow, waiting = false))
+        assertEquals("failed", Subagents.statusLabel(parsed.first { it.id == "b" }, waiting = false))
+    }
+
+    @Test
+    fun waitingRowsComeFirst() {
+        val parked = subagent("a", "2026-01-01T01:00:00Z", running = true, status = "completed")
+        val runningNewer = subagent("b", "2026-01-01T03:00:00Z", running = true, status = "completed")
+        val done = subagent("c", "2026-01-01T04:00:00Z", running = false, status = "completed")
+        val parsed = Subagents.parse(body(listOf(done, runningNewer, parked)))
+        // a waits on a dialog: above the running b though b is newer, and the finished row stays last.
+        assertEquals(listOf("a", "b", "c"), Subagents.order(parsed, setOf("a")).map { it.id })
+        // Without the live set, parse's own running-first then newest-first order holds.
+        assertEquals(listOf("b", "a", "c"), Subagents.order(parsed, emptySet()).map { it.id })
     }
 }

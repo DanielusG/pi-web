@@ -124,6 +124,7 @@ import app.pimobile.data.ChatResumeStore
 import app.pimobile.data.FilePaths
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.SubagentInfo
+import app.pimobile.data.Subagents
 import app.pimobile.data.ToolResult
 import app.pimobile.data.TtsPlayer
 import app.pimobile.data.TtsUiState
@@ -297,6 +298,10 @@ fun ChatScreen(
             }
         }
     }
+    // Which subagents are parked on a permission gate: the live run state the server pushes.
+    // Only while this chat is the screen on top — leaving it drops the subscription, and
+    // ChatViewModel.watchRunState holds the shared stream open only with an active row.
+    LaunchedEffect(vm) { vm.watchRunState() }
     // Leaving the screen — navigating away, the app going background, the entry popped — puts the
     // position and the draft in the store; the chat reads them back when it composes again.
     LaunchedEffect(lifecycleOwner, resumeKey) {
@@ -516,6 +521,7 @@ fun ChatScreen(
                 if (state.subagents.isNotEmpty()) {
                     SubagentBar(
                         subagents = state.subagents,
+                        waiting = state.waiting,
                         onOpen = onOpenSubagent,
                         onAbort = vm::abortSubagent,
                     )
@@ -986,16 +992,20 @@ private fun TtsBar(
 /**
  * Collapsible bar of the session's subagents (web: AgentSessionPanel). Starts
  * collapsed and stays closed while a subagent runs — the header already says
- * how many there are and how many are running, so nothing here needs to open
- * itself over the composer. The header toggles it, and [rememberSaveable] keeps
+ * how many there are, how many are running and how many wait for a person, so
+ * nothing here needs to open itself over the composer. The header toggles it, and
+ * [rememberSaveable] keeps
  * that choice across Back from a subagent's own chat (the nav entry saves it)
  * and across config changes; a new session entry starts closed again. The web
  * opens its panel from a button, so closed-by-default is parity, not a deviation.
- * Tap a row to open the subagent's chat; long-press an active row to abort it.
+ * Tap a row to open the subagent's chat; long-press an active row to abort it. A row whose
+ * run waits on a permission gate shows the orange dot and "waiting", and sits above the rest.
  */
 @Composable
 private fun SubagentBar(
     subagents: List<SubagentInfo>,
+    /** Sessions parked on a blocking extension dialog, from the live run-state stream. */
+    waiting: Set<String>,
     onOpen: (String) -> Unit,
     onAbort: (String) -> Unit,
 ) {
@@ -1004,6 +1014,9 @@ private fun SubagentBar(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var abortTarget by remember { mutableStateOf<SubagentInfo?>(null) }
     val activeCount = subagents.count { it.active }
+    // A parked run is counted as waiting, not running: the header's words match the rows' words.
+    val waitingCount = subagents.count { Subagents.isWaiting(it, waiting) }
+    val runningCount = activeCount - waitingCount
     // A floating bubble, styled like the composer below it.
     Column(
         Modifier
@@ -1030,9 +1043,13 @@ private fun SubagentBar(
                 Text("Subagents", style = MaterialTheme.typography.labelLarge, color = t.text)
                 Spacer(Modifier.width(6.dp))
                 Text("${subagents.size}", style = MaterialTheme.typography.labelMedium, color = t.textTertiary)
-                if (activeCount > 0) {
+                if (runningCount > 0) {
                     Spacer(Modifier.width(6.dp))
-                    Text("$activeCount running", style = MaterialTheme.typography.labelMedium, color = t.accent)
+                    Text("$runningCount running", style = MaterialTheme.typography.labelMedium, color = t.accent)
+                }
+                if (waitingCount > 0) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("$waitingCount waiting", style = MaterialTheme.typography.labelMedium, color = t.warning)
                 }
                 Spacer(Modifier.weight(1f))
                 Icon(
@@ -1049,7 +1066,8 @@ private fun SubagentBar(
                         .heightIn(max = 168.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    subagents.forEach { agent ->
+                    Subagents.order(subagents, waiting).forEach { agent ->
+                        val isWaiting = Subagents.isWaiting(agent, waiting)
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -1060,7 +1078,7 @@ private fun SubagentBar(
                                 .padding(start = 14.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            SubagentStatusIcon(agent)
+                            SubagentStatusIcon(agent, isWaiting)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -1087,9 +1105,9 @@ private fun SubagentBar(
                             }
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (agent.active) "running" else agent.status,
+                                Subagents.statusLabel(agent, isWaiting),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = subagentStatusColor(agent),
+                                color = if (isWaiting) t.warning else subagentStatusColor(agent),
                                 maxLines = 1,
                             )
                         }
@@ -1112,9 +1130,11 @@ private fun SubagentBar(
 }
 
 @Composable
-private fun SubagentStatusIcon(agent: SubagentInfo) {
+private fun SubagentStatusIcon(agent: SubagentInfo, waiting: Boolean) {
     val t = Pi.tokens
     when {
+        // A parked run needs a person: orange, like a waiting row in the session list.
+        waiting -> Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) { StatusDot(t.warning, size = 7.dp) }
         // A static dot, not a spinner: see StatusDot.
         agent.active -> Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) { StatusDot(t.accent, size = 7.dp) }
         agent.status == "failed" -> Icon(PiIcons.Close, null, tint = t.danger, modifier = Modifier.size(14.dp))
