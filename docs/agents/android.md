@@ -73,6 +73,13 @@ A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
 ## Subagent runs
 `GET /api/sessions/[id]/subagents` lists a session's subagent runs for the app's session view.
 
+On the client the bar above the composer (`SubagentBar` in `ui/chat/ChatScreen.kt`) starts **closed**
+and never expands itself when a run starts — `rememberSaveable { mutableStateOf(false) }`, so the
+header's toggle survives Back from a child's chat and a new session entry starts closed again. The
+web opens `AgentSessionPanel` from a button, so closed-by-default is parity: do not "restore" the
+old always-expanded bar when merging upstream. The header carries the count and `N running`, which
+is what makes a collapsed bar enough.
+
 ## Extension dialog mirrors the fork's web layout
 The app renders the extension dialog **inline in the composer slot**, replacing the input bar — not
 upstream's non-blocking overlay (`android/app/src/main/java/app/pimobile/ui/chat/ChatScreen.kt`).

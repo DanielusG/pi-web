@@ -53,6 +53,11 @@ It has **not yet been tested against a real pi-web with a real model.**
     bash output streams live as its last lines (`?toolUpdates=tail`), the whole output
     arrives when the tool finishes.
   - `!bash` executions and compaction notices.
+  - Subagents bar above the composer when the session has direct children: closed by
+    default and it never opens itself while a run is going (the header shows the count
+    and "N running"). Tap the header to expand the rows, tap a row to open that
+    subagent's own chat, long-press an active row to abort it. The open/closed choice
+    survives Back from the child's chat; a new session starts closed.
   - "Load earlier messages" paging, which keeps the message under the top edge where it was
     instead of sliding the content away.
   - Position and unsent composer text restored per session when the chat comes back — from the

@@ -985,8 +985,13 @@ private fun TtsBar(
 
 /**
  * Collapsible bar of the session's subagents (web: AgentSessionPanel). Starts
- * expanded; the header toggles it. Tap a row to open the subagent's chat;
- * long-press an active row to abort it.
+ * collapsed and stays closed while a subagent runs — the header already says
+ * how many there are and how many are running, so nothing here needs to open
+ * itself over the composer. The header toggles it, and [rememberSaveable] keeps
+ * that choice across Back from a subagent's own chat (the nav entry saves it)
+ * and across config changes; a new session entry starts closed again. The web
+ * opens its panel from a button, so closed-by-default is parity, not a deviation.
+ * Tap a row to open the subagent's chat; long-press an active row to abort it.
  */
 @Composable
 private fun SubagentBar(
@@ -996,7 +1001,7 @@ private fun SubagentBar(
 ) {
     val t = Pi.tokens
     val shape = RoundedCornerShape(26.dp)
-    var expanded by remember { mutableStateOf(true) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     var abortTarget by remember { mutableStateOf<SubagentInfo?>(null) }
     val activeCount = subagents.count { it.active }
     // A floating bubble, styled like the composer below it.
