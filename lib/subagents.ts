@@ -585,9 +585,14 @@ export function saveSubagentProfile(
   if (model) managed.model = model;
   if (profile.thinking) managed.thinking = profile.thinking;
   if (maxTurns) managed.max_turns = maxTurns;
-  if (profile.color?.trim()) managed.color = profile.color.trim();
-  if (profile.isolation) managed.isolation = profile.isolation;
-  if (profile.persistSession !== undefined) managed.persist_session = profile.persistSession;
+  // The panel has no editor for these three, so a draft that omits them keeps the file's own
+  // values: editing the model of an isolated profile must not quietly move its child back into cwd.
+  const color = profile.color?.trim() || stringValue(stored.color);
+  const isolation = profile.isolation ?? (stored.isolation === "worktree" || stored.isolation === "off" ? stored.isolation : undefined);
+  const persistSession = profile.persistSession ?? (typeof stored.persist_session === "boolean" ? stored.persist_session : undefined);
+  if (color) managed.color = color;
+  if (isolation) managed.isolation = isolation;
+  if (persistSession !== undefined) managed.persist_session = persistSession;
   // Managed keys win; keys this app does not own follow in their original order.
   const frontmatter: Record<string, unknown> = { ...managed };
   for (const [key, value] of Object.entries(unmanagedFrontmatter(stored))) {
@@ -612,9 +617,9 @@ export function saveSubagentProfile(
     ...(model ? { model } : { model: undefined }),
     ...(maxTurns ? { maxTurns } : { maxTurns: undefined }),
     promptMode,
-    ...(profile.color ? { color: profile.color } : {}),
-    ...(profile.isolation ? { isolation: profile.isolation } : {}),
-    ...(profile.persistSession !== undefined ? { persistSession: profile.persistSession } : {}),
+    ...(color ? { color } : {}),
+    ...(isolation ? { isolation } : {}),
+    ...(persistSession !== undefined ? { persistSession } : {}),
     scope,
     filePath,
   };

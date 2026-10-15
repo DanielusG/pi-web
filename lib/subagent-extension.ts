@@ -11,7 +11,6 @@ import {
   type SubagentProfile,
   type SubagentRunInfo,
 } from "./subagents";
-import { MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -47,11 +46,8 @@ export interface StartSubagentRequest {
   parentToolCallId: string;
   profile: string;
   task: string;
-  inputFiles?: string[];
   description: string;
   runInBackground?: boolean;
-  model?: string;
-  isolation?: "worktree";
   signal?: AbortSignal;
   onUpdate?: (run: SubagentRunInfo) => void;
 }
@@ -87,10 +83,12 @@ export type SubagentEnabledProvider = () => boolean;
 function agentTypeDescription(profiles: readonly SubagentProfile[]): string {
   const available = profiles.filter((profile) => profile.enabled);
   if (available.length === 0) return "No subagent profiles are currently enabled.";
+  // The tool list and the isolation are listed, the model and the thinking level are not. The
+  // profile owns all four and a call overrides none, but only these two change how the model must
+  // read the result: an isolated profile's edits land in a git worktree of its own, not in its cwd.
   return available.map((profile) => {
     const details = [`Tools: ${profile.tools.length > 0 ? profile.tools.join(", ") : "none"}`];
-    if (profile.model) details.push(`Model: ${profile.model}`);
-    if (profile.thinking) details.push(`Thinking: ${profile.thinking}`);
+    if (profile.isolation === "worktree") details.push("isolation: worktree");
     return `- ${profile.name}: ${profile.description} (${details.join("; ")})`;
   }).join("\n");
 }
@@ -112,20 +110,35 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
   };
 }
 
+/**
+ * An isolated run's worktree lives only in `details`, which the model never sees, and it is deleted
+ * at cleanup. Without this line a parent reads the child's report as edits sitting in its own tree.
+ * A resumed run says nothing: its worktree is gone, and `resume` refuses isolated runs anyway.
+ */
+function subagentWorktreeNote(run: SubagentRunInfo): string {
+  if (!run.worktreePath || run.resumed) return "";
+  const branch = run.worktreeBranch ? ` on branch ${run.worktreeBranch}` : "";
+  const retained = run.worktreeCleanupError ? ` ${run.worktreeCleanupError}` : "";
+  return `\n\nThe subagent ran in an isolated git worktree ${run.worktreePath}${branch}; its changes are not in your working tree.${retained}`;
+}
+
 export function subagentFinalText(run: SubagentRunInfo): string {
+  const note = subagentWorktreeNote(run);
   if (run.status === "starting" || run.status === "running") {
-    return `Subagent ${run.sessionId} is ${run.status}.`;
+    return `Subagent ${run.sessionId} is ${run.status}.${note}`;
   }
   // Keep the session ID in the text: the model only sees `content`, never `details`, and needs it for `resume` / `get_subagent_result`.
   if (run.status === "completed") {
     const result = run.result?.trim();
-    return result ? `Subagent ${run.sessionId} completed.\n\n${result}` : `Subagent ${run.sessionId} completed without text output.`;
+    return result
+      ? `Subagent ${run.sessionId} completed.\n\n${result}${note}`
+      : `Subagent ${run.sessionId} completed without text output.${note}`;
   }
-  if (run.status === "aborted") return `Subagent ${run.sessionId} was stopped.`;
-  if (run.status === "interrupted") return `Subagent ${run.sessionId} was interrupted before completion.`;
+  if (run.status === "aborted") return `Subagent ${run.sessionId} was stopped.${note}`;
+  if (run.status === "interrupted") return `Subagent ${run.sessionId} was interrupted before completion.${note}`;
   const failure = `Subagent ${run.sessionId} failed: ${run.error ?? "Unknown error"}`;
   const partial = run.result?.trim();
-  return partial ? `${failure}\n\nPartial output:\n\n${partial}` : failure;
+  return partial ? `${failure}\n\nPartial output:\n\n${partial}${note}` : `${failure}${note}`;
 }
 
 /**
@@ -174,29 +187,13 @@ export function createSubagentExtension(
         parameters: Type.Object({
           subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}. Default: general-purpose.` })),
           prompt: Type.String({ description: "The complete task for the subagent." }),
-          resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
-          input_files: Type.Optional(Type.Array(Type.String(), {
-            description: "UTF-8 text files under the session cwd to include with the task.",
-            maxItems: MAX_SUBAGENT_INPUT_FILES,
-          })),
+          resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context." })),
           description: Type.String({ description: "Short activity label shown in the UI." }),
           run_in_background: Type.Optional(Type.Boolean({ description: "Return immediately and notify this session when complete." })),
-          model: Type.Optional(Type.String({ description: 'Optional provider/modelId override. Append ":<level>" (off, minimal, low, medium, high, xhigh, max) to also set the thinking level for this run, e.g. "provider/model:high".' })),
-          isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
         }),
         async execute(toolCallId, params, signal, onUpdate, ctx) {
           try {
             const resume = params.resume?.trim();
-            if (resume) {
-              const creationOptions = [
-                params.model?.trim() && "model",
-                params.input_files?.length && "input_files",
-                params.isolation?.trim() && "isolation",
-              ].filter(Boolean);
-              if (creationOptions.length > 0) {
-                throw new Error(`${creationOptions.join(", ")} only apply to new subagents. Omit them to resume the existing session, or start a new subagent.`);
-              }
-            }
             const execution = resume
               ? await runtime.resume({
                   parentContext: ctx,
@@ -216,11 +213,8 @@ export function createSubagentExtension(
               parentToolCallId: toolCallId,
               profile: params.subagent_type ?? "general-purpose",
               task: params.prompt,
-              ...(params.input_files ? { inputFiles: params.input_files } : {}),
               description: params.description,
               ...(params.run_in_background !== undefined ? { runInBackground: params.run_in_background } : {}),
-              ...(params.model ? { model: params.model } : {}),
-              ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
               signal,
               onUpdate: (run) => onUpdate?.({
                 content: [{ type: "text", text: `${run.profile}: ${run.description} (${run.status})` }],

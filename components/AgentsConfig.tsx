@@ -97,6 +97,10 @@ function editableProfile(profile: SubagentProfile): EditableProfile {
     ...(profile.model ? { model: profile.model } : {}),
     ...(profile.thinking ? { thinking: profile.thinking } : {}),
     ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
+    // The editor has no fields for these three, so the draft carries them through untouched.
+    ...(profile.color ? { color: profile.color } : {}),
+    ...(profile.isolation ? { isolation: profile.isolation } : {}),
+    ...(profile.persistSession !== undefined ? { persistSession: profile.persistSession } : {}),
     inheritContext: profile.inheritContext,
     runInBackground: profile.runInBackground,
     enabled: profile.enabled,

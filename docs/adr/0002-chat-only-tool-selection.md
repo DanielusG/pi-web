@@ -19,9 +19,14 @@ tools are activated alongside the profile's built-in tools except for Pi Web's
 reserved subagent-control tools, which remain excluded to prevent nested Agent
 dispatch.
 
-The host may resolve `input_files` before dispatch and include their UTF-8 text
-in the delegated user task. This is input preparation, not a subagent tool: it
-does not change the active tool list or the exact Chat-only system prompt.
+The host resolved `input_files` before dispatch and included their UTF-8 text in
+the delegated user task. That was input preparation, not a subagent tool: it did
+not change the active tool list or the exact Chat-only system prompt.
+
+> **Update (2026-10-14).** `input_files` is no longer a parameter of `Agent`
+> and `lib/subagent-input.ts` is gone: a subagent reads the files a task names
+> with its own `read` / `bash`. The reasoning and the rest of this decision are
+> unchanged. The current rules are in `docs/agents/subagents.md`.
 
 Pi's native session format does not persist the active tool selection. Normal
 sessions therefore append versioned `pi-web:tool-selection` custom entries:

@@ -34,7 +34,6 @@ import {
 import type { SessionEntry } from "./types";
 import { buildSubagentPromptPlan } from "./subagent-prompt";
 import { createSubagentSkillsBinding } from "./subagent-skills";
-import { appendSubagentInputFiles, loadSubagentInputFiles } from "./subagent-input";
 import { projectTrustReloadOptions } from "./project-trust";
 import { createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions";
 import type { McpHost } from "./mcp-host";
@@ -195,11 +194,15 @@ function settleOrphanedRun(run: SubagentRunInfo): SubagentRunInfo {
   return run.status === "running" || run.status === "queued" ? { ...run, status: "interrupted" } : run;
 }
 
-function findSubagentModel(runtime: ModelRuntime, reference: string) {
+/**
+ * A model reference names where it came from in its errors. Only a profile's frontmatter carries one
+ * now, so a message that reads like a request named a model would send the reader to the wrong place.
+ */
+function findSubagentModel(runtime: ModelRuntime, reference: string, origin: string) {
   const slash = reference.indexOf("/");
   if (slash > 0) return runtime.getModel(reference.slice(0, slash), reference.slice(slash + 1));
   const matches = runtime.getModels().filter((model) => model.id === reference);
-  if (matches.length > 1) throw new Error(`Subagent model is ambiguous; use provider/modelId: ${reference}`);
+  if (matches.length > 1) throw new Error(`${origin} is ambiguous; use provider/modelId: ${reference}`);
   return matches[0];
 }
 
@@ -208,18 +211,18 @@ function findSubagentModel(runtime: ModelRuntime, reference: string) {
  * followed by `:<thinking level>`. The whole reference is tried first, so an id that itself
  * contains a colon (`qwen3:8b`) still matches; a suffix that is no thinking level never matches.
  */
-function parseSubagentModel(runtime: ModelRuntime, value: string | undefined) {
+function parseSubagentModel(runtime: ModelRuntime, value: string | undefined, origin: string) {
   if (!value?.trim()) return undefined;
   const requested = value.trim();
-  const exact = findSubagentModel(runtime, requested);
+  const exact = findSubagentModel(runtime, requested, origin);
   if (exact) return { model: exact };
   const colon = requested.lastIndexOf(":");
   const level = requested.slice(colon + 1) as ThinkingLevel;
   if (colon > 0 && THINKING_LEVELS.has(level)) {
-    const model = findSubagentModel(runtime, requested.slice(0, colon));
+    const model = findSubagentModel(runtime, requested.slice(0, colon), origin);
     if (model) return { model, thinkingLevel: level };
   }
-  throw new Error(`Subagent model not found: ${requested}`);
+  throw new Error(`${origin} not found: ${requested}`);
 }
 
 function parentContextText(parent: HostSession): string {
@@ -258,10 +261,17 @@ export function createSubagentController(
       const profile = resolveSubagentProfile(parent.cwd, request.profile);
       if (!profile) throw new Error(`Unknown or disabled subagent profile: ${request.profile}`);
 
+      const profileWhere = `${profile.name}${profile.filePath ? ` (${profile.filePath})` : ""}`;
       const runInBackground = request.runInBackground ?? profile.runInBackground;
-      const isolation = profile.isolation === "off" ? undefined : request.isolation ?? profile.isolation;
-      if (isolation === "worktree") {
-        isolatedWorktree = await addWorktree(parent.cwd, `pi-web-agent-${randomUUID()}`);
+      // The profile owns the isolation: a call cannot put one run in a worktree.
+      if (profile.isolation === "worktree") {
+        try {
+          isolatedWorktree = await addWorktree(parent.cwd, `pi-web-agent-${randomUUID()}`);
+        } catch (error) {
+          // The profile decided this, so a raw git message ("not a git repository") reads as a
+          // broken tool and the model retries the same call. Say who asked and where it failed.
+          throw new Error(`Subagent profile ${profileWhere} isolates runs in a git worktree, but ${parent.cwd} is not usable as a repository: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       const childCwd = isolatedWorktree?.path ?? parent.cwd;
       const inheritContext = profile.inheritContext;
@@ -274,14 +284,13 @@ export function createSubagentController(
       const inheritedParentContext = inheritContext
         ? `The following is the active conversation context from the parent session. Use it only as background for the delegated task:\n${parentContextText(parent)}`
         : undefined;
-      const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? []);
       const promptPlan = buildSubagentPromptPlan({
         profileSystemPrompt: profile.systemPrompt,
         tools: profile.tools,
         loadSkills: profile.loadSkills,
         loadExtensions: profile.loadExtensions,
         promptMode: profile.promptMode,
-        task: appendSubagentInputFiles(request.task, inputFiles),
+        task: request.task,
         inheritedParentContext,
       });
       const parentCodemodeEnabled = parent.inner.getActiveToolNames().includes("codemode");
@@ -407,23 +416,21 @@ export function createSubagentController(
       sessionManager.appendCustomEntry(SUBAGENT_META_TYPE, metadata);
       sessionManager.appendSessionInfo(metadata.description);
 
-      // A `:level` suffix travels with its model. As with pi's `--thinking` over `--model x:level`,
-      // the profile's own `thinking` beats a suffix on the profile's model, while a call naming
-      // a model with a suffix chose both for this run.
-      const callModel = parseSubagentModel(parentModelRuntime, request.model);
-      const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
-      const thinking = callModel?.thinkingLevel
-        ?? profile.thinking
+      // The profile owns the model: a call cannot send one run to another model. A profile
+      // reference reads as pi's `--model` does, and a `:level` suffix travels with its model; as
+      // with pi's `--thinking` over `--model x:level`, the profile's own `thinking` wins over it.
+      const profileModel = parseSubagentModel(parentModelRuntime, profile.model, `Subagent profile model ${profileWhere}`);
+      const thinking = profile.thinking
         ?? profileModel?.thinkingLevel
         ?? parent.inner.agent.state?.thinkingLevel;
       if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
-        throw new Error(`Invalid subagent thinking level: ${thinking}`);
+        throw new Error(`Invalid thinking level "${thinking}" for subagent profile ${profileWhere}`);
       }
       const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
       const { session: inner } = await createAgentSessionFromServices({
         services,
         sessionManager,
-        model: (callModel ?? profileModel)?.model ?? parentModel,
+        model: profileModel?.model ?? parentModel,
         ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
         ...subagentToolOptions({ tools: activeTools, allExtensionTools, mcp: mcpEnabled }),
       });
@@ -635,6 +642,12 @@ export function createSubagentController(
     if (!wrapper?.isAlive()) wrapper = await dependencies.reopenSession(request.sessionId, sessionPath);
     if (!wrapper.isAlive()) throw new Error("Subagent session is no longer available");
     if (wrapper.isRunning()) throw new Error("Subagent is already running");
+    // An isolated run's worktree is removed when it ends, while the child's session file keeps that
+    // path as its cwd. Reopening it would run the child in a directory that no longer exists — its
+    // own `prompt` bypasses the wrapper's existence check — so refuse instead.
+    if (existing.worktreePath) {
+      throw new Error(`Subagent ${request.sessionId} ran in an isolated git worktree, which is removed when the run ends. Start a new subagent instead of resuming it.`);
+    }
 
     const runInBackground = request.runInBackground ?? existing.runInBackground;
     const initialRun: SubagentRunInfo = {
