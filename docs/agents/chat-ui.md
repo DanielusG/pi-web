@@ -113,6 +113,18 @@ reply into blocks that re-parse on their own), so merging a new upstream version
 What stays ours is `keepLineBreaks` — the prop is on both sides.
 
 ## AppShell
+The fork renders the message list through `ChatWindow`'s `messageListNode` memo, so upstream's
+v0.12.2 turn features land there and not in the JSX: `renderMessage` takes `withNotices` and
+`turnDurationMs`, keys off `messageKeys[idx]` (#1184 — a live message keeps its alias until the
+file brings an entry id), and returns a `Fragment` so `TranscriptNoticeLines` can follow the view
+without remounting it (#1265). The grouping loop counts `processMessageCount` (notice lines sit in
+`processViews` too), pushes those lines alone when a turn shows nothing else, and gives
+`durationMs` and `cacheMisses` to `ProcessDetailsGroup`; a turn with no process details puts
+`turnDurationMs` under its answer instead. `lib/turn-duration.ts` formats the minutes and seconds,
+and the bubble a send shows carries the browser's clock with no entry id, so it shows no time until
+the reload after the run. `MessageView` keeps the fork's word-diff rows (`InlineLineRow` over
+`lib/word-diff.ts`) beside upstream's `splitThinkingPieces` (#1196) and `formatTurnDuration`.
+
 The fork's header cleanup removed the `systemPrompt` state and `SystemPromptPanel` from
 `components/AppShell.tsx`. Upstream's session-switch resets still call `setBranchSwitchLocked(false)`
 (keep) but also `setSystemPrompt(null)` (drop — that state does not exist here).

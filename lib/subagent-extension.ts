@@ -11,6 +11,7 @@ import {
   type SubagentProfile,
   type SubagentRunInfo,
 } from "./subagents";
+import { worktreeHasUncommittedFiles } from "./worktree";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -111,34 +112,44 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
 }
 
 /**
- * An isolated run's worktree lives only in `details`, which the model never sees, and it is deleted
- * at cleanup. Without this line a parent reads the child's report as edits sitting in its own tree.
- * A resumed run says nothing: its worktree is gone, and `resume` refuses isolated runs anyway.
+ * Where an isolated run's worktree is, as its result was recorded: the model reads only `content`,
+ * never `details` (#1202). Git keeps the branch, with any commits, when it removes the checkout,
+ * and refuses to remove one that still has changes. Only this run's own refusal gives a reason, and
+ * never in git's words, which end in "use --force to delete it". A result recorded without
+ * `worktreeExists` (before #1202) says nothing. A resumed run says nothing either: the fork's
+ * `resume` refuses isolated runs, so one exists only in a transcript written before that refusal.
  */
-function subagentWorktreeNote(run: SubagentRunInfo): string {
-  if (!run.worktreePath || run.resumed) return "";
-  const branch = run.worktreeBranch ? ` on branch ${run.worktreeBranch}` : "";
-  const retained = run.worktreeCleanupError ? ` ${run.worktreeCleanupError}` : "";
-  return `\n\nThe subagent ran in an isolated git worktree ${run.worktreePath}${branch}; its changes are not in your working tree.${retained}`;
+function worktreeOutcomeText(run: SubagentRunInfo): string | undefined {
+  if (!run.worktreePath || run.resumed) return undefined;
+  if (!run.worktreeBranch || run.worktreeExists === undefined) return undefined;
+
+  if (!run.worktreeExists) return `Its worktree was removed; branch ${run.worktreeBranch} keeps any commits it made.`;
+  return run.worktreeCleanupError && worktreeHasUncommittedFiles(run.worktreeCleanupError)
+    ? `Its worktree was kept at ${run.worktreePath} (branch ${run.worktreeBranch}) because it still has uncommitted or untracked files.`
+    : `Its worktree is still at ${run.worktreePath} (branch ${run.worktreeBranch}).`;
 }
 
 export function subagentFinalText(run: SubagentRunInfo): string {
-  const note = subagentWorktreeNote(run);
   if (run.status === "starting" || run.status === "running") {
-    return `Subagent ${run.sessionId} is ${run.status}.${note}`;
+    return `Subagent ${run.sessionId} is ${run.status}.`;
   }
   // Keep the session ID in the text: the model only sees `content`, never `details`, and needs it for `resume` / `get_subagent_result`.
+  // The worktree line follows the status, before the subagent's own words.
+  const worktree = worktreeOutcomeText(run);
+  const withWorktree = (status: string) => worktree ? `${status}\n\n${worktree}` : status;
   if (run.status === "completed") {
     const result = run.result?.trim();
     return result
-      ? `Subagent ${run.sessionId} completed.\n\n${result}${note}`
-      : `Subagent ${run.sessionId} completed without text output.${note}`;
+      ? `${withWorktree(`Subagent ${run.sessionId} completed.`)}\n\n${result}`
+      : withWorktree(`Subagent ${run.sessionId} completed without text output.`);
   }
-  if (run.status === "aborted") return `Subagent ${run.sessionId} was stopped.${note}`;
-  if (run.status === "interrupted") return `Subagent ${run.sessionId} was interrupted before completion.${note}`;
-  const failure = `Subagent ${run.sessionId} failed: ${run.error ?? "Unknown error"}`;
+  if (run.status === "aborted") return withWorktree(`Subagent ${run.sessionId} was stopped.`);
+  // An interrupted isolated run cleans up like any other, so its line belongs here as much as in the
+  // completed case — the fork's rule; upstream left it out and the parent read the edits as its own.
+  if (run.status === "interrupted") return withWorktree(`Subagent ${run.sessionId} was interrupted before completion.`);
+  const failure = withWorktree(`Subagent ${run.sessionId} failed: ${run.error ?? "Unknown error"}`);
   const partial = run.result?.trim();
-  return partial ? `${failure}\n\nPartial output:\n\n${partial}${note}` : `${failure}${note}`;
+  return partial ? `${failure}\n\nPartial output:\n\n${partial}` : failure;
 }
 
 /**
@@ -187,7 +198,7 @@ export function createSubagentExtension(
         parameters: Type.Object({
           subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}. Default: general-purpose.` })),
           prompt: Type.String({ description: "The complete task for the subagent." }),
-          resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context." })),
+          resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
           description: Type.String({ description: "Short activity label shown in the UI." }),
           run_in_background: Type.Optional(Type.Boolean({ description: "Return immediately and notify this session when complete." })),
         }),

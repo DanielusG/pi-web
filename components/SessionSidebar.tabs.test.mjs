@@ -8,19 +8,23 @@ import { createJiti } from "jiti";
 // rendered. useFilesPlacement's server snapshot is always "below", so the
 // hook is aliased to a fixture that answers "tab". The alias takes the
 // module's absolute path without its extension ("@/…" resolves first and is
-// never matched), and it needs a process of its own: SessionSidebar.test.mjs
-// has already loaded the sidebar with the real hook, and jiti shares Node's
-// module cache.
+// never matched), in the form jiti compares it with: forward slashes and an
+// upper-case drive letter on Windows (#1211). It needs a process of its own:
+// SessionSidebar.test.mjs has already loaded the sidebar with the real hook,
+// and jiti shares Node's module cache.
+const placementHook = fileURLToPath(new URL("../hooks/useFilesPlacement", import.meta.url))
+  .replaceAll("\\", "/")
+  .replace(/^[a-z]:/, (drive) => drive.toUpperCase());
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
   alias: {
-    [fileURLToPath(new URL("../hooks/useFilesPlacement", import.meta.url))]: fileURLToPath(new URL("./__fixtures__/files-placement-tab.mjs", import.meta.url)),
+    [placementHook]: fileURLToPath(new URL("./__fixtures__/files-placement-tab.mjs", import.meta.url)),
   },
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { I18nProvider } = await jiti.import("@/hooks/useI18n.tsx");
+const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { SessionSidebar } = await jiti.import("./SessionSidebar.tsx");
 
 const h = React.createElement;

@@ -22,5 +22,5 @@ test("the context route answers through jsonResponse, so the page ships gzipped"
 test("the context route wires ?tail and ?before, excluding the boundary on paging", () => {
   assert.match(routeSrc, /const tail = Number\.isFinite\(rawTail\) && rawTail > 0 \? Math\.min\(rawTail, 1000\) : 50/);
   assert.match(routeSrc, /const before = url\.searchParams\.get\("before"\)/);
-  assert.match(routeSrc, /buildSessionContext\(sm\.getEntries\(\) as never, before \?\? leafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
+  assert.match(routeSrc, /attachTranscriptNotices\(buildSessionContext\(entries as never, before \?\? leafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
 });

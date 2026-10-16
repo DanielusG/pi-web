@@ -103,5 +103,17 @@ upstream's non-blocking overlay (`android/app/src/main/java/app/pimobile/ui/chat
 See [chat-ui.md](chat-ui.md). Do not "fix" either side back to the upstream overlay when merging.
 
 ## Tests
+## Semantics since v0.12.2
+- Provider signature fields (`thinkingSignature`, `textSignature`, `thoughtSignature`) are stripped
+  from what reaches the client (`lib/message-signatures.ts`, on the SSE wire, in `lib/session-reader.ts`
+  and `lib/project-tree.ts`). A Kotlin model that read them optionally keeps working; nothing sends
+  them again.
+- The fork-only contracts are untouched by this range: `?lite=1`, `?toolUpdates=tail`, the paged
+  session list, `/api/agent/running/events`, `/api/sessions/[id]/subagents`, and `waitingSessionIds`
+  still meaning "awaiting an extension answer".
+- `POST /api/sessions/stats` and `GET /api/cache-miss-notices` are the web UI's own (the agent
+  switcher's totals and the transcript notices). The app reads neither; its usage numbers stay on
+  the context pages it already fetches.
+
 `android/` has its own Gradle test task (105 tests on the v0.9.3 baseline). Run it after changing a
 route contract the app depends on.

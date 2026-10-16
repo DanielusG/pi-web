@@ -43,6 +43,7 @@ import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-sett
 import { SubagentQueue } from "./subagent-queue";
 import { addWorktree, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
+import { existsSync, writeFileSync } from "node:fs";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -232,6 +233,23 @@ function parentContextText(parent: HostSession): string {
   return `${serialized.slice(0, SUBAGENT_CONTEXT_LIMIT)}\n[Parent context truncated]`;
 }
 
+/**
+ * pi creates a session file only once the session holds a user or assistant message, so a run
+ * that ended before its prompt reached the model (stopped while queued or connecting MCP servers,
+ * a provider without credentials) kept its metadata and result in memory only. Once the idle
+ * child's wrapper was released, `get_subagent_result` and `resume` answered `Subagent not found`
+ * for an id the parent had been given, and the session left the sidebar. Write the file when the
+ * child is dispatched; `setSessionFile()` reloads it, so pi appends every later entry to it.
+ */
+function persistChildSession(sessionManager: SessionManager): void {
+  const sessionFile = sessionManager.getSessionFile();
+  const header = sessionManager.getHeader();
+  if (!sessionFile || !header || existsSync(sessionFile)) return;
+  const lines = [header, ...sessionManager.getEntries()].map((entry) => JSON.stringify(entry));
+  writeFileSync(sessionFile, `${lines.join("\n")}\n`, { flag: "wx" });
+  sessionManager.setSessionFile(sessionFile);
+}
+
 async function cleanupWorktree(
   parentCwd: string,
   worktree: { path: string; branch: string } | undefined,
@@ -243,6 +261,27 @@ async function cleanupWorktree(
   } catch (error) {
     return `Worktree retained at ${worktree.path}: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+/**
+ * Writes a settled run's result entry, which `readSubagentRun()` reads back, and returns the run as
+ * recorded. An isolated run's entry keeps whether its worktree path still exists now, which decides
+ * what the parent is told about it, live and read back alike (#1202): a checkout removed during
+ * the run is gone though git's removal then failed, and a resumed run removes nothing.
+ */
+function recordResult(sessionManager: SessionManager, run: SubagentRunInfo): SubagentRunInfo {
+  const recorded = run.worktreePath ? { ...run, worktreeExists: existsSync(run.worktreePath) } : run;
+  const entry: SubagentResultMetadata = {
+    version: 1,
+    status: recorded.status as SubagentResultMetadata["status"],
+    completedAt: recorded.completedAt!,
+    ...(recorded.result ? { result: recorded.result } : {}),
+    ...(recorded.error ? { error: recorded.error } : {}),
+    ...(recorded.worktreeCleanupError ? { worktreeCleanupError: recorded.worktreeCleanupError } : {}),
+    ...(recorded.worktreeExists !== undefined ? { worktreeExists: recorded.worktreeExists } : {}),
+  };
+  sessionManager.appendCustomEntry(SUBAGENT_RESULT_TYPE, entry);
+  return recorded;
 }
 
 export function createSubagentController(
@@ -263,6 +302,7 @@ export function createSubagentController(
 
       const profileWhere = `${profile.name}${profile.filePath ? ` (${profile.filePath})` : ""}`;
       const runInBackground = request.runInBackground ?? profile.runInBackground;
+      const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
       // The profile owns the isolation: a call cannot put one run in a worktree.
       if (profile.isolation === "worktree") {
         try {
@@ -279,7 +319,6 @@ export function createSubagentController(
       const turnLimit = profile.maxTurns;
 
       const agentDir = getAgentDir();
-      const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
       const settingsManager = SettingsManager.create(childCwd, agentDir);
       const inheritedParentContext = inheritContext
         ? `The following is the active conversation context from the parent session. Use it only as background for the delegated task:\n${parentContextText(parent)}`
@@ -434,6 +473,7 @@ export function createSubagentController(
         ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
         ...subagentToolOptions({ tools: activeTools, allExtensionTools, mcp: mcpEnabled }),
       });
+      persistChildSession(sessionManager);
       skillsBinding.setActiveToolsGetter(() => inner.getActiveToolNames());
       const childSession = dependencies.registerSession(inner, {
         ...(skillsBinding.getExactSystemPrompt !== undefined
@@ -477,10 +517,16 @@ export function createSubagentController(
       if (!runInBackground) request.signal?.addEventListener("abort", handleParentAbort, { once: true });
 
       const execute = async (): Promise<SubagentRunInfo> => {
+        // Reached only when the abort fires while the run is being queued, before `cancelQueued`
+        // is set; a run aborted later in the queue ends in `finishQueuedAbort`.
         if (stored.abortRequested) {
-          const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-          sessionManager.appendCustomEntry(SUBAGENT_RESULT_TYPE, { version: 1, status: "aborted", completedAt: result.completedAt });
-          await cleanupWorktree(parent.cwd, isolatedWorktree);
+          const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
+          const result = recordResult(sessionManager, {
+            ...initialRun,
+            status: "aborted",
+            completedAt: new Date().toISOString(),
+            ...(cleanupError ? { worktreeCleanupError: cleanupError } : {}),
+          });
           stored.run = result;
           request.onUpdate?.(result);
           getSubagentRuns().delete(initialRun.sessionId);
@@ -570,15 +616,7 @@ export function createSubagentController(
 
         const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
         if (cleanupError) result = { ...result, worktreeCleanupError: cleanupError };
-        const persisted: SubagentResultMetadata = {
-          version: 1,
-          status: result.status as SubagentResultMetadata["status"],
-          completedAt: result.completedAt!,
-          ...(result.result ? { result: result.result } : {}),
-          ...(result.error ? { error: result.error } : {}),
-          ...(result.worktreeCleanupError ? { worktreeCleanupError: result.worktreeCleanupError } : {}),
-        };
-        sessionManager.appendCustomEntry(SUBAGENT_RESULT_TYPE, persisted);
+        result = recordResult(sessionManager, result);
         stored.run = result;
         request.onUpdate?.(result);
         getSubagentRuns().delete(initialRun.sessionId);
@@ -590,8 +628,7 @@ export function createSubagentController(
         if (stored.run.status !== "queued") return;
         const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
         const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
-        const finalResult = cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result;
-        sessionManager.appendCustomEntry(SUBAGENT_RESULT_TYPE, { version: 1, status: "aborted", completedAt: finalResult.completedAt, ...(cleanupError ? { worktreeCleanupError: cleanupError } : {}) });
+        const finalResult = recordResult(sessionManager, cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result);
         stored.run = finalResult;
         request.onUpdate?.(finalResult);
         getSubagentRuns().delete(initialRun.sessionId);
@@ -644,10 +681,16 @@ export function createSubagentController(
     if (wrapper.isRunning()) throw new Error("Subagent is already running");
     // An isolated run's worktree is removed when it ends, while the child's session file keeps that
     // path as its cwd. Reopening it would run the child in a directory that no longer exists — its
-    // own `prompt` bypasses the wrapper's existence check — so refuse instead.
+    // own `prompt` bypasses the wrapper's existence check — so refuse instead. The fork refuses any
+    // isolated run, whether or not the checkout is still there: a worktree left behind by a failed
+    // cleanup is not a place to continue a finished task.
     if (existing.worktreePath) {
       throw new Error(`Subagent ${request.sessionId} ran in an isolated git worktree, which is removed when the run ends. Start a new subagent instead of resuming it.`);
     }
+    // The run prompts the SDK session directly, past the wrapper's `send()`, so refuse here as
+    // `send()` does: a run whose folder is gone would only let the model's tools fail (and `write`
+    // recreate it outside git). The error reaches the model, so it also says what to do instead.
+    if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}. Start a new subagent instead.`);
 
     const runInBackground = request.runInBackground ?? existing.runInBackground;
     const initialRun: SubagentRunInfo = {
@@ -660,6 +703,9 @@ export function createSubagentController(
       completedAt: undefined,
       result: undefined,
       error: undefined,
+      // Resume removes no worktree: this run's result says only whether it is still there.
+      worktreeCleanupError: undefined,
+      worktreeExists: undefined,
       resumed: true,
     };
     const manager = wrapper.inner.sessionManager;
@@ -679,8 +725,7 @@ export function createSubagentController(
 
     const execute = async (): Promise<SubagentRunInfo> => {
       if (stored.abortRequested) {
-        const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-        manager.appendCustomEntry(SUBAGENT_RESULT_TYPE, { version: 1, status: "aborted", completedAt: result.completedAt });
+        const result = recordResult(manager, { ...initialRun, status: "aborted", completedAt: new Date().toISOString() });
         stored.run = result;
         getSubagentRuns().delete(request.sessionId);
         resolveCompletion(result);
@@ -714,13 +759,7 @@ export function createSubagentController(
       } finally {
         request.signal?.removeEventListener("abort", handleParentAbort);
       }
-      manager.appendCustomEntry(SUBAGENT_RESULT_TYPE, {
-        version: 1,
-        status: result.status as "completed" | "failed" | "aborted",
-        completedAt: result.completedAt!,
-        ...(result.result ? { result: result.result } : {}),
-        ...(result.error ? { error: result.error } : {}),
-      });
+      result = recordResult(manager, result);
       stored.run = result;
       request.onUpdate?.(result);
       getSubagentRuns().delete(request.sessionId);
@@ -729,8 +768,7 @@ export function createSubagentController(
     };
     const finishQueuedAbort = () => {
       if (stored.run.status !== "queued") return;
-      const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-      manager.appendCustomEntry(SUBAGENT_RESULT_TYPE, { version: 1, status: "aborted", completedAt: result.completedAt });
+      const result = recordResult(manager, { ...initialRun, status: "aborted", completedAt: new Date().toISOString() });
       stored.run = result;
       request.onUpdate?.(result);
       getSubagentRuns().delete(request.sessionId);
