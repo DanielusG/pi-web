@@ -8,7 +8,7 @@ import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
+import { getAssistantErrorMessage, getFirstLinePreview, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
 import { formatTurnDuration } from "@/lib/turn-duration";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile, type SplitDiffRow } from "@/lib/patch";
 import { inlineDiff, type InlineDiff, type InlineSegment } from "@/lib/word-diff";
@@ -2184,13 +2184,34 @@ function CompactionFileList({ title, files }: { title: string; files: string[] }
   );
 }
 
+// pi's TUI draws a custom message an extension renders (`registerMessageRenderer`)
+// collapsed unless `--verbose` or Ctrl+O expanded it — `toolOutputExpanded` starts
+// false — and pi-web runs no TUI renderers, so a long reminder left open would
+// spread several thousand characters over the conversation, far more than the CLI
+// shows. A short one stays open, as pi's default renderer draws it in full.
+const CUSTOM_MESSAGE_COLLAPSE_CHARS = 1200;
+
+/** A message's body is capped and scrolls inside the card, like the user bubble. */
+const CUSTOM_MESSAGE_BODY_MAX_HEIGHT = 360;
+
+/**
+ * A subagent completion is a turn anchor announcing the report the main agent
+ * answers next, so its text stays in view: pi-web's own and
+ * `@tintinweb/pi-subagents`' notifications keep the behaviour they had before
+ * the length rule.
+ */
+function startsCustomMessageCollapsed(customType: string, text: string): boolean {
+  if (customType === "pi-web:subagent-notification" || customType === "subagent-notification") return false;
+  return text.length > CUSTOM_MESSAGE_COLLAPSE_CHARS;
+}
+
 function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void }) {
   const { t } = useI18n();
-  // Expanded by default: pi's TUI always draws a displayed custom message in full.
-  const [contentExpanded, setContentExpanded] = useState(true);
+  const text = getMessageText(message.content);
+  // Long extension messages start folded to their header, with the first line on it.
+  const [contentExpanded, setContentExpanded] = useState(() => !startsCustomMessageCollapsed(message.customType, text));
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const text = getMessageText(message.content);
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
@@ -2251,7 +2272,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
             </span>
             {!contentExpanded && text && (
               <span style={{ color: "var(--text-dim)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                {text.slice(0, 300).replace(/\s+/g, " ").trim()}
+                {getFirstLinePreview(text)}
               </span>
             )}
             {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>{time}</span>}
@@ -2263,7 +2284,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
 
         {contentExpanded && (
           <>
-            <div style={{ padding: "6px 9px" }}>
+            <div style={{ padding: "6px 9px", maxHeight: CUSTOM_MESSAGE_BODY_MAX_HEIGHT, overflowY: "auto" }}>
               {images.length > 0 && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: text ? 8 : 0 }}>
                   {images.map((img, i) => {

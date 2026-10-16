@@ -4,8 +4,16 @@ interface DisplayOptions {
   isStreaming?: boolean;
 }
 
+/**
+ * The text's first line, trimmed and cut at 240 characters: the one-line preview
+ * a collapsed card shows in its header. The CSS ellipsis cuts it further.
+ */
+export function getFirstLinePreview(text: string): string {
+  return text.trimStart().match(/^[^\r\n]{0,240}/u)?.[0].trimEnd() ?? "";
+}
+
 export function getThinkingPreview(thinking: string): string {
-  return thinking.trimStart().match(/^[^\r\n]{0,240}/u)?.[0].trimEnd() ?? "";
+  return getFirstLinePreview(thinking);
 }
 
 export const THINKING_PIECE_CHARS = 8_000;

@@ -532,16 +532,66 @@ test("collapses a displayed custom message from its header alone", () => {
   // The footer is for details only; it is not a second way to collapse.
   assert.doesNotMatch(shown, /Show details|Hide details/);
 
-  // It starts expanded, as pi's TUI draws a displayed custom message in full.
+  // A short one starts expanded, as pi's default renderer draws it in full.
   assert.match(shown, /a message with no details/);
   // A message with no text (images only) can collapse too.
   assert.match(header(custom({ content: [] })), /aria-expanded="true"/);
+
+  // The body scrolls inside the card instead of running the chat off screen.
+  assert.match(shown, /max-height:360px/);
+  assert.match(shown, /overflow-y:auto/);
 
   // A message that does carry details keeps that button, for its details.
   assert.match(
     custom({ content: [{ type: "text", text: "a message with details" }], details: { files: ["a.ts"] } }),
     /Show details/,
   );
+});
+
+test("starts a long extension message folded to its header, with its first line as the preview", () => {
+  const long = "⚠️ Context Reminder: You have made 47 tool calls.\nsecond line that must not show\n" + "x".repeat(1200);
+  const html = renderMessage({
+    role: "custom",
+    customType: "compression-reminder",
+    display: true,
+    timestamp: Date.now(),
+    content: [{ type: "text", text: long }],
+  });
+  const headerHtml = html.slice(0, html.indexOf("</button>"));
+
+  assert.match(headerHtml, /aria-expanded="false"/);
+  assert.match(headerHtml, /⚠️ Context Reminder: You have made 47 tool calls\./);
+  assert.doesNotMatch(headerHtml, /second line that must not show/);
+  // Folded, the body and its footer are not mounted at all.
+  assert.doesNotMatch(html, /second line that must not show/);
+  assert.doesNotMatch(html, /Show details|Hide details/);
+
+  // At the threshold it stays open, as pi's default renderer draws it in full.
+  assert.match(
+    renderMessage({
+      role: "custom",
+      customType: "extension",
+      display: true,
+      timestamp: Date.now(),
+      content: [{ type: "text", text: "y".repeat(1200) }],
+    }).slice(0, html.indexOf("</button>")),
+    /aria-expanded="true"/,
+  );
+});
+
+test("keeps a subagent completion open whatever its report's length", () => {
+  const long = "a subagent report\n" + "z".repeat(1500);
+  for (const customType of ["pi-web:subagent-notification", "subagent-notification"]) {
+    const html = renderMessage({
+      role: "custom",
+      customType,
+      display: true,
+      timestamp: Date.now(),
+      content: [{ type: "text", text: long }],
+    });
+    assert.match(html.slice(0, html.indexOf("</button>")), /aria-expanded="true"/);
+    assert.match(html, /z{1500}/);
+  }
 });
 
 test("renders custom-message images as buttons that open a larger preview", () => {
