@@ -313,6 +313,12 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
   `components/AppShell.tools-panel.test.mjs` mention it, the second to prove the import is gone.
   It stays because upstream still ships the file and deleting it turns every future merge into a
   modify/delete conflict; its `system.*` keys in `lib/i18n/messages/*` are upstream's too.
+- **`.github/` is deleted here, unlike the entry above**: `a8420e7` removed upstream's
+  `.github/workflows/ci.yml` (the `checks` and `e2e` jobs), and that file was the directory's only
+  entry, so git dropped `.github/` as well. Upstream still ships it, so a merge that touches it
+  raises a modify/delete conflict — keep the deletion, do not take upstream's copy. Nothing
+  referenced the workflow: no README badge, no docs mention (`demo-pages.yml` had already been
+  dropped with `demo/`).
 - **`app/settings.css` was never retuned to the fork's tokens**: it still carries 16 hardcoded
   `#ef4444` rules (upstream's v0.12.2 Settings changes added one to the 15 the fork left). Only
   `.skill-instructions-status.is-error` moved to `var(--danger)` at the v0.12.0 merge, because it
