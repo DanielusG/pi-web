@@ -382,16 +382,21 @@ private fun QuestionBody(
         )
     }
     if (question.hasPreviews) {
-        val previewed = question.options.indices.firstOrNull { it in draft.selected && !question.options[it].preview.isNullOrEmpty() }
-            ?: question.options.indexOfFirst { !it.preview.isNullOrEmpty() }
-        val option = question.options[previewed]
+        // The chosen row's preview (the first option's before a choice), as the web and rpiv show
+        // the highlighted row's: a row without one says so instead of showing another option's.
+        val option = when {
+            draft.selected.isNotEmpty() -> question.options[draft.selected.first()]
+            draft.custom -> null
+            else -> question.options.first()
+        }
         Text(
-            "Preview · ${option.label}",
+            if (option != null) "Preview · ${option.label}" else "Preview",
             style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
             color = t.textTertiary,
             modifier = Modifier.padding(top = 4.dp),
         )
-        OptionPreview(option.preview.orEmpty())
+        val preview = option?.preview
+        if (preview.isNullOrEmpty()) NoPreview() else OptionPreview(preview)
     }
     NoteField(
         key = key,
@@ -424,6 +429,22 @@ private fun OptionPreview(preview: String) {
     } else {
         CodeBlock("", preview.trimEnd(), header = false)
     }
+}
+
+@Composable
+private fun NoPreview() {
+    val t = Pi.tokens
+    Text(
+        "No preview available",
+        style = MaterialTheme.typography.bodySmall,
+        color = t.textTertiary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RowShape)
+            .background(t.code)
+            .border(1.dp, t.border, RowShape)
+            .padding(12.dp),
+    )
 }
 
 /** An option row: a muted fill when chosen, as the model sheet marks its row, and a mark in the text color. */

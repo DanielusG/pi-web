@@ -194,6 +194,7 @@ export const zhCNLocale: LocalePlugin = {
     "askUser.answeredCount": "已回答 {answered}/{total}",
     "askUser.selectAll": "可多选。",
     "askUser.preview": "预览",
+    "askUser.noPreview": "无可用预览",
     "askUser.addNote": "添加备注",
     "askUser.notePlaceholder": "此问题的备注",
     "askUser.addGlobalNote": "为全部回答添加备注",

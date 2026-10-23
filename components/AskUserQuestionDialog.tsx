@@ -8,7 +8,8 @@ import {
   draftAnswerText,
   emptyQuestionDraft,
   isDraftAnswered,
-  previewOptionIndex,
+  previewRowIndex,
+  questionHasPreviews,
   toggleDraftOption,
   toggleDraftOwn,
   type AskUserQuestion,
@@ -158,7 +159,9 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const [form, setFormState] = useState<FormState>(() => initialForm(toolCallId, questions));
   const [collapsed, setCollapsed] = useState(false);
   const [full, setFull] = useState(false);
+  // The row the preview box is for: hovered, else focused (`options.length` is the own-answer row).
   const [focusedOption, setFocusedOption] = useState<number | null>(null);
+  const [hoveredOption, setHoveredOption] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +188,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const draft = onReview ? null : form.drafts[tab]!;
   const answered = questions.map((entry, index) => isDraftAnswered(entry, form.drafts[index]!));
   const allAnswered = answered.every(Boolean);
-  const hasPreviews = questions.some((entry) => !entry.multiSelect && entry.options.some((option) => Boolean(option.preview)));
+  const hasPreviews = questions.some(questionHasPreviews);
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -200,6 +203,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   // the arrow keys keeps the focus, so the next arrow goes on through the tabs.
   useEffect(() => {
     setFocusedOption(null);
+    setHoveredOption(null);
     if (collapsed) return;
     if (focusTabRef.current) {
       focusTabRef.current = false;
@@ -379,20 +383,28 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
 
   const questionBody = (entry: AskUserQuestion, index: number, entryDraft: QuestionDraft) => {
     const multi = entry.multiSelect === true;
-    const previewIndex = previewOptionIndex(entry, entryDraft, focusedOption);
-    const preview = previewIndex !== null ? entry.options[previewIndex]?.preview : undefined;
-    const sideBySide = preview !== undefined && bodyWidth >= SIDE_BY_SIDE_MIN_WIDTH;
+    const showPreview = questionHasPreviews(entry);
+    const preview = entry.options[previewRowIndex(entry, entryDraft, hoveredOption ?? focusedOption)]?.preview;
+    const sideBySide = showPreview && bodyWidth >= SIDE_BY_SIDE_MIN_WIDTH;
+    const ownRow = entry.options.length;
     const inputType = multi ? "checkbox" : "radio";
     const groupName = `ask-user-${toolCallId}-${index}`;
     const choices = (
-      <div role={multi ? "group" : "radiogroup"} aria-labelledby={titleId} style={{ display: "grid", gap: 8, alignContent: "start", minWidth: 0 }}>
+      // The hover is dropped only on leaving the list, so crossing the gap between rows does not
+      // flash another row's preview.
+      <div
+        role={multi ? "group" : "radiogroup"}
+        aria-labelledby={titleId}
+        onMouseLeave={() => setHoveredOption(null)}
+        style={{ display: "grid", gap: 8, alignContent: "start", minWidth: 0 }}
+      >
         {entry.options.map((option, optionIndex) => {
           const selected = entryDraft.picked.includes(optionIndex);
           return (
             <label
               key={option.label}
               style={choiceRow(selected)}
-              onMouseEnter={() => setFocusedOption(optionIndex)}
+              onMouseEnter={() => setHoveredOption(optionIndex)}
             >
               <input
                 data-ask-user-choice
@@ -401,6 +413,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
                 checked={selected}
                 disabled={locked}
                 onFocus={() => setFocusedOption(optionIndex)}
+                onBlur={() => setFocusedOption(null)}
                 onChange={() => updateDraft(index, (previous) => toggleDraftOption(entry, previous, optionIndex))}
                 onKeyDown={(event) => {
                   if (!isPlainEnter(event)) return;
@@ -421,14 +434,15 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             </label>
           );
         })}
-        <label style={choiceRow(entryDraft.own)}>
+        <label style={choiceRow(entryDraft.own)} onMouseEnter={() => setHoveredOption(ownRow)}>
           <input
             data-ask-user-choice
             type={inputType}
             name={groupName}
             checked={entryDraft.own}
             disabled={locked}
-            onFocus={() => setFocusedOption(null)}
+            onFocus={() => setFocusedOption(ownRow)}
+            onBlur={() => setFocusedOption(null)}
             onChange={() => updateDraft(index, (previous) => toggleDraftOwn(entry, previous))}
             onKeyDown={(event) => {
               if (!isPlainEnter(event)) return;
@@ -450,6 +464,8 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             rows={2}
             placeholder={t("askUser.customPlaceholder")}
             aria-label={t("askUser.typeSomething")}
+            onFocus={() => setFocusedOption(ownRow)}
+            onBlur={() => setFocusedOption(null)}
             onChange={(event) => {
               const text = event.target.value;
               updateDraft(index, (previous) => ({ ...previous, text }));
@@ -468,7 +484,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
     return (
       <div style={{ display: "grid", gap: 10 }}>
         {multi && <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("askUser.selectAll")}</div>}
-        {preview !== undefined ? (
+        {showPreview ? (
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: sideBySide ? "minmax(0, 2fr) minmax(0, 3fr)" : "minmax(0, 1fr)", alignItems: "start" }}>
             {choices}
             <div
@@ -476,7 +492,9 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
               role="region"
               style={{ border: "1px solid var(--border)", borderRadius: 9, background: "var(--bg-panel)", padding: "8px 10px", overflowX: "auto", minWidth: 0 }}
             >
-              <MarkdownBody className="ask-user-preview" keepLineBreaks>{preview}</MarkdownBody>
+              {preview
+                ? <MarkdownBody className="ask-user-preview" keepLineBreaks>{preview}</MarkdownBody>
+                : <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("askUser.noPreview")}</div>}
             </div>
           </div>
         ) : choices}

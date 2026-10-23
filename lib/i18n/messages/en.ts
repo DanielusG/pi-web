@@ -194,6 +194,7 @@ export const enLocale: LocalePlugin = {
     "askUser.answeredCount": "{answered}/{total} answered",
     "askUser.selectAll": "Select all that apply.",
     "askUser.preview": "Preview",
+    "askUser.noPreview": "No preview available",
     "askUser.addNote": "Add a note",
     "askUser.notePlaceholder": "Note for this question",
     "askUser.addGlobalNote": "Add a note for all answers",

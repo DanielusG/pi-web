@@ -127,7 +127,8 @@ dialog, not the extension dialog's generic select and input requests.
   takes `muted` with a `borderStrong` line and a filled `primary` mark (circle or box) instead of
   Material's `RadioButton`/`Checkbox`. Only the collapsed pill keeps the accent dot and border,
   because the extension dialog's pill has them.
-- **Previews:** single-choice only. A preview with a code fence goes through `Markdown`; plain
+- **Previews:** single-choice only, for the chosen row (the first option before a choice; no hover
+  on a phone); a row without one shows "No preview available", never another option's. A preview with a code fence goes through `Markdown`; plain
   text goes through `CodeBlock` and keeps its spacing, scrolling sideways for ASCII mockups.
 - **History:** a finished call with questionnaire `details` renders as `AskUserSummaryCard`.
   Results without them (a refused call's `error`, a Stop) keep the generic tool card.

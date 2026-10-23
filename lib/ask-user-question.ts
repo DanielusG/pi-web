@@ -495,16 +495,19 @@ export function buildAnswerPayload(
   return { answers, ...(note ? { globalNote: note } : {}) };
 }
 
+/** Whether a question shows a preview box: previews belong to single-choice questions only. */
+export function questionHasPreviews(question: AskUserQuestion): boolean {
+  return !question.multiSelect && question.options.some((option) => Boolean(option.preview));
+}
+
 /**
- * The option whose preview the dialog shows: the focused one when it has a preview, else the
- * picked one, else the first with a preview. Previews belong to single-choice questions only.
+ * The row the preview box is for, as in the package's pane: the highlighted one (focused or
+ * hovered; `options.length` is the own-answer row), else the picked one, else the first. The box
+ * shows that row's preview or says it has none, never another option's: falling back to one would
+ * leave a stale preview beside a row that has none.
  */
-export function previewOptionIndex(question: AskUserQuestion, draft: QuestionDraft, focused: number | null): number | null {
-  if (question.multiSelect) return null;
-  const hasPreview = (index: number | null | undefined) =>
-    index !== null && index !== undefined && Boolean(question.options[index]?.preview);
-  if (hasPreview(focused)) return focused;
-  if (hasPreview(draft.picked[0])) return draft.picked[0]!;
-  const first = question.options.findIndex((option) => Boolean(option.preview));
-  return first >= 0 ? first : null;
+export function previewRowIndex(question: AskUserQuestion, draft: QuestionDraft, highlighted: number | null): number {
+  if (highlighted !== null) return highlighted;
+  if (draft.own) return question.options.length;
+  return draft.picked[0] ?? 0;
 }
