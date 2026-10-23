@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
@@ -53,6 +53,11 @@ function rememberForm(toolCallId: string, form: FormState): void {
     const oldest = formStore.keys().next().value;
     if (oldest !== undefined) formStore.delete(oldest);
   }
+}
+
+/** Enter with no modifier and no IME composition: the key that picks, then moves on. */
+function isPlainEnter(event: KeyboardEvent): boolean {
+  return event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing;
 }
 
 const DIALOG_MAX_HEIGHT = "min(60vh, 520px)";
@@ -159,6 +164,10 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const [error, setError] = useState<string | null>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const submitRef = useRef<HTMLButtonElement>(null);
+  /** Set when the arrow keys changed the tab: focus stays on the tabs instead of the choices. */
+  const focusTabRef = useRef(false);
   const locked = sending || sent;
 
   const setForm = useCallback((update: (previous: FormState) => FormState) => {
@@ -186,12 +195,24 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
     return () => observer.disconnect();
   }, [collapsed]);
 
-  // A new tab starts at its first row, so the keyboard lands on the choices.
+  // A new tab starts at its first row, so the keyboard lands on the choices; a tab reached with
+  // the arrow keys keeps the focus, so the next arrow goes on through the tabs.
   useEffect(() => {
     setFocusedOption(null);
     if (collapsed) return;
-    const first = bodyRef.current?.querySelector<HTMLInputElement>("input[data-ask-user-choice]");
-    first?.focus({ preventScroll: true });
+    if (focusTabRef.current) {
+      focusTabRef.current = false;
+      const selectedTab = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+      selectedTab?.focus({ preventScroll: true });
+      selectedTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } else {
+      // The review tab has no choices: Send when it can go, else the first question.
+      const submitButton = submitRef.current && !submitRef.current.disabled ? submitRef.current : null;
+      const first = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]")
+        ?? submitButton
+        ?? bodyRef.current?.querySelector<HTMLElement>("button");
+      first?.focus({ preventScroll: true });
+    }
     bodyRef.current?.scrollTo({ top: 0 });
   }, [tab, collapsed]);
 
@@ -229,6 +250,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const decline = () => void send({ cancel: true });
   // Next on a question tab, Submit on the review tab or a lone question.
   const advance = () => {
+    if (locked) return;
     if (multiple && !onReview) goTo(tab + 1);
     else submit();
   };
@@ -352,6 +374,15 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
                 disabled={locked}
                 onFocus={() => setFocusedOption(optionIndex)}
                 onChange={() => updateDraft(index, (previous) => toggleDraftOption(entry, previous, optionIndex))}
+                onKeyDown={(event) => {
+                  if (!isPlainEnter(event)) return;
+                  event.preventDefault();
+                  // One answer: Enter takes the focused option, and Enter on the taken one moves on.
+                  // The dialog focuses the first option when it opens, so a stray Enter only picks.
+                  // Multiple choice toggles with Space, so Enter always moves on.
+                  if (!multi && !selected) updateDraft(index, (previous) => toggleDraftOption(entry, previous, optionIndex));
+                  else advance();
+                }}
                 style={{ marginTop: 3, accentColor: "var(--accent)", flexShrink: 0 }}
               />
               <span style={{ display: "grid", gap: 2, minWidth: 0 }}>
@@ -370,6 +401,13 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             disabled={locked}
             onFocus={() => setFocusedOption(null)}
             onChange={() => updateDraft(index, (previous) => toggleDraftOwn(entry, previous))}
+            onKeyDown={(event) => {
+              if (!isPlainEnter(event)) return;
+              event.preventDefault();
+              // Not chosen yet: Enter opens the text field (it takes the focus); chosen: moves on.
+              if (!entryDraft.own) updateDraft(index, (previous) => toggleDraftOwn(entry, previous));
+              else advance();
+            }}
             style={{ marginTop: 3, accentColor: "var(--accent)", flexShrink: 0 }}
           />
           <span style={{ color: "var(--text-muted)" }}>{t("askUser.typeSomething")}</span>
@@ -387,10 +425,9 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
               updateDraft(index, (previous) => ({ ...previous, text }));
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                if (canAdvance) advance();
-              }
+              if (!isPlainEnter(event)) return;
+              event.preventDefault();
+              advance();
             }}
             style={textAreaStyle}
           />
@@ -458,7 +495,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
           if (!locked) decline();
         } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
-          if (canAdvance) advance();
+          advance();
         }
       }}
       style={{
@@ -481,13 +518,30 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
       }}
     >
       {multiple && (
-        <div role="tablist" aria-label={t("askUser.questions")} className="ask-user-tabs">
+        <div
+          ref={tabsRef}
+          role="tablist"
+          aria-label={t("askUser.questions")}
+          className="ask-user-tabs"
+          onKeyDown={(event) => {
+            if (locked || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const count = reviewTab + 1;
+            const next = event.key === "Home" ? 0
+              : event.key === "End" ? reviewTab
+              : (tab + (event.key === "ArrowRight" ? 1 : -1) + count) % count;
+            if (next === tab) return;
+            focusTabRef.current = true;
+            goTo(next);
+          }}
+        >
           {[...questions.map((entry) => entry.header), t("askUser.review")].map((label, index) => (
             <button
               key={`${index}-${label}`}
               type="button"
               role="tab"
               aria-selected={index === tab}
+              tabIndex={index === tab ? 0 : -1}
               disabled={locked}
               onClick={() => goTo(index)}
               className="ask-user-tab"
@@ -541,7 +595,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             {t("askUser.back")}
           </button>
         )}
-        <button type="button" disabled={!canAdvance} onClick={advance} style={footerButtonStyle(true, canAdvance)}>
+        <button ref={submitRef} type="button" disabled={!canAdvance} onClick={() => advance()} style={footerButtonStyle(true, canAdvance)}>
           {locked ? t("askUser.sending") : multiple && !onReview ? t("askUser.next") : multiple ? t("askUser.submitAll") : t("askUser.submit")}
         </button>
       </div>
