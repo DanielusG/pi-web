@@ -166,6 +166,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const bodyRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
+  const ownTextRef = useRef<HTMLTextAreaElement>(null);
   /** Set when the arrow keys changed the tab: focus stays on the tabs instead of the choices. */
   const focusTabRef = useRef(false);
   const locked = sending || sent;
@@ -223,6 +224,14 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const openNote = (index: number) => setForm((previous) => (
     previous.openNotes.includes(index) ? previous : { ...previous, openNotes: [...previous.openNotes, index] }
   ));
+  // Escape in a note closes it, as in the package's dialog, instead of declining everything: the
+  // focus goes back to the choices (Send on the review tab), so the next Escape declines.
+  const closeNote = (index: number) => {
+    const choices = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]:checked")
+      ?? bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]");
+    (choices ?? submitRef.current)?.focus({ preventScroll: true });
+    setForm((previous) => ({ ...previous, openNotes: previous.openNotes.filter((entry) => entry !== index) }));
+  };
 
   const send = async (payload: Record<string, unknown>) => {
     if (locked) return;
@@ -342,6 +351,12 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             if (index === reviewTab) setForm((previous) => ({ ...previous, globalNote: text }));
             else updateDraft(index, (previous) => ({ ...previous, note: text }));
           }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeNote(index);
+          }}
           style={textAreaStyle}
         />
       </label>
@@ -376,10 +391,11 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
                 onKeyDown={(event) => {
                   if (!isPlainEnter(event)) return;
                   event.preventDefault();
-                  // One answer: Enter takes the focused option, and Enter on the taken one moves on.
-                  // The dialog focuses the first option when it opens, so a stray Enter only picks.
-                  // Multiple choice toggles with Space, so Enter always moves on.
-                  if (!multi && !selected) updateDraft(index, (previous) => toggleDraftOption(entry, previous, optionIndex));
+                  // Enter chooses, as in the package's dialog: it takes a single-choice option and
+                  // toggles a multiple-choice one (like Space). Enter on the option already taken
+                  // moves on; the dialog focuses the first option when it opens, so a stray Enter
+                  // only picks. Ctrl/Cmd+Enter moves on from anywhere.
+                  if (multi || !selected) updateDraft(index, (previous) => toggleDraftOption(entry, previous, optionIndex));
                   else advance();
                 }}
                 style={{ marginTop: 3, accentColor: "var(--accent)", flexShrink: 0 }}
@@ -403,9 +419,9 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             onKeyDown={(event) => {
               if (!isPlainEnter(event)) return;
               event.preventDefault();
-              // Not chosen yet: Enter opens the text field (it takes the focus); chosen: moves on.
-              if (!entryDraft.own) updateDraft(index, (previous) => toggleDraftOwn(entry, previous));
-              else advance();
+              // Enter opens the text field (it takes the focus), or goes into it when open.
+              if (entryDraft.own) ownTextRef.current?.focus();
+              else updateDraft(index, (previous) => toggleDraftOwn(entry, previous));
             }}
             style={{ marginTop: 3, accentColor: "var(--accent)", flexShrink: 0 }}
           />
@@ -413,6 +429,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
         </label>
         {entryDraft.own && (
           <textarea
+            ref={ownTextRef}
             autoFocus
             value={entryDraft.text}
             disabled={locked}
@@ -426,7 +443,8 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             onKeyDown={(event) => {
               if (!isPlainEnter(event)) return;
               event.preventDefault();
-              advance();
+              // A blank own answer is never recorded, as in the package: Enter waits for text.
+              if (entryDraft.text.trim()) advance();
             }}
             style={textAreaStyle}
           />
