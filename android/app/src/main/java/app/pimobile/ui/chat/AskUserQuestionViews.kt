@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -21,17 +23,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,8 +66,10 @@ import app.pimobile.ui.theme.piTextFieldColors
 
 // The native ask_user_question dialog (data/AskUserQuestion.kt), in the composer slot like the
 // extension dialog and with its card look: one tab per question plus a review tab when there are
-// several, radio or checkbox rows, an own-answer row, previews, notes. Back collapses it to the
-// pill instead of declining, so a half-filled questionnaire is not lost to a stray gesture.
+// several, choice rows, an own-answer row, previews, notes. Back collapses it to the pill instead
+// of declining, so a half-filled questionnaire is not lost to a stray gesture. Inside the card it
+// stays monochrome like the rest of the app: the files screen's tabs, neutral chips, rows chosen
+// the way the model sheet marks its row; only the collapsed pill keeps the extension dialog's accent.
 
 private val RowShape = RoundedCornerShape(9.dp)
 private val CardShape = RoundedCornerShape(10.dp)
@@ -155,10 +157,19 @@ fun AskUserQuestionDialog(
                 .border(1.dp, t.border, CardShape)
                 .background(t.background),
         ) {
+            if (multi) {
+                QuestionTabs(
+                    questions = questions,
+                    drafts = form.drafts,
+                    selected = tab,
+                    onSelect = { index -> onForm { it.copy(tab = index) } },
+                )
+                HorizontalDivider(thickness = 1.dp, color = t.border)
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = if (multi) 8.dp else 12.dp),
+                    .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -195,14 +206,6 @@ fun AskUserQuestionDialog(
                 IconButton(onClick = { onForm { it.copy(collapsed = true) } }, modifier = Modifier.size(26.dp)) {
                     Icon(PiIcons.ChevronDown, contentDescription = "Collapse", tint = t.textSecondary, modifier = Modifier.size(14.dp))
                 }
-            }
-            if (multi) {
-                QuestionTabs(
-                    questions = questions,
-                    drafts = form.drafts,
-                    selected = tab,
-                    onSelect = { index -> onForm { it.copy(tab = index) } },
-                )
             }
             HorizontalDivider(thickness = 1.dp, color = t.border)
 
@@ -262,35 +265,28 @@ private fun WaitingCount(count: Int) {
     if (count <= 0) return
     Text(
         "+$count more",
-        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-        color = Pi.tokens.accent,
+        style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+        color = Pi.tokens.textSecondary,
         modifier = Modifier.padding(start = 8.dp),
     )
 }
 
+/** A question's short header: a neutral mono label, like the tool card's name. */
 @Composable
-private fun HeaderChip(text: String, done: Boolean = false, active: Boolean = true) {
+private fun HeaderChip(text: String) {
     val t = Pi.tokens
     val shape = RoundedCornerShape(5.dp)
-    Row(
-        Modifier
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontSize = 11.sp),
+        color = t.textSecondary,
+        maxLines = 1,
+        modifier = Modifier
             .clip(shape)
-            .background(if (active) t.accent.copy(alpha = 0.10f) else t.surface)
-            .border(1.dp, if (active) t.accent.copy(alpha = 0.30f) else t.border, shape)
-            .padding(horizontal = 7.dp, vertical = 1.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (done) {
-            Icon(PiIcons.Check, contentDescription = "Answered", tint = t.success, modifier = Modifier.size(11.dp))
-            Spacer(Modifier.width(3.dp))
-        }
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-            color = if (active) t.accent else t.textSecondary,
-            maxLines = 1,
-        )
-    }
+            .background(t.muted)
+            .border(1.dp, t.border, shape)
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 @Composable
@@ -299,21 +295,45 @@ private fun QuestionTabs(questions: List<AskQuestion>, drafts: List<AskDraft>, s
         Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
-            .padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(start = 6.dp, end = 6.dp, top = 2.dp),
     ) {
         questions.forEachIndexed { index, question ->
-            Box(Modifier.clip(RoundedCornerShape(5.dp)).clickable { onSelect(index) }) {
-                HeaderChip(
-                    question.header,
-                    done = AskUserQuestion.isAnswered(question, drafts[index]),
-                    active = index == selected,
-                )
+            QuestionTab(
+                question.header,
+                done = AskUserQuestion.isAnswered(question, drafts[index]),
+                selected = index == selected,
+                onClick = { onSelect(index) },
+            )
+        }
+        QuestionTab("Review", done = false, selected = selected == questions.size, onClick = { onSelect(questions.size) })
+    }
+}
+
+/** The files screen's tab (FilesScreen's TabLabel): a label over a line in the text color when chosen. */
+@Composable
+private fun QuestionTab(text: String, done: Boolean, selected: Boolean, onClick: () -> Unit) {
+    val t = Pi.tokens
+    val color = if (selected) t.text else t.textTertiary
+    Column(
+        Modifier
+            .width(IntrinsicSize.Max)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp),
+    ) {
+        Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (done) {
+                Icon(PiIcons.Check, contentDescription = "Answered", tint = color, modifier = Modifier.size(12.dp))
+                Spacer(Modifier.width(4.dp))
             }
+            Text(text, style = MaterialTheme.typography.labelMedium, color = color, maxLines = 1)
         }
-        Box(Modifier.clip(RoundedCornerShape(5.dp)).clickable { onSelect(questions.size) }) {
-            HeaderChip("Review", active = selected == questions.size)
-        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(if (selected) t.text else Color.Transparent, RoundedCornerShape(1.dp)),
+        )
     }
 }
 
@@ -405,6 +425,7 @@ private fun OptionPreview(preview: String) {
     }
 }
 
+/** An option row: a muted fill when chosen, as the model sheet marks its row, and a mark in the text color. */
 @Composable
 private fun ChoiceRow(
     selected: Boolean,
@@ -418,29 +439,36 @@ private fun ChoiceRow(
         Modifier
             .fillMaxWidth()
             .clip(RowShape)
-            .border(1.dp, if (selected) t.accent else t.border, RowShape)
-            .background(if (selected) t.accent.copy(alpha = 0.08f) else t.surface)
+            .border(1.dp, if (selected) t.borderStrong else t.border, RowShape)
+            .background(if (selected) t.muted else t.surface)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(start = 2.dp, end = 10.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        if (multi) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onClick() },
-                enabled = enabled,
-                colors = CheckboxDefaults.colors(checkedColor = t.accent, uncheckedColor = t.textTertiary, checkmarkColor = t.background),
-            )
-        } else {
-            RadioButton(
-                selected = selected,
-                onClick = onClick,
-                enabled = enabled,
-                colors = RadioButtonDefaults.colors(selectedColor = t.accent, unselectedColor = t.textTertiary),
-            )
-        }
-        Column(Modifier.weight(1f).padding(vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ChoiceMark(selected, multi, Modifier.padding(top = 2.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             content()
+        }
+    }
+}
+
+/** A box (multiple choice) or a circle (one answer), filled with the text color when chosen. */
+@Composable
+private fun ChoiceMark(selected: Boolean, multi: Boolean, modifier: Modifier = Modifier) {
+    val t = Pi.tokens
+    val shape = if (multi) RoundedCornerShape(4.dp) else CircleShape
+    Box(
+        modifier
+            .size(16.dp)
+            .clip(shape)
+            .background(if (selected) t.primary else t.background)
+            .border(1.dp, if (selected) t.primary else t.borderStrong, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            if (multi) Icon(PiIcons.Check, contentDescription = null, tint = t.onPrimary, modifier = Modifier.size(12.dp))
+            else Box(Modifier.size(6.dp).background(t.onPrimary, CircleShape))
         }
     }
 }
@@ -504,7 +532,7 @@ private fun ReviewBody(
             Modifier
                 .fillMaxWidth()
                 .clip(RowShape)
-                .border(1.dp, if (answer == null) t.danger.copy(alpha = 0.35f) else t.border, RowShape)
+                .border(1.dp, t.border, RowShape)
                 .background(t.surface)
                 .clickable(enabled = !locked) { onOpen(index) }
                 .padding(horizontal = 10.dp, vertical = 9.dp),
@@ -582,7 +610,7 @@ fun AskUserSummaryCard(
                     )
                     if (answer != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("→ ", style = typography.bodyMedium, color = t.accent)
+                            Text("→ ", style = typography.bodyMedium, color = t.textTertiary)
                             Text(
                                 AskUserQuestion.summaryText(answer),
                                 style = typography.bodyMedium.copy(

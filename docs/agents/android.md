@@ -119,6 +119,12 @@ dialog, not the extension dialog's generic select and input requests.
 - **Back collapses the dialog to its pill.** It does not decline: a phone's Back gesture is too
   easy to make by accident with a half-filled questionnaire. The web declines on Esc, as its
   extension dialog does.
+- **Monochrome, like the rest of the app** (admin's call after the first version used the accent
+  for chips, tabs, radio buttons and chosen rows). The tabs are the files screen's `TabLabel` (a
+  label over a 2 dp line in `text`), headers are neutral mono chips (`muted` fill), a chosen row
+  takes `muted` with a `borderStrong` line and a filled `primary` mark (circle or box) instead of
+  Material's `RadioButton`/`Checkbox`. Only the collapsed pill keeps the accent dot and border,
+  because the extension dialog's pill has them.
 - **Previews:** single-choice only. A preview with a code fence goes through `Markdown`; plain
   text goes through `CodeBlock` and keeps its spacing, scrolling sideways for ASCII mockups.
 - **History:** a finished call with questionnaire `details` renders as `AskUserSummaryCard`.

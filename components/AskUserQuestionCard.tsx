@@ -20,11 +20,12 @@ function CardFrame({ header, children }: { header: string; children: ReactNode }
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
         <span
           style={{
+            fontFamily: "var(--font-mono)",
             fontSize: 11,
             fontWeight: 600,
-            color: "var(--accent)",
-            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
-            border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+            color: "var(--text-muted)",
+            background: "var(--bg-subtle)",
+            border: "1px solid var(--border)",
             borderRadius: 5,
             padding: "1px 7px",
             lineHeight: 1.5,
@@ -74,7 +75,7 @@ export function AskUserQuestionCard({ params, result }: { params: AskUserParams;
               <div style={QUESTION_TEXT_STYLE}>{question.question}</div>
               {answer ? (
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, color: "var(--text)", overflowWrap: "anywhere" }}>
-                  <span aria-hidden="true" style={{ color: "var(--accent)", flexShrink: 0 }}>→</span>
+                  <span aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }}>→</span>
                   <span style={{ fontWeight: 600, whiteSpace: "pre-wrap" }}>{answerText(answer, t("askUser.noAnswer"))}</span>
                   {answer.kind === "custom" && <span style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0 }}>{t("askUser.customAnswer")}</span>}
                 </div>

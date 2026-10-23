@@ -1171,6 +1171,40 @@ pre, code {
 .markdown-body.ask-user-preview { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
 .markdown-body.ask-user-preview p,
 .markdown-body.ask-user-preview li { white-space: pre-wrap; }
+/* The ask_user_question dialog's question tabs: the chat bar's cells (.sidebar-tab in app/sidebar.css)
+   in a strip across the top of the card. */
+.ask-user-tabs {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  height: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.ask-user-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-top: 2px solid transparent;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ask-user-tab:not(:disabled):hover { background: var(--bg-hover); color: var(--text); }
+.ask-user-tab[aria-selected="true"] { border-top-color: var(--accent); background: var(--bg-selected); color: var(--text); font-weight: 500; }
+.ask-user-tab:disabled { cursor: default; }
+.ask-user-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   font-weight: 600;

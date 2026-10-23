@@ -19,7 +19,8 @@ import { MarkdownBody } from "./MarkdownBody";
 // The native ask_user_question's dialog (lib/ask-user-extension.ts). Like an extension's blocking
 // dialog it takes the composer's place (ChatWindow) and keeps that card's chrome: collapse to a
 // pill, maximize, "+N more", Escape to decline. Several questions get a tab each and a review tab
-// that sends them together; previews sit beside the options when there is room.
+// that sends them together; the tabs are the chat bar's cells (`.ask-user-tab` in globals.css, after
+// `.sidebar-tab`). Previews sit beside the options when there is room.
 
 export interface PendingAskUserQuestion {
   toolCallId: string;
@@ -108,15 +109,17 @@ function SizeIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
+/** A question's short header, in the tool card's name badge (MessageView). */
 function HeaderChip({ children }: { children: ReactNode }) {
   return (
     <span
       style={{
+        fontFamily: "var(--font-mono)",
         fontSize: 11,
         fontWeight: 600,
-        color: "var(--accent)",
-        background: "color-mix(in srgb, var(--accent) 10%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+        color: "var(--text-muted)",
+        background: "var(--bg-subtle)",
+        border: "1px solid var(--border)",
         borderRadius: 5,
         padding: "1px 7px",
         lineHeight: 1.5,
@@ -125,6 +128,14 @@ function HeaderChip({ children }: { children: ReactNode }) {
     >
       {children}
     </span>
+  );
+}
+
+function CheckIcon({ label }: { label: string }) {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label={label} style={{ color: "var(--success)", flexShrink: 0 }}>
+      <path d="M3 8.5l3.2 3L13 4.5" />
+    </svg>
   );
 }
 
@@ -469,54 +480,36 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-        <div style={{ minWidth: 0, flex: 1, display: "grid", gap: 6 }}>
-          {multiple ? (
-            <div role="tablist" aria-label={t("askUser.questions")} style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {[...questions.map((entry) => entry.header), t("askUser.review")].map((label, index) => {
-                const active = index === tab;
-                const done = index < reviewTab && answered[index];
-                return (
-                  <button
-                    key={`${index}-${label}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    disabled={locked}
-                    onClick={() => goTo(index)}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 5,
-                      padding: "2px 9px",
-                      borderRadius: 999,
-                      border: active ? "1px solid var(--accent)" : "1px solid var(--border)",
-                      background: active ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "var(--bg-panel)",
-                      color: active ? "var(--accent)" : "var(--text-muted)",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: locked ? "default" : "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {done && <span aria-label={t("askUser.answeredMark")} style={{ color: "var(--success)" }}>✓</span>}
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <HeaderChip>{questions[0]!.header}</HeaderChip>
-              <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("askUser.waiting")}</span>
-            </div>
-          )}
+      {multiple && (
+        <div role="tablist" aria-label={t("askUser.questions")} className="ask-user-tabs">
+          {[...questions.map((entry) => entry.header), t("askUser.review")].map((label, index) => (
+            <button
+              key={`${index}-${label}`}
+              type="button"
+              role="tab"
+              aria-selected={index === tab}
+              disabled={locked}
+              onClick={() => goTo(index)}
+              className="ask-user-tab"
+            >
+              {index < reviewTab && answered[index] && <CheckIcon label={t("askUser.answeredMark")} />}
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div id={titleId} style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "6.5em", overflowY: "auto" }}>
             {title}
           </div>
-          {waitingCount > 0 && (
-            <span style={{ fontSize: 11, fontWeight: 650, color: "var(--accent)" }}>{t("chat.extensionMoreWaiting", { count: waitingCount })}</span>
-          )}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+            {!multiple && <HeaderChip>{questions[0]!.header}</HeaderChip>}
+            <span>{t("askUser.waiting")}</span>
+            {waitingCount > 0 && (
+              <span style={{ fontWeight: 650, color: "var(--accent)", whiteSpace: "nowrap" }}>{t("chat.extensionMoreWaiting", { count: waitingCount })}</span>
+            )}
+          </div>
         </div>
         <button
           type="button"
