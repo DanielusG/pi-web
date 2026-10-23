@@ -22,6 +22,8 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { AskUserQuestionDialog, type PendingAskUserQuestion } from "./AskUserQuestionDialog";
+import { ASK_USER_QUESTION_TOOL_NAME, isAskUserPendingDetails } from "@/lib/ask-user-question";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
@@ -1297,6 +1299,35 @@ compactError,
     </div>
   ) : null;
 
+  // The native ask_user_question waits in the same slot, ahead of an extension's dialog: its
+  // questions arrive in the call's waiting update (lib/ask-user-extension.ts).
+  const pendingQuestions = useMemo(() => {
+    const pending: PendingAskUserQuestion[] = [];
+    for (const [toolCallId, result] of activeToolResults) {
+      if (result.toolName === ASK_USER_QUESTION_TOOL_NAME && isAskUserPendingDetails(result.details)) {
+        pending.push({ toolCallId, questions: result.details.questions });
+      }
+    }
+    return pending;
+  }, [activeToolResults]);
+  const askUserSessionId = session?.id ?? sessionIdRef.current;
+  const askUserDialogElement = pendingQuestions.length > 0 && askUserSessionId ? (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: "0 16px 8px",
+        paddingRight: isMobile ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+      }}
+    >
+      <AskUserQuestionDialog
+        key={pendingQuestions[0]!.toolCallId}
+        request={pendingQuestions[0]!}
+        sessionId={askUserSessionId}
+        waitingCount={pendingQuestions.length - 1}
+      />
+    </div>
+  ) : null;
+
 
   if (loading) {
     return (
@@ -1566,7 +1597,7 @@ compactError,
             </div>
           </div>
         )}
-        {extensionDialogElement ?? chatInputElement}
+        {askUserDialogElement ?? extensionDialogElement ?? chatInputElement}
         <ExtensionStatusBar
           statuses={extensionStatuses}
           widgets={extensionWidgets}

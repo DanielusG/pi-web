@@ -95,10 +95,10 @@ test("the control a move came from takes focus in the bar of the new composer", 
 test("the header: the brand and its versions line, then the bar right above the composer, only while the page is empty", () => {
   const start = chatWindowSource.indexOf("{isEmptyNew && (\n          <div className=\"new-session-hero\"");
   assert.ok(start > 0);
-  // Fork deviation: the composer slot holds an extension dialog while one is
-  // open (docs/agents/chat-ui.md), so the hero ends at that slot, not at
+  // Fork deviation: the composer slot holds an ask_user_question or extension
+  // dialog while one is open (docs/agents/chat-ui.md), so the hero ends at that slot, not at
   // {chatInputElement}.
-  const hero = chatWindowSource.slice(start, chatWindowSource.indexOf("{extensionDialogElement ?? chatInputElement}", start));
+  const hero = chatWindowSource.slice(start, chatWindowSource.indexOf("{askUserDialogElement ?? extensionDialogElement ?? chatInputElement}", start));
   // The composer's side padding and width; the logo, then "Pi Web" over its
   // versions line; then the bar, the header's last child, so the composer
   // follows it. Nothing on the right: no versions block, no float.

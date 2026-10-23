@@ -1,11 +1,10 @@
 // The native `ask_user_question` tool's data, shared by the tool (lib/ask-user-extension.ts) and
 // the chat card (components/AskUserQuestionCard.tsx), so this module stays client-safe.
 //
-// The arguments, the validation rules, the result `details` and the text the model reads follow
-// @juicesharp/rpiv-ask-user-question (MIT): a transcript reads the same whichever of the two wrote
-// it, and a model used to that package needs nothing new. The trial accepts one single-choice
-// question per call (`MAX_QUESTIONS`, and `validateQuestionnaire` refuses multiple choice and
-// previews); answers and results already carry the package's full shape.
+// The arguments, the validation rules and the result `details` follow
+// @juicesharp/rpiv-ask-user-question (MIT), so a transcript of either renders the same. The text
+// the model reads is the package's too, except that a picked option's preview is not echoed back:
+// the model wrote it in the same call, and repeating it costs tokens for nothing.
 
 import type { BlockingExtensionUiRequest } from "./types";
 
@@ -15,8 +14,7 @@ export const MAX_HEADER_LENGTH = 16;
 export const MAX_LABEL_LENGTH = 60;
 export const MIN_OPTIONS = 2;
 export const MAX_OPTIONS = 4;
-/** One question per call while the native card is on trial; the package allows four. */
-export const MAX_QUESTIONS = 1;
+export const MAX_QUESTIONS = 4;
 
 /** The package's sentinel rows ("Type something.", "Next") and Claude Code's "Other". */
 export const RESERVED_LABELS = ["Other", "Type something.", "Next"] as const;
@@ -59,8 +57,7 @@ export type QuestionnaireError =
   | "too_many_questions"
   | "duplicate_question"
   | "duplicate_option_label"
-  | "reserved_label"
-  | "unsupported_question";
+  | "reserved_label";
 
 /** The result's `details`, as the package writes them. */
 export interface QuestionnaireResult {
@@ -76,8 +73,11 @@ export const ASK_USER_PENDING_KIND = "pi-web-ask-user-pending";
 
 export interface AskUserPendingDetails {
   kind: typeof ASK_USER_PENDING_KIND;
-  /** The first question, for the browser notification: the update carries no tool input. */
-  question: string;
+  /**
+   * The questions as validated and normalized, so a client renders the dialog from the update
+   * alone (the Android client never holds the tool call's input while it streams).
+   */
+  questions: AskUserQuestion[];
 }
 
 export interface AskUserToolResult {
@@ -109,7 +109,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isAskUserPendingDetails(value: unknown): value is AskUserPendingDetails {
-  return isRecord(value) && value.kind === ASK_USER_PENDING_KIND && typeof value.question === "string";
+  return isRecord(value) && value.kind === ASK_USER_PENDING_KIND && readQuestions(value.questions) !== null;
 }
 
 /**
@@ -118,7 +118,7 @@ export function isAskUserPendingDetails(value: unknown): value is AskUserPending
  * object never leaves the page.
  */
 export function askUserAttentionRequest(toolCallId: string, details: AskUserPendingDetails): BlockingExtensionUiRequest {
-  return { type: "extension_ui_request", id: `ask-user:${toolCallId}`, method: "select", title: details.question, options: [] };
+  return { type: "extension_ui_request", id: `ask-user:${toolCallId}`, method: "select", title: details.questions[0]!.question, options: [] };
 }
 
 export function isQuestionnaireResult(value: unknown): value is QuestionnaireResult {
@@ -190,10 +190,7 @@ export function prepareQuestionArguments(args: unknown): AskUserParams {
 
 export type ValidationResult = { ok: true } | { ok: false; error: QuestionnaireError; message: string };
 
-/**
- * The package's checks, then the trial's: multiple choice and option previews are refused rather
- * than shown in a way the model did not ask for, and the message says how to ask instead.
- */
+/** The package's checks; a preview on a multiple-choice question is ignored, as the package does. */
 export function validateQuestionnaire(params: AskUserParams): ValidationResult {
   if (params.questions.length === 0) {
     return { ok: false, error: "no_questions", message: "Error: At least one question is required" };
@@ -202,7 +199,7 @@ export function validateQuestionnaire(params: AskUserParams): ValidationResult {
     return {
       ok: false,
       error: "too_many_questions",
-      message: `Error: At most ${MAX_QUESTIONS} question is allowed per invocation in this client`,
+      message: `Error: At most ${MAX_QUESTIONS} questions are allowed per invocation`,
     };
   }
   const seenQuestions = new Set<string>();
@@ -230,20 +227,6 @@ export function validateQuestionnaire(params: AskUserParams): ValidationResult {
       }
       seenLabels.add(option.label);
     }
-    if (question.multiSelect === true) {
-      return {
-        ok: false,
-        error: "unsupported_question",
-        message: "Error: multiSelect is not available in this client. The user never saw the question. Ask a single-choice question, or ask in plain chat text.",
-      };
-    }
-    if (question.options.some((option) => typeof option.preview === "string" && option.preview.length > 0)) {
-      return {
-        ok: false,
-        error: "unsupported_question",
-        message: "Error: option previews are not available in this client. The user never saw the question. Put what matters in each option's description and ask again.",
-      };
-    }
   }
   return { ok: true };
 }
@@ -268,15 +251,14 @@ function formatAnswerScalar(answer: QuestionAnswer): string {
 
 function answerSegment(answer: QuestionAnswer): string {
   const parts = [`"${answer.question}"="${formatAnswerScalar(answer)}"`];
-  if (answer.preview && answer.preview.length > 0) parts.push(`selected preview: ${answer.preview}`);
   if (answer.notes && answer.notes.length > 0) parts.push(`user notes: ${answer.notes}`);
   return `${parts.join(". ")}.`;
 }
 
 /**
- * The text the model reads, byte for byte the package's: a decline (or nothing answered) is one
- * canonical sentence; otherwise `"<question>"="<answer>"` per question, the questions left blank,
- * then any global note.
+ * The text the model reads, the package's but for the preview echo: a decline (or nothing
+ * answered) is one canonical sentence; otherwise `"<question>"="<answer>"` per question with any
+ * note, the questions left blank, then any global note.
  */
 export function buildQuestionnaireResponse(
   result: QuestionnaireResult | null | undefined,
@@ -405,9 +387,15 @@ export function resolveAnswer(questions: readonly AskUserQuestion[], payload: un
  */
 export function readAskUserParams(input: unknown): AskUserParams | null {
   const prepared = prepareQuestionArguments(input);
-  if (!isRecord(prepared) || !Array.isArray(prepared.questions) || prepared.questions.length === 0) return null;
+  if (!isRecord(prepared)) return null;
+  const questions = readQuestions(prepared.questions);
+  return questions ? normalizeQuestionParams({ questions }) : null;
+}
+
+function readQuestions(value: unknown): AskUserQuestion[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
   const questions: AskUserQuestion[] = [];
-  for (const entry of prepared.questions as unknown[]) {
+  for (const entry of value as unknown[]) {
     if (!isRecord(entry) || typeof entry.question !== "string" || typeof entry.header !== "string") return null;
     if (!Array.isArray(entry.options)) return null;
     const options: AskUserOption[] = [];
@@ -426,5 +414,93 @@ export function readAskUserParams(input: unknown): AskUserParams | null {
       ...(entry.multiSelect === true ? { multiSelect: true } : {}),
     });
   }
-  return normalizeQuestionParams({ questions });
+  return questions;
+}
+
+// ---------------------------------------------------------------------------
+// The dialog's form (components/AskUserQuestionDialog.tsx)
+// ---------------------------------------------------------------------------
+
+/**
+ * One question's state in the dialog. `picked` holds option indexes (at most one on a
+ * single-choice question, where `own` clears it); `own` is the "Write your own answer" row.
+ */
+export interface QuestionDraft {
+  picked: number[];
+  own: boolean;
+  text: string;
+  note: string;
+}
+
+export function emptyQuestionDraft(): QuestionDraft {
+  return { picked: [], own: false, text: "", note: "" };
+}
+
+/** The draft after the user toggles option `index` (single choice: picks it, dropping own text's row). */
+export function toggleDraftOption(question: AskUserQuestion, draft: QuestionDraft, index: number): QuestionDraft {
+  if (!question.multiSelect) return { ...draft, picked: [index], own: false };
+  const picked = draft.picked.includes(index)
+    ? draft.picked.filter((entry) => entry !== index)
+    : [...draft.picked, index].sort((a, b) => a - b);
+  return { ...draft, picked };
+}
+
+/** The draft after the user toggles the own-answer row (single choice: picks it instead of an option). */
+export function toggleDraftOwn(question: AskUserQuestion, draft: QuestionDraft): QuestionDraft {
+  if (!question.multiSelect) return { ...draft, picked: [], own: true };
+  return { ...draft, own: !draft.own };
+}
+
+export function isDraftAnswered(question: AskUserQuestion, draft: QuestionDraft): boolean {
+  const ownText = draft.own && draft.text.trim().length > 0;
+  return question.multiSelect ? draft.picked.length > 0 || ownText : draft.picked.length === 1 || ownText;
+}
+
+/** The answer as the user would read it back: option labels, then their own text. */
+export function draftAnswerText(question: AskUserQuestion, draft: QuestionDraft): string {
+  const values = draft.picked.map((index) => question.options[index]?.label).filter((label): label is string => Boolean(label));
+  if (draft.own && draft.text.trim()) values.push(draft.text.trim());
+  return values.join(", ");
+}
+
+/**
+ * The `answer_question` payload for drafts that are all answered (`isDraftAnswered`); notes are
+ * trimmed and left out when blank, as the package stores them.
+ */
+export function buildAnswerPayload(
+  questions: readonly AskUserQuestion[],
+  drafts: readonly QuestionDraft[],
+  globalNote: string,
+): { answers: AskUserAnswerEntry[]; globalNote?: string } {
+  const answers = questions.map((question, questionIndex): AskUserAnswerEntry => {
+    const draft = drafts[questionIndex] ?? emptyQuestionDraft();
+    const text = draft.own ? draft.text.trim() : "";
+    const note = draft.note.trim();
+    const withNote = note ? { notes: note } : {};
+    if (!question.multiSelect) {
+      return text ? { questionIndex, text, ...withNote } : { questionIndex, optionIndexes: draft.picked.slice(0, 1), ...withNote };
+    }
+    return {
+      questionIndex,
+      ...(draft.picked.length > 0 ? { optionIndexes: [...draft.picked] } : {}),
+      ...(text ? { text } : {}),
+      ...withNote,
+    };
+  });
+  const note = globalNote.trim();
+  return { answers, ...(note ? { globalNote: note } : {}) };
+}
+
+/**
+ * The option whose preview the dialog shows: the focused one when it has a preview, else the
+ * picked one, else the first with a preview. Previews belong to single-choice questions only.
+ */
+export function previewOptionIndex(question: AskUserQuestion, draft: QuestionDraft, focused: number | null): number | null {
+  if (question.multiSelect) return null;
+  const hasPreview = (index: number | null | undefined) =>
+    index !== null && index !== undefined && Boolean(question.options[index]?.preview);
+  if (hasPreview(focused)) return focused;
+  if (hasPreview(draft.picked[0])) return draft.picked[0]!;
+  const first = question.options.findIndex((option) => Boolean(option.preview));
+  return first >= 0 ? first : null;
 }

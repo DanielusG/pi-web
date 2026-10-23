@@ -1166,6 +1166,11 @@ pre, code {
 }
 .markdown-body p { margin: 0 0 8px; }
 .markdown-body p:last-child { margin-bottom: 0; }
+/* An ask_user_question option's preview: markdown in a monospace box (components/AskUserQuestionDialog.tsx),
+   where an ASCII mockup keeps its spacing. */
+.markdown-body.ask-user-preview { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+.markdown-body.ask-user-preview p,
+.markdown-body.ask-user-preview li { white-space: pre-wrap; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   font-weight: 600;

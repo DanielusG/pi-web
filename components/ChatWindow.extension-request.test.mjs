@@ -11,7 +11,8 @@ const customSource = source.slice(customStart);
 test("renders the extension dialog inline in the composer slot (fork layout)", () => {
   // While a blocking extension request is open, the dialog replaces the input bar.
   assert.match(source, /const extensionDialogElement = extensionDialog \?/);
-  assert.match(source, /\{extensionDialogElement \?\? chatInputElement\}/);
+  // The native ask_user_question's dialog takes the same slot, ahead of an extension's.
+  assert.match(source, /\{askUserDialogElement \?\? extensionDialogElement \?\? chatInputElement\}/);
   // The dialog is not an overlay: no absolute positioning in the dialog component.
   assert.doesNotMatch(dialogSource, /position: "absolute"/);
   assert.doesNotMatch(dialogSource, /inset: 0/);

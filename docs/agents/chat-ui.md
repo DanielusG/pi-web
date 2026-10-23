@@ -94,9 +94,11 @@ error, `title` carrying the raw `mcp__` name). After it:
   `splitFinalAssistantBlocks`/`withAssistantBlocks` pair; the fork's own `previewText()` custom-message
   preview was dropped too, as upstream's `isHiddenCustomMessage` + inline collapsed preview supersede it.
 
-`ask_user_question` calls of the native tool (on trial) skip `ToolCallBlock`: `BlockView` renders
-`components/AskUserQuestionCard.tsx` while the call waits (the form) and once it has a result (the
-answer), and falls back to the generic card otherwise — see [tools.md](tools.md).
+The native `ask_user_question`'s dialog (`components/AskUserQuestionDialog.tsx`) takes the same
+composer slot, ahead of an extension dialog — `{askUserDialogElement ?? extensionDialogElement ??
+chatInputElement}` — with the same chrome (pill, maximize, "+N more", Escape declines); in the
+message list `BlockView` shows the waiting call as a running generic card and an answered one as
+`components/AskUserQuestionCard.tsx` — see [tools.md](tools.md).
 
 Fork-only previews live beside upstream's truncation recovery and compaction footer:
 `ProposedChangesPreview` (word-level diff of an edit/write result, `lib/word-diff.ts`),

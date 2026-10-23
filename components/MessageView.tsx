@@ -26,8 +26,8 @@ import { getToolArgsView, toolSummaryLine } from "@/lib/tool-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
 import { CodemodeCallList } from "./CodemodeToolView";
-import { AskUserQuestionCard, askUserCardState } from "./AskUserQuestionCard";
-import { ASK_USER_QUESTION_TOOL_NAME, readAskUserParams } from "@/lib/ask-user-question";
+import { AskUserQuestionCard, isAnsweredAskUserResult } from "./AskUserQuestionCard";
+import { ASK_USER_QUESTION_TOOL_NAME, isAskUserPendingDetails, readAskUserParams } from "@/lib/ask-user-question";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
 import { getTranscriptNotices } from "@/lib/transcript-notices";
@@ -1009,11 +1009,12 @@ function BlockView({ block, searchTarget, toolResults, isStreaming, streamingDur
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    // A question waiting for the user, or its answer, has a card of its own; anything else
-    // (streamed input, a refused or cut-off call) keeps the generic tool card.
-    const askUserParams = tc.toolName === ASK_USER_QUESTION_TOOL_NAME && tc.rawInput === undefined ? readAskUserParams(tc.input) : null;
-    if (askUserParams && result && askUserCardState(askUserParams, result)) {
-      return <AskUserQuestionCard toolCallId={tc.toolCallId} params={askUserParams} result={result} sessionId={sessionId} />;
+    // An answered question has a summary card; one still waiting is asked in the dialog that
+    // takes the composer's place, so its card shows a running call, not the waiting update.
+    if (tc.toolName === ASK_USER_QUESTION_TOOL_NAME) {
+      const askUserParams = tc.rawInput === undefined ? readAskUserParams(tc.input) : null;
+      if (askUserParams && result && isAnsweredAskUserResult(askUserParams, result)) return <AskUserQuestionCard params={askUserParams} result={result} />;
+      if (isAskUserPendingDetails(result?.details)) return <ToolCallBlock block={tc} duration={duration} cwd={cwd} onOpenSubagent={onOpenSubagent} />;
     }
     return <ToolCallBlock block={tc} result={result} duration={duration} cwd={cwd} onOpenSubagent={onOpenSubagent} />;
   }
