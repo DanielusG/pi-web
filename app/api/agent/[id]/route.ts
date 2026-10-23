@@ -42,6 +42,10 @@ export async function POST(
       promptAccepted = body.type === "prompt";
       return NextResponse.json({ success: true, data: result });
     }
+    // A question lives only in the run that asked it: starting the session would not reopen it.
+    if (body.type === "answer_question") {
+      return NextResponse.json({ error: "This question is no longer waiting for an answer" }, { status: 409 });
+    }
 
     const filePath = await resolveSessionPath(id);
     if (!filePath) {

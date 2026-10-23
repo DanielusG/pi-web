@@ -32,6 +32,7 @@ import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import { CODEMODE_TOOL_NAME, getCodemodeProgress } from "@/lib/codemode-view";
+import { ASK_USER_QUESTION_TOOL_NAME, askUserAttentionRequest, isAskUserPendingDetails } from "@/lib/ask-user-question";
 import { updateExtensionWidgets } from "@/lib/extension-widgets";
 import { bareMcpOpensSettings } from "@/lib/mcp-command";
 import type { SettingsSection } from "@/lib/settings-navigation";
@@ -1707,8 +1708,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const name = event.toolName as string;
         const partialResult = event.partialResult as Partial<ToolResultMessage> | undefined;
         const content = partialResult?.content;
+        // A native ask_user_question waiting for the user: its card shows the form while this
+        // update stands in for the result, and the browser is told when the tab is in the background.
+        const askUserPending = name === ASK_USER_QUESTION_TOOL_NAME && isAskUserPendingDetails(partialResult?.details)
+          ? partialResult.details
+          : null;
+        if (askUserPending) onAttentionNeeded?.(askUserAttentionRequest(id, askUserPending));
         // Live output for shells; for codemode, the calls its script has made so far.
-        if ((name === "bash" || name === "powershell" || name === CODEMODE_TOOL_NAME) && Array.isArray(content)) {
+        if ((name === "bash" || name === "powershell" || name === CODEMODE_TOOL_NAME || askUserPending) && Array.isArray(content)) {
           setActiveToolResults((prev) => {
             const next = new Map(prev);
             next.set(id, {
@@ -1794,7 +1801,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
-  }, [addNotice, applyContextUsage, cancelEventStreamGrace, dispatch, flushPendingDeltas, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleDeltaFlush, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, applyContextUsage, cancelEventStreamGrace, dispatch, flushPendingDeltas, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onAttentionNeeded, onToolEnd, refreshContextUsage, scheduleDeltaFlush, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {

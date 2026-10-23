@@ -45,6 +45,14 @@ import {
 } from "./subagents";
 import { createSubagentController } from "./subagent-runtime";
 import { isBuiltInSubagentsEnabled } from "./subagent-settings";
+import {
+  answerQuestion,
+  closeSessionQuestions,
+  createAskUserExtension,
+  hasOpenQuestion,
+  preferPiWebAskUserExtension,
+} from "./ask-user-extension";
+import { isNativeAskUserEnabled } from "./ask-user-settings";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
@@ -215,6 +223,7 @@ const COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT = new Set([
   "get_commands",
   "extension_ui_response",
   "extension_ui_input",
+  "answer_question",
 ]);
 
 export interface RpcSessionStartOptions {
@@ -392,13 +401,15 @@ export class AgentSessionWrapper {
 
   /**
    * True while an extension's blocking dialog is unanswered: select, confirm,
-   * input, editor, or a custom overlay still open. The run is parked on a promise
+   * input, editor, or a custom overlay still open — or the native ask_user_question
+   * card (lib/ask-user-extension.ts). The run is parked on a promise
    * only the user can settle, so the sidebar shows awaiting input rather than the
    * running spinner. Never true for an idle session: a custom overlay that
    * outlives its turn is not a parked run.
    */
   isAwaitingInput(): boolean {
     if (!this.isRunning()) return false;
+    if (hasOpenQuestion(this.sessionId)) return true;
     for (const request of this.pendingUiRequests.values()) {
       if (isBlockingExtensionUiRequest(request as unknown as ExtensionUiRequest)) return true;
     }
@@ -1316,6 +1327,11 @@ export class AgentSessionWrapper {
         return null;
       }
 
+      case "answer_question": {
+        answerQuestion(this.sessionId, command.toolCallId, command);
+        return null;
+      }
+
       case "set_auto_retry": {
         this.inner.setAutoRetryEnabled(command.enabled as boolean);
         return null;
@@ -1386,6 +1402,7 @@ export class AgentSessionWrapper {
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
+    closeSessionQuestions(this.sessionId);
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
@@ -2596,8 +2613,9 @@ export async function startRpcSession(
                 () => listSubagentProfiles(sessionCwd),
                 isBuiltInSubagentsEnabled,
               ),
+              createAskUserExtension(isNativeAskUserEnabled),
             ],
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
+            extensionsOverride: (base) => preferUserBashExtension(preferPiWebAskUserExtension(preferPiWebSubagentExtension(base))),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
