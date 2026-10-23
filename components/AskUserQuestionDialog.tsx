@@ -207,8 +207,11 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
       selectedTab?.focus({ preventScroll: true });
       selectedTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
     } else {
-      // The review tab has no choices: it focuses Send.
-      const first = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]") ?? submitRef.current;
+      // The picked choice, else the first one, so Enter on a question seen again keeps its
+      // answer; the review tab has no choices and focuses Send.
+      const first = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]:checked")
+        ?? bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]")
+        ?? submitRef.current;
       first?.focus({ preventScroll: true });
     }
     bodyRef.current?.scrollTo({ top: 0 });
@@ -221,6 +224,17 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
     }));
   };
   const goTo = (next: number) => setForm((previous) => ({ ...previous, tab: next }));
+  /** ←/→ (and Home/End on the tabs): the questions in a ring, with the review tab last. */
+  const stepTab = (key: string, fromTabs: boolean) => {
+    if (!multiple || locked) return;
+    const count = reviewTab + 1;
+    const next = key === "Home" ? 0
+      : key === "End" ? reviewTab
+      : (tab + (key === "ArrowRight" ? 1 : -1) + count) % count;
+    if (next === tab) return;
+    focusTabRef.current = fromTabs;
+    goTo(next);
+  };
   const openNote = (index: number) => setForm((previous) => (
     previous.openNotes.includes(index) ? previous : { ...previous, openNotes: [...previous.openNotes, index] }
   ));
@@ -514,6 +528,20 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
         } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
           advance();
+        } else if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.target instanceof HTMLTextAreaElement) {
+          // Text fields keep their arrows; so do modified keys.
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          // ←/→ go through the questions from anywhere else, as in the package's dialog. A radio
+          // would otherwise take the option beside it.
+          event.preventDefault();
+          stepTab(event.key, event.target instanceof HTMLElement && event.target.getAttribute("role") === "tab");
+        } else if ((event.key === "ArrowUp" || event.key === "ArrowDown") && event.target instanceof HTMLInputElement && event.target.type === "checkbox") {
+          // ↑/↓ move between checkbox rows (wrapping) as they do between radios; Space and Enter toggle.
+          event.preventDefault();
+          const rows = Array.from(bodyRef.current?.querySelectorAll<HTMLInputElement>("input[data-ask-user-choice]") ?? []);
+          const position = rows.indexOf(event.target);
+          if (position < 0) return;
+          rows[(position + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]!.focus();
         }
       }}
       style={{
@@ -541,16 +569,11 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
           role="tablist"
           aria-label={t("askUser.questions")}
           className="ask-user-tabs"
+          // ←/→ are the dialog's (they work from the choices too); Home/End are the tabs' own.
           onKeyDown={(event) => {
-            if (locked || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            if (event.key !== "Home" && event.key !== "End") return;
             event.preventDefault();
-            const count = reviewTab + 1;
-            const next = event.key === "Home" ? 0
-              : event.key === "End" ? reviewTab
-              : (tab + (event.key === "ArrowRight" ? 1 : -1) + count) % count;
-            if (next === tab) return;
-            focusTabRef.current = true;
-            goTo(next);
+            stepTab(event.key, true);
           }}
         >
           {[...questions.map((entry) => entry.header), t("askUser.review")].map((label, index) => (
