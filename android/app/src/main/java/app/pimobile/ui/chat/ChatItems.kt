@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pimobile.data.AskUserQuestion
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
 import app.pimobile.data.FilePaths
@@ -327,7 +328,21 @@ fun AssistantMessage(
                 }
                 is Block.ToolCall -> {
                     val result = toolResults[block.id]
-                    ToolCard(
+                    // A finished ask_user_question reads as its answers; anything else keeps the tool card.
+                    val askSummary = remember(block.name, block.input, result) {
+                        if (block.name != AskUserQuestion.TOOL_NAME || result == null || result.isError) null
+                        else AskUserQuestion.parseQuestions(block.input?.get("questions"))?.let { questions ->
+                            AskUserQuestion.parseResult(result.details)?.let { questions to it }
+                        }
+                    }
+                    if (askSummary != null) AskUserSummaryCard(
+                        questions = askSummary.first,
+                        summary = askSummary.second,
+                        selected = selectedToolId == block.id,
+                        onLongPress = if (onToolLongPress != null && result?.entryId != null) {
+                            { onToolLongPress(block.id) }
+                        } else null,
+                    ) else ToolCard(
                         call = block,
                         result = result,
                         live = liveTools[block.id],

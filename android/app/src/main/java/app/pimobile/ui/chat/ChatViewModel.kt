@@ -8,6 +8,8 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pimobile.data.ApiException
+import app.pimobile.data.AskForm
+import app.pimobile.data.AskUserQuestion
 import app.pimobile.data.AsrClient
 import app.pimobile.data.AttachedImage
 import app.pimobile.data.Block
@@ -16,6 +18,7 @@ import app.pimobile.data.ImageAttachments
 import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
 import app.pimobile.data.Messages
+import app.pimobile.data.PendingQuestion
 import app.pimobile.data.PiApi
 import app.pimobile.data.SessionTree
 import app.pimobile.data.SlashDisplay
@@ -157,6 +160,12 @@ data class ChatUiState(
     val editPreviews: Map<String, EditPreview> = emptyMap(),
     val queued: List<String> = emptyList(),
     val dialog: ExtensionDialog? = null,
+    /**
+     * Native ask_user_question calls waiting for an answer, oldest first: the dialog shows the
+     * first one, the rest wait behind it. Each form survives the stream reconnecting.
+     */
+    val questions: List<PendingQuestion> = emptyList(),
+    val askForms: Map<String, AskForm> = emptyMap(),
     val error: String? = null,
     val notice: String? = null,
     val restoredDraft: String? = null,
@@ -541,7 +550,7 @@ class ChatViewModel(
             // and the refresh that precedes it already reconciled.
             everConnected = false
             reconnectAttempt = 0
-            _state.update { it.copy(streaming = null, liveTools = emptyMap()) }
+            _state.update { it.copy(streaming = null, liveTools = emptyMap(), questions = emptyList()) }
         }
     }
 
@@ -652,6 +661,54 @@ class ChatViewModel(
                     }
                 })
             }
+        }
+    }
+
+    fun updateAskForm(toolCallId: String, transform: (AskForm) -> AskForm) {
+        _state.update { state ->
+            val form = state.askForms[toolCallId] ?: return@update state
+            state.copy(askForms = state.askForms + (toolCallId to transform(form)))
+        }
+    }
+
+    /** Sends the form's answers; the dialog stays locked until `tool_execution_end` closes it. */
+    fun submitQuestion(toolCallId: String) {
+        val current = _state.value
+        val pending = current.questions.firstOrNull { it.toolCallId == toolCallId } ?: return
+        val form = current.askForms[toolCallId] ?: return
+        if (form.sending || !AskUserQuestion.allAnswered(pending.questions, form.drafts)) return
+        sendQuestionCommand(toolCallId, AskUserQuestion.answerCommand(toolCallId, pending.questions, form))
+    }
+
+    /** Decline: the model is told the user declined to answer. */
+    fun declineQuestion(toolCallId: String) {
+        if (_state.value.askForms[toolCallId]?.sending == true) return
+        sendQuestionCommand(toolCallId, AskUserQuestion.cancelCommand(toolCallId))
+    }
+
+    private fun sendQuestionCommand(toolCallId: String, command: JsonObject) {
+        val id = _state.value.sessionId ?: return
+        updateAskForm(toolCallId) { it.copy(sending = true, error = null) }
+        viewModelScope.launch {
+            try {
+                api.command(id, command)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The server refused it and the question is still open: unlock the form.
+                updateAskForm(toolCallId) { it.copy(sending = false, error = e.message ?: e.toString()) }
+            }
+        }
+    }
+
+    private fun onQuestionPending(pending: PendingQuestion) {
+        _state.update { state ->
+            // The wrapper replays the latest update on reconnect: keep the form being filled in.
+            val questions = if (state.questions.any { it.toolCallId == pending.toolCallId }) state.questions
+            else state.questions + pending
+            val forms = if (pending.toolCallId in state.askForms) state.askForms
+            else state.askForms + (pending.toolCallId to AskForm.blank(pending))
+            state.copy(questions = questions, askForms = forms)
         }
     }
 
@@ -1102,7 +1159,10 @@ class ChatViewModel(
     }
 
     private fun markIdle() {
-        _state.update { it.copy(running = false, status = null, liveTools = emptyMap()) }
+        // An idle run waits on nothing: a question still listed lost its end event.
+        _state.update {
+            it.copy(running = false, status = null, liveTools = emptyMap(), questions = emptyList(), askForms = emptyMap())
+        }
         pollJob?.cancel()
         scheduleIdleClose()
     }
@@ -1264,6 +1324,9 @@ class ChatViewModel(
             }
             "tool_execution_update" -> {
                 val toolId = event.str("toolCallId") ?: return
+                if (event.str("toolName") == AskUserQuestion.TOOL_NAME) {
+                    AskUserQuestion.parsePending(toolId, event.obj("partialResult")?.obj("details"))?.let(::onQuestionPending)
+                }
                 // Coalesced like token deltas: a verbose bash command emits hundreds of updates per second.
                 pendingToolUpdates[toolId] = event
                 scheduleFlush()
@@ -1272,7 +1335,13 @@ class ChatViewModel(
                 val toolId = event.str("toolCallId") ?: return
                 val toolName = event.str("toolName") ?: _state.value.liveTools[toolId]?.name
                 pendingToolUpdates.remove(toolId)
-                _state.update { it.copy(liveTools = it.liveTools - toolId) }
+                _state.update {
+                    it.copy(
+                        liveTools = it.liveTools - toolId,
+                        questions = it.questions.filterNot { question -> question.toolCallId == toolId },
+                        askForms = it.askForms - toolId,
+                    )
+                }
                 if (_state.value.liveTools.isEmpty()) setStatus("Waiting for model…")
                 // The tool result is appended to the context: estimate grew.
                 viewModelScope.launch { reconcile(id) }

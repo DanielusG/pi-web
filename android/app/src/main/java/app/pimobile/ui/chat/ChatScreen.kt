@@ -381,8 +381,8 @@ fun ChatScreen(
     // While the extension dialog is open, the message that opened it (ending in a tool call) has no
     // footer, so the composer is blocked and its text can't be TTS'd. Target the last assistant
     // message with text for a slim Listen-only footer.
-    val dialogListenKey = remember(state.items, state.dialog) {
-        if (state.dialog == null) null
+    val dialogListenKey = remember(state.items, state.dialog, state.questions) {
+        if (state.dialog == null && state.questions.isEmpty()) null
         else state.items.asReversed().firstOrNull {
             it is ChatItem.Assistant && !it.streaming &&
                 it.blocks.any { block -> block is Block.Text && block.text.isNotBlank() }
@@ -435,7 +435,7 @@ fun ChatScreen(
     LaunchedEffect(slashQuery != null) {
         if (slashQuery != null) vm.loadSlashCommands()
     }
-    val slashMenuOpen = slashQuery != null && !slashDismissed && state.dialog == null
+    val slashMenuOpen = slashQuery != null && !slashDismissed && state.dialog == null && state.questions.isEmpty()
     LaunchedEffect(slashMenuOpen) {
         if (slashMenuOpen) vm.loadSkillDormancy()
     }
@@ -527,7 +527,20 @@ fun ChatScreen(
                     )
                 }
                 val dialog = state.dialog
-                if (dialog != null) {
+                val question = state.questions.firstOrNull()
+                val askForm = question?.let { state.askForms[it.toolCallId] }
+                if (question != null && askForm != null) {
+                    // A native ask_user_question takes the composer slot like an extension dialog,
+                    // and before one: an extension dialog waits behind it.
+                    AskUserQuestionDialog(
+                        pending = question,
+                        form = askForm,
+                        waitingCount = state.questions.size - 1,
+                        onForm = { vm.updateAskForm(question.toolCallId, it) },
+                        onSubmit = { vm.submitQuestion(question.toolCallId) },
+                        onDecline = { vm.declineQuestion(question.toolCallId) },
+                    )
+                } else if (dialog != null) {
                     // The extension dialog replaces the input bar in the composer slot, as on the web.
                     ExtensionDialogView(dialog, vm)
                 } else {
@@ -2050,7 +2063,7 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
 }
 
 /** Web: `color-mix(in srgb, accent 45%, border)` — Compose 1.7 has no Color.blend. */
-private fun Color.mixedWith(other: Color, fraction: Float): Color = Color(
+internal fun Color.mixedWith(other: Color, fraction: Float): Color = Color(
     red = red + (other.red - red) * fraction,
     green = green + (other.green - green) * fraction,
     blue = blue + (other.blue - blue) * fraction,

@@ -102,6 +102,29 @@ The app renders the extension dialog **inline in the composer slot**, replacing 
 upstream's non-blocking overlay (`android/app/src/main/java/app/pimobile/ui/chat/ChatScreen.kt`).
 See [chat-ui.md](chat-ui.md). Do not "fix" either side back to the upstream overlay when merging.
 
+## Native `ask_user_question` dialog
+The app answers pi-web's own `ask_user_question` (see [tools.md](tools.md)). It has its own
+dialog, not the extension dialog's generic select and input requests.
+- **Pending:** the questions come from the call's `tool_execution_update`:
+  `details: { kind: "pi-web-ask-user-pending", questions }`. `ChatViewModel` keeps
+  `questions` (oldest first) and an `AskForm` per tool call id. The wrapper replays the latest
+  update on reconnect, so going to the background clears only the list and the forms survive.
+  `tool_execution_end` removes both. An idle run (`markIdle`) clears both.
+- **Answering:** `answer_question` goes through `api.command`. A refusal (non-2xx) unlocks the form
+  and shows the server's message. Success keeps the form locked ("Sending…") until the end event
+  closes it. `data/AskUserQuestion.kt` builds the command. On a single-choice question own text
+  replaces the option, because the server takes exactly one of the two.
+- **Placement:** the dialog takes the composer slot before an extension dialog
+  (`ChatScreen.kt` bottom bar).
+- **Back collapses the dialog to its pill.** It does not decline: a phone's Back gesture is too
+  easy to make by accident with a half-filled questionnaire. The web declines on Esc, as its
+  extension dialog does.
+- **Previews:** single-choice only. A preview with a code fence goes through `Markdown`; plain
+  text goes through `CodeBlock` and keeps its spacing, scrolling sideways for ASCII mockups.
+- **History:** a finished call with questionnaire `details` renders as `AskUserSummaryCard`.
+  Results without them (a refused call's `error`, a Stop) keep the generic tool card.
+- `AskUserQuestionTest` pins the contract on the JVM.
+
 ## Tests
 ## Semantics since v0.12.2
 - Provider signature fields (`thinkingSignature`, `textSignature`, `thoughtSignature`) are stripped

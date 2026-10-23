@@ -109,11 +109,12 @@ fun PiPrimaryButton(
 }
 
 @Composable
-fun PiSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PiSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val t = Pi.tokens
     OutlinedButton(
         onClick = onClick,
         modifier = modifier.heightIn(min = 44.dp),
+        enabled = enabled,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, t.border),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = t.text),

@@ -74,6 +74,16 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Model picker, thinking level, context % indicator.
 - **Extension dialogs:** select / confirm / input / editor, so an extension waiting for
   an answer doesn't hang the agent.
+- **Agent questions (pi-web's native `ask_user_question`):**
+  - The questions open in the composer slot like an extension dialog, and before one.
+  - Several questions get a tab each plus a review tab with the answers and a note for all of
+    them.
+  - Single choice uses radio rows, multiple choice checkboxes. Both have a "Write your own
+    answer" row and a note per question.
+  - Option previews show below the options in a monospace box that scrolls sideways.
+  - Decline sends the package's decline. Back collapses the card to a pill and leaves the
+    question open.
+  - A finished call reads as its answers in the message list.
 - **Image attachments:**
   - The image button in the composer opens the system photo picker, which needs no
     storage permission.
@@ -253,6 +263,8 @@ app/src/main/java/app/pimobile/
   ui/settings/             server settings, assistant project picker, "Update pi-web" screen
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
+  ui/chat/AskUserQuestionViews.kt the native ask_user_question dialog and its summary card
+  data/AskUserQuestion.kt  its contract: pending questions, answered check, answer command
   ui/chat/ChatItems.kt     bubbles, thinking, tool cards, bash, notices
   ui/chat/SlashCommands.kt slash palette: filter, ranking, groups, menu
   data/FilePaths.kt        pi-web's path, link and @mention helpers
