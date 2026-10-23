@@ -113,7 +113,9 @@ dialog, not the extension dialog's generic select and input requests.
 - **Answering:** `answer_question` goes through `api.command`. A refusal (non-2xx) unlocks the form
   and shows the server's message. Success keeps the form locked ("Sending…") until the end event
   closes it. `data/AskUserQuestion.kt` builds the command. On a single-choice question own text
-  replaces the option, because the server takes exactly one of the two.
+  replaces the option, because the server takes exactly one of the two. Questions left blank are
+  left out of it (the model reads them as `unanswered:`), so Submit works with gaps when there are
+  several questions; a lone question still needs its answer, as on the web.
 - **Placement:** the dialog takes the composer slot before an extension dialog
   (`ChatScreen.kt` bottom bar).
 - **Back collapses the dialog to its pill.** It does not decline: a phone's Back gesture is too

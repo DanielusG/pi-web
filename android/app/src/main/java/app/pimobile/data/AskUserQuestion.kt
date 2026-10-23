@@ -148,13 +148,17 @@ object AskUserQuestion {
         return (labels + listOfNotNull(text)).joinToString(", ")
     }
 
-    /** The `answer_question` command for a complete form. */
+    /**
+     * The `answer_question` command. Questions left blank (and their notes) are left out, as on
+     * the web: the model reads them as `unanswered:`, as after rpiv's partial Submit.
+     */
     fun answerCommand(toolCallId: String, questions: List<AskQuestion>, form: AskForm): JsonObject = buildJsonObject {
         put("type", "answer_question")
         put("toolCallId", toolCallId)
         putJsonArray("answers") {
             questions.forEachIndexed { index, question ->
                 val draft = form.drafts[index]
+                if (!isAnswered(question, draft)) return@forEachIndexed
                 addJsonObject {
                     put("questionIndex", index)
                     val text = draft.text.trim().takeIf { draft.custom && it.isNotEmpty() }

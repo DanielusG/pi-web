@@ -676,7 +676,9 @@ class ChatViewModel(
         val current = _state.value
         val pending = current.questions.firstOrNull { it.toolCallId == toolCallId } ?: return
         val form = current.askForms[toolCallId] ?: return
-        if (form.sending || !AskUserQuestion.allAnswered(pending.questions, form.drafts)) return
+        if (form.sending) return
+        // Several questions may go with some left blank; a lone blank question would be a decline.
+        if (pending.questions.size == 1 && !AskUserQuestion.allAnswered(pending.questions, form.drafts)) return
         sendQuestionCommand(toolCallId, AskUserQuestion.answerCommand(toolCallId, pending.questions, form))
     }
 

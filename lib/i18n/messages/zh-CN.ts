@@ -198,6 +198,7 @@ export const zhCNLocale: LocalePlugin = {
     "askUser.notePlaceholder": "此问题的备注",
     "askUser.addGlobalNote": "为全部回答添加备注",
     "askUser.globalNotePlaceholder": "整份问卷的备注",
+    "askUser.partialHint": "留空的问题将作为未回答发送。",
     "codemode.calls": "工具调用",
     "codemode.callCount": "{count} 次调用",
     "codemode.callCountOne": "1 次调用",

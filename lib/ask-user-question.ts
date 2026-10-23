@@ -338,8 +338,10 @@ function resolveEntry(
 
 /**
  * An answer the browser sent (still untrusted) as the result the dialog would have produced.
- * All or nothing: every question answered, every index in range, or nothing is applied and the
- * question stays open. A partly applied answer would reach the model as if the user gave it.
+ * Questions may be left out, as the package's Submit tab allows: the envelope names them
+ * `unanswered:`, and no answer at all (with no global note) reads as a decline. What is sent is
+ * applied all or nothing: one bad entry (an index out of range, a blank text) refuses the whole
+ * answer and the question stays open, so a partly applied answer never reaches the model.
  */
 export function resolveAnswer(questions: readonly AskUserQuestion[], payload: unknown): AnswerOutcome {
   if (!isRecord(payload)) return { ok: false, reason: "payload must be an object" };
@@ -373,7 +375,7 @@ export function resolveAnswer(questions: readonly AskUserQuestion[], payload: un
   const resolved: QuestionAnswer[] = [];
   for (let index = 0; index < questions.length; index++) {
     const entry = byQuestion.get(index);
-    if (!entry) return { ok: false, reason: `no answer for question ${index} ("${questions[index]!.header}")` };
+    if (!entry) continue;
     const outcome = resolveEntry(questions[index]!, index, entry);
     if (!outcome.ok) return outcome;
     resolved.push(outcome.answer);
@@ -464,28 +466,30 @@ export function draftAnswerText(question: AskUserQuestion, draft: QuestionDraft)
 }
 
 /**
- * The `answer_question` payload for drafts that are all answered (`isDraftAnswered`); notes are
- * trimmed and left out when blank, as the package stores them.
+ * The `answer_question` payload: the answered drafts (`isDraftAnswered`) only, so a question left
+ * blank, and its note with it, reaches the model as `unanswered:`. Notes are trimmed and left out
+ * when blank, as the package stores them.
  */
 export function buildAnswerPayload(
   questions: readonly AskUserQuestion[],
   drafts: readonly QuestionDraft[],
   globalNote: string,
 ): { answers: AskUserAnswerEntry[]; globalNote?: string } {
-  const answers = questions.map((question, questionIndex): AskUserAnswerEntry => {
+  const answers = questions.flatMap((question, questionIndex): AskUserAnswerEntry[] => {
     const draft = drafts[questionIndex] ?? emptyQuestionDraft();
+    if (!isDraftAnswered(question, draft)) return [];
     const text = draft.own ? draft.text.trim() : "";
     const note = draft.note.trim();
     const withNote = note ? { notes: note } : {};
     if (!question.multiSelect) {
-      return text ? { questionIndex, text, ...withNote } : { questionIndex, optionIndexes: draft.picked.slice(0, 1), ...withNote };
+      return [text ? { questionIndex, text, ...withNote } : { questionIndex, optionIndexes: draft.picked.slice(0, 1), ...withNote }];
     }
-    return {
+    return [{
       questionIndex,
       ...(draft.picked.length > 0 ? { optionIndexes: [...draft.picked] } : {}),
       ...(text ? { text } : {}),
       ...withNote,
-    };
+    }];
   });
   const note = globalNote.trim();
   return { answers, ...(note ? { globalNote: note } : {}) };

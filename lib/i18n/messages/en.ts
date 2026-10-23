@@ -198,6 +198,7 @@ export const enLocale: LocalePlugin = {
     "askUser.notePlaceholder": "Note for this question",
     "askUser.addGlobalNote": "Add a note for all answers",
     "askUser.globalNotePlaceholder": "Note for the whole questionnaire",
+    "askUser.partialHint": "Questions left blank are sent as unanswered.",
     "codemode.calls": "Tool calls",
     "codemode.callCount": "{count} calls",
     "codemode.callCountOne": "1 call",

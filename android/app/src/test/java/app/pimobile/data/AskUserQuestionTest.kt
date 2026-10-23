@@ -13,7 +13,7 @@ import org.junit.Test
 /**
  * The native ask_user_question contract (pi-web lib/ask-user-question.ts): the pending update's
  * questions, what counts as answered, and the `answer_question` command the server applies all
- * or nothing.
+ * or nothing (questions left blank are left out of it).
  */
 class AskUserQuestionTest {
 
@@ -121,6 +121,17 @@ class AskUserQuestionTest {
                   {"questionIndex":0,"optionIndexes":[1],"notes":"only if small"},
                   {"questionIndex":1,"optionIndexes":[0,2],"text":"Offline"}],"globalNote":"ship it"}""",
             ),
+            command,
+        )
+    }
+
+    @Test
+    fun questionsLeftBlankAreLeftOut() {
+        val form = AskForm(drafts = listOf(AskDraft(note = "unsure"), AskDraft(selected = setOf(1))))
+        assertFalse(AskUserQuestion.allAnswered(listOf(library, features), form.drafts))
+        val command = AskUserQuestion.answerCommand("call_3", listOf(library, features), form)
+        assertEquals(
+            json("""{"type":"answer_question","toolCallId":"call_3","answers":[{"questionIndex":1,"optionIndexes":[1]}]}"""),
             command,
         )
     }

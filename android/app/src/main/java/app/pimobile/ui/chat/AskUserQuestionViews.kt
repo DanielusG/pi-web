@@ -93,7 +93,8 @@ fun AskUserQuestionDialog(
     val onReview = multi && tab == reviewTab
     val question = questions.getOrNull(tab)
     val locked = form.sending
-    val canSubmit = !locked && AskUserQuestion.allAnswered(questions, form.drafts)
+    // Several questions may go with some left blank (the model reads them as unanswered).
+    val canSubmit = !locked && (multi || AskUserQuestion.allAnswered(questions, form.drafts))
     fun updateDraft(index: Int, transform: (AskDraft) -> AskDraft) = onForm { current ->
         current.copy(drafts = current.drafts.mapIndexed { i, draft -> if (i == index) transform(draft) else draft }, error = null)
     }
@@ -526,6 +527,9 @@ private fun ReviewBody(
     onForm: ((AskForm) -> AskForm) -> Unit,
 ) {
     val t = Pi.tokens
+    if (!AskUserQuestion.allAnswered(questions, form.drafts)) {
+        Text("Questions left blank are sent as unanswered.", style = MaterialTheme.typography.bodySmall, color = t.textTertiary)
+    }
     questions.forEachIndexed { index, question ->
         val answer = AskUserQuestion.answerText(question, form.drafts[index])
         Column(
@@ -552,7 +556,7 @@ private fun ReviewBody(
             if (answer != null) {
                 Text("→ $answer", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = t.text)
             } else {
-                Text("Not answered yet", style = MaterialTheme.typography.bodySmall, color = t.danger)
+                Text("Not answered", style = MaterialTheme.typography.bodySmall, color = t.textTertiary)
             }
             form.drafts[index].note.trim().takeIf { it.isNotEmpty() }?.let {
                 Text("Note: $it", style = MaterialTheme.typography.bodySmall, color = t.textSecondary)

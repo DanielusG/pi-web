@@ -206,11 +206,8 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
       selectedTab?.focus({ preventScroll: true });
       selectedTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
     } else {
-      // The review tab has no choices: Send when it can go, else the first question.
-      const submitButton = submitRef.current && !submitRef.current.disabled ? submitRef.current : null;
-      const first = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]")
-        ?? submitButton
-        ?? bodyRef.current?.querySelector<HTMLElement>("button");
+      // The review tab has no choices: it focuses Send.
+      const first = bodyRef.current?.querySelector<HTMLElement>("input[data-ask-user-choice]") ?? submitRef.current;
       first?.focus({ preventScroll: true });
     }
     bodyRef.current?.scrollTo({ top: 0 });
@@ -243,8 +240,10 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
     }
   };
 
+  // Several questions may go with some left blank, as the package's Submit tab allows (the model
+  // reads them as `unanswered:`); a lone question left blank would only be a decline.
   const submit = () => {
-    if (locked || !allAnswered) return;
+    if (locked || (!multiple && !allAnswered)) return;
     void send(buildAnswerPayload(questions, form.drafts, form.globalNote));
   };
   const decline = () => void send({ cancel: true });
@@ -254,7 +253,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
     if (multiple && !onReview) goTo(tab + 1);
     else submit();
   };
-  const canAdvance = !locked && (multiple && !onReview ? true : allAnswered);
+  const canAdvance = !locked && (multiple || allAnswered);
 
   const title = question ? question.question : t("askUser.reviewTitle");
 
@@ -456,6 +455,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
 
   const reviewBody = (
     <div style={{ display: "grid", gap: 10 }}>
+      {!allAnswered && <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{t("askUser.partialHint")}</div>}
       {questions.map((entry, index) => {
         const done = answered[index];
         const entryDraft = form.drafts[index]!;
@@ -473,7 +473,7 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
             </span>
             {done
               ? <span style={{ fontSize: 13, fontWeight: 600 }}>→ {draftAnswerText(entry, entryDraft)}</span>
-              : <span style={{ fontSize: 12, color: "var(--danger)" }}>{t("askUser.unanswered")}</span>}
+              : <span style={{ fontSize: 12, color: "var(--warning)" }}>{t("askUser.unanswered")}</span>}
             {entryDraft.note.trim() && <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>{t("askUser.note", { note: entryDraft.note.trim() })}</span>}
           </button>
         );
