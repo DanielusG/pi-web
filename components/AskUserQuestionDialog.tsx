@@ -105,6 +105,11 @@ function footerButtonStyle(primary: boolean, enabled: boolean) {
   } as const;
 }
 
+/** One preview in the box's single grid cell: a hidden one still gives the box its height. */
+function stackedPreview(shown: boolean) {
+  return { gridArea: "1 / 1", minWidth: 0, visibility: shown ? "visible" : "hidden" } as const;
+}
+
 function SizeIcon({ expanded }: { expanded: boolean }) {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -384,7 +389,8 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
   const questionBody = (entry: AskUserQuestion, index: number, entryDraft: QuestionDraft) => {
     const multi = entry.multiSelect === true;
     const showPreview = questionHasPreviews(entry);
-    const preview = entry.options[previewRowIndex(entry, entryDraft, hoveredOption ?? focusedOption)]?.preview;
+    const previewRow = previewRowIndex(entry, entryDraft, hoveredOption ?? focusedOption);
+    const preview = entry.options[previewRow]?.preview;
     const sideBySide = showPreview && bodyWidth >= SIDE_BY_SIDE_MIN_WIDTH;
     const ownRow = entry.options.length;
     const inputType = multi ? "checkbox" : "radio";
@@ -487,14 +493,21 @@ export function AskUserQuestionDialog({ request, sessionId, waitingCount }: {
         {showPreview ? (
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: sideBySide ? "minmax(0, 2fr) minmax(0, 3fr)" : "minmax(0, 1fr)", alignItems: "start" }}>
             {choices}
+            {/* Every preview of the question sits in the same cell and only the highlighted row's is
+                visible, so the box keeps the tallest one's height, as the package reserves it. A
+                box that grew with the hovered row moved the rows under a still mouse, and the hover
+                flipped between two rows many times a second. */}
             <div
               aria-label={t("askUser.preview")}
               role="region"
-              style={{ border: "1px solid var(--border)", borderRadius: 9, background: "var(--bg-panel)", padding: "8px 10px", overflowX: "auto", minWidth: 0 }}
+              style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", border: "1px solid var(--border)", borderRadius: 9, background: "var(--bg-panel)", padding: "8px 10px", overflowX: "auto", minWidth: 0 }}
             >
-              {preview
-                ? <MarkdownBody className="ask-user-preview" keepLineBreaks>{preview}</MarkdownBody>
-                : <div style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("askUser.noPreview")}</div>}
+              {entry.options.map((option, optionIndex) => option.preview && (
+                <div key={option.label} style={stackedPreview(optionIndex === previewRow)}>
+                  <MarkdownBody className="ask-user-preview" keepLineBreaks>{option.preview}</MarkdownBody>
+                </div>
+              ))}
+              <div style={{ ...stackedPreview(!preview), color: "var(--text-dim)", fontSize: 12 }}>{t("askUser.noPreview")}</div>
             </div>
           </div>
         ) : choices}
