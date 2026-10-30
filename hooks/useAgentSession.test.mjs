@@ -10,6 +10,8 @@ const chatInputSource = await jitiSource(new URL("../components/ChatInput.tsx", 
 const messageViewSource = await jitiSource(new URL("../components/MessageView.tsx", import.meta.url));
 const appShellSource = await jitiSource(new URL("../components/AppShell.tsx", import.meta.url));
 const streamStoreSource = await jitiSource(new URL("../lib/streaming-message.ts", import.meta.url));
+// The shared client for /api/agent/[id]: the hook's status and command reads go through it.
+const agentClientSource = await jitiSource(new URL("../lib/agent-client.ts", import.meta.url));
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
@@ -43,23 +45,30 @@ test("keeps the session event stream open through the idle grace window", () => 
 
   assert.match(source, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
   assert.match(graceSource, /setTimeout\(\(\) => void checkServerIdle\(\), EVENT_STREAM_IDLE_GRACE_MS\)/);
-  assert.match(graceSource, /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`\)/);
-  assert.match(graceSource, /closeEvents\(\)/);
+  // The idle probe reads the session's own status through lib/agent-client's helper
+  // (upstream #1302 fetches it without the system prompt); the helper's line below is
+  // what pins that this is still a plain GET on the session itself, not another endpoint.
+  assert.match(graceSource, /fetch\(agentStatusUrl\(sid\)\)/);
+  assert.match(agentClientSource, /return `\/api\/agent\/\$\{encodeURIComponent\(sessionId\)\}\?systemPrompt=0`/);
+  // The grace ends by closing the stream; the argument only labels the close for the debug panel.
+  assert.match(graceSource, /closeEvents\("grace_end"\)/);
   assert.match(finishSource, /scheduleEventStreamClose\(sid\)/);
-  assert.doesNotMatch(finishSource, /closeEvents\(\)/);
-  assert.doesNotMatch(agentEndSource, /closeEvents\(\)/);
+  // Finishing without the stream must not tear it down itself: it hands over to the grace.
+  assert.doesNotMatch(finishSource, /closeEvents\(/);
+  assert.doesNotMatch(agentEndSource, /closeEvents\(/);
   assert.match(agentStartSource, /cancelEventStreamGrace\(\)/);
   assert.match(agentSettledSource, /scheduleEventStreamClose\(sid\)/);
-  // A stopped run ends quietly: the event says so (pi 1.1's agent_settled.aborted, carried on prompt_done).
-  assert.match(agentSettledSource, /onAgentEnd\?\.\(\{ aborted: event\.aborted === true \}\)/);
-  assert.match(promptDoneSource, /notifyPromptStage\(runId, event\.aborted === true\)/);
+  // A stopped run ends quietly: the event says so (pi 1.1's agent_settled.aborted, carried on
+  // prompt_done), and so does a run whose subagents are still working — they report back later (#1434).
+  assert.match(agentSettledSource, /onAgentEnd\?\.\(\{ aborted: event\.aborted === true, \.\.\.\(event\.subagentsActive === true \? \{ subagentsActive: true \} : \{\}\) \}\)/);
+  assert.match(promptDoneSource, /notifyPromptStage\(runId, event\.aborted === true, event\.subagentsActive === true\)/);
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
   assert.match(sendSource, /const definitivelyRejected = !promptRequestStarted/);
   assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /restoreSubmission\(message, images, composerDraftKey\);[\s\S]*?if \(sentSessionId\) \{[\s\S]*?reconcileAgentState\(sentSessionId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
+  assert.match(sendSource, /restoreSubmission\(message, images, composerDraftKey\);[\s\S]*?if \(sentSessionId\) \{[\s\S]*?reconcileAgentState\(sentSessionId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\("send_failed"\)/);
   assert.doesNotMatch(
     sendSource,
-    /rpcPromptPendingRef\.current = false;\s*agentRunningRef\.current = false;\s*closeEvents\(\)/,
+    /rpcPromptPendingRef\.current = false;\s*agentRunningRef\.current = false;\s*closeEvents\(/,
   );
 });
 
@@ -151,7 +160,9 @@ test("fresh sessions use the preference while persisted and live sessions restor
     preferenceSource,
     /const existingSessionId = session\?\.id;[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!existingSessionId && \(!isNew \|\| sessionIdRef\.current\)\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
   );
-  assert.match(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
+  // The restore path moved into applyLoadedAgentState (the mount and a hidden page's
+  // reattach both call it), so the tools re-read is keyed by the callback's own sid.
+  assert.match(source, /if \(agentState\?\.running\) \{\s*loadTools\(sid\)/);
   assert.match(source, /d\.toolNames !== undefined \? getPresetFromToolNames\(d\.toolNames\) : CONFIGURED_TOOL_PRESET/);
   assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
   assert.match(changeSource, /type: "set_tools",\s*\.\.\.\(toolNames !== undefined \? \{ toolNames \} : \{\}\),/);
@@ -208,7 +219,9 @@ test("only the session-mount load probes disk for external appends", () => {
   );
   assert.match(loadSessionSource, /options\?: \{ force\?: boolean \}/);
   assert.match(loadSessionSource, /if \(options\?\.force\) params\.set\("force", "1"\)/);
-  assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
+  // A forced read whose wrapper was rebuilt drops the stream on the dead wrapper and
+  // asks the connection for the new one's: the argument only labels the close.
+  assert.match(loadSessionSource, /if \(d\.wrapperRebuilt\) \{\s*eventConnectionRef\.current\?\.close\("rebuilt"\);\s*eventConnectionRef\.current\?\.maintain\(sid\);/);
   assert.match(mountSource, /loadSession\(session\.id, !cached, true, \{ force: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
   assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
@@ -363,7 +376,11 @@ test("streaming submissions cannot be stranded in an idle direct queue", () => {
 
   assert.match(queueSource, /type: "prompt"/);
   assert.match(queueSource, /streamingBehavior: behavior/);
-  assert.match(queueSource, /if \(isPromptRejectedError\(e\)\) restore\(\)/);
+  // Upstream #1432 puts the text back on any failure of the queued send and only then
+  // splits the notice: rejected (the server never took it) from unconfirmed (an
+  // ambiguous transport failure). Either way the submission goes back to the composer,
+  // never into a queue an idle wrapper would sit on.
+  assert.match(queueSource, /catch \(e\) \{[\s\S]*?\brestore\(\);[\s\S]*?if \(isPromptRejectedError\(e\)\) addNotice\(\{ type: "error", message: e\.message \}\);\s*else addUnconfirmedSendNotice\(\);/);
   assert.doesNotMatch(queueSource, /type: "steer"/);
   assert.doesNotMatch(queueSource, /type: "follow_up"/);
 });
@@ -397,15 +414,20 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
   );
 
   assert.match(source, /new AgentEventConnection\(\{/);
-  assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
+  // The hook hands the connection its own predicate instead of an inline arrow (now
+  // extracted to wantsEventStream above the connection, which the debug reader shares);
+  // that predicate is what still demands sid be this hook's session.
+  assert.match(source, /shouldMaintain: wantsEventStream,/);
+  assert.match(source, /const wantsEventStream = useCallback\(\(sid: string\) => \(\s*sessionHookMountedRef\.current\s*&& sessionIdRef\.current === sid/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = useStreamingSelector\(streamingStore, selectHasStreamingContent\)/);
   assert.match(chatWindowSource, /\{isStreaming && hasStreamingContent && \(\s*<StreamingReply store=\{streamingStore\}/);
-  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && \(agentPhase \|\| isCompacting\)/);
+  assert.match(chatWindowSource, /\{\(agentRunning \|\| isCompacting\) && !hasStreamingContent && \(agentPhase \|\| isCompacting\) && \(/);
   // Compaction is what the user needs to know while a turn is being compacted, so it is
-  // forwarded to the label instead of letting the stream phase read as a hang.
-  assert.match(chatWindowSource, /phaseLabel\(agentPhase, t, isCompacting\)/);
+  // forwarded to the label — with how many messages wait behind the run — instead of
+  // letting the stream phase read as a hang.
+  assert.match(chatWindowSource, /phaseLabel\(agentPhase, t, isCompacting, \(queuedMessages\?\.steering\.length \?\? 0\) \+ \(queuedMessages\?\.followUp\.length \?\? 0\)\)/);
   assert.match(phaseLabelSource, /return null;/);
 });
 
@@ -439,9 +461,16 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   );
   assert.match(source, /sessionPropIdRef\.current === sid/);
   assert.match(source, /SESSION_LEASE_RENEW_INTERVAL_MS = 30_000/);
-  assert.match(source, /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}\/lease`/);
-  assert.match(source, /setInterval\(\(\) => void renewLease\(\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
-  assert.match(source, /result\.renewed === 0[\s\S]*?closeEvents\(\)[\s\S]*?maintainEventsConnected\(sid\)/);
+  // The lease URL now lives in sessionLeaseUrl(); the request adds a timeout controller
+  // so a lease queued behind open streams reads as "unanswered" instead of hanging.
+  assert.match(source, /function sessionLeaseUrl\(sid: string\): string \{\s*return `\/api\/agent\/\$\{encodeURIComponent\(sid\)\}\/lease`;/);
+  assert.match(source, /fetch\(sessionLeaseUrl\(sid\), \{ method: "POST", cache: "no-store", signal: controller\.signal \}\)/);
+  assert.match(source, /setInterval\(\(\) => void renew\(\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
+  // A reply no longer answers "renewed: 0, so your stream was dropped". A page that let
+  // go of its stream (#1283) reads every reply and opens the stream again through the
+  // reattach hook as soon as the reply shows something under way on the session.
+  assert.match(source, /const renew = async \(\) => \{[\s\S]*?const reply = await requestLease\(sid\);[\s\S]*?if \(sessionLeaseShowsActivity\(reply\)\) reattachEventStreamRef\.current\(sid, "activity"\)/);
+  assert.match(source, /reattachEventStreamRef\.current = \(sid: string, reason: "visible" \| "activity"\) => \{[\s\S]*?maintainEventsConnected\(sid\);/);
   assert.match(source, /if \(sessionPropIdRef\.current === sid\) \{[\s\S]*?cancelEventStreamGrace\(\);[\s\S]*?return;/);
   assert.match(source, /maintainEventsConnected\(sid\)/);
   assert.doesNotMatch(source, /void connectEvents\(/);
@@ -455,14 +484,15 @@ test("opens the selected session's event stream even when Strict Mode re-runs ef
   // Strict Mode re-runs effects in declaration order after a simulated
   // unmount. The mount-only effect's cleanup flips sessionHookMountedRef to
   // false and only restores it when it re-runs, which happens after the
-  // warm-session effect. That effect must therefore re-assert the ref itself
-  // or shouldMaintain() refuses to open the stream on mount and on every
-  // switch back to a running session.
+  // warm-session effect. That effect must therefore re-assert the ref itself (and clear
+  // the hidden page's release flag, which would otherwise keep wantsEventStream() saying
+  // no) or the stream never opens on mount and on every switch back to a running session.
   const warmSource = source.slice(
-    source.indexOf("  // Keep the selected session warm even while its agent is idle."),
-    source.indexOf("    const renewLease = async () => {"),
+    source.indexOf("  // Keep the selected session's stream open even while its agent is idle."),
+    source.indexOf("  // One lease request: it resets the session's idle countdown"),
   );
-  assert.match(warmSource, /sessionHookMountedRef\.current = true;\s*maintainEventsConnected\(sid\);/);
+  assert.notEqual(warmSource.indexOf("sessionHookMountedRef"), -1, "the warm-session effect was not found");
+  assert.match(warmSource, /sessionHookMountedRef\.current = true;\s*eventStreamReleasedRef\.current = false;\s*maintainEventsConnected\(sid\);/);
   assert.ok(
     warmSource.indexOf("sessionHookMountedRef.current = true;")
       < warmSource.indexOf("maintainEventsConnected(sid);"),
@@ -530,8 +560,18 @@ test("restoring a running session does not clear an SSE snapshot", () => {
     source.indexOf("// Load session on mount"),
     source.indexOf("useEffect(() => {\n    onSystemPromptChange"),
   );
+  // What the mount read reports now goes to applyLoadedAgentState, shared with a hidden
+  // page's reattach, and that callback is where the store is resumed.
+  const restoreSource = source.slice(
+    source.indexOf("  const applyLoadedAgentState = useCallback"),
+    source.indexOf("  // Open a released stream again"),
+  );
 
-  assert.match(mountSource, /dispatch\(\{ type: "resume" \}\)/);
+  assert.notEqual(restoreSource.indexOf("dispatch"), -1, "applyLoadedAgentState was not found");
+  assert.match(mountSource, /applyLoadedAgentState\(session\.id, loadedAgentState\)/);
+  assert.match(restoreSource, /dispatch\(\{ type: "resume" \}\)/);
+  // `resume` keeps the partial the stream already fed; `start` would wipe it.
+  assert.doesNotMatch(restoreSource, /dispatch\(\{ type: "start" \}\)/);
   assert.doesNotMatch(mountSource, /dispatch\(\{ type: "start" \}\)/);
 });
 
@@ -590,7 +630,9 @@ test("keeps calls a tool made itself out of the running tools", () => {
     assert.notEqual(guard, -1, `${from} must skip nested tool events`);
     assert.ok(guard < caseSource.indexOf("const id = event.toolCallId"), `${from} must skip them before using the id`);
   }
-  assert.match(source, /import \{ isNestedToolExecutionEvent, isSystemMessageEvent \} from "@\/lib\/agent-event-wire";/);
+  // Both guards come from the shared wire helpers, whose import line now also carries the
+  // heartbeat interval the stale-stream watchdog is sized from.
+  assert.match(source, /import \{ AGENT_EVENT_HEARTBEAT_MS, isNestedToolExecutionEvent, isSystemMessageEvent \} from "@\/lib\/agent-event-wire";/);
 });
 
 test("plays the enabled sound once when an extension dialog appears over an empty slot", () => {
@@ -661,10 +703,12 @@ test("drops queued extension UI when a tool change rebuilds the wrapper", () => 
   // so their extension_ui_closed events never reach this hook.
   assert.match(
     setToolsSource,
-    /if \(activeSessionId !== sid \|\| result\?\.recreated\) \{[\s\S]*?closeEvents\(\);[\s\S]*?setExtensionDialogs\(\[\]\);\s+setExtensionCustomUis\(\[\]\);[\s\S]*?maintainEventsConnected\(activeSessionId\)/,
+    /if \(activeSessionId !== sid \|\| result\?\.recreated\) \{[\s\S]*?closeEvents\("set_tools"\);[\s\S]*?setExtensionDialogs\(\[\]\);\s+setExtensionCustomUis\(\[\]\);[\s\S]*?maintainEventsConnected\(activeSessionId\)/,
   );
   // A tool change that keeps the wrapper keeps its pending requests on screen.
-  const unconditional = setToolsSource.slice(setToolsSource.indexOf("      setSlashCommands([]);"));
+  const keptWrapper = setToolsSource.indexOf("      clearSlashCommands();");
+  assert.notEqual(keptWrapper, -1, "the path that keeps the wrapper was not found");
+  const unconditional = setToolsSource.slice(keptWrapper);
   assert.doesNotMatch(unconditional, /setExtensionDialogs|setExtensionCustomUis/);
 });
 

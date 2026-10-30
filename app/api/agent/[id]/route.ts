@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { liteAgentState } from "@/lib/agent-state-lite";
+import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -65,8 +66,11 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    // Read by its fields: the wrapper that threw may come from another route's bundle.
+    const missingCwd = missingCwdFromBody(error);
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      ...(missingCwd ? cwdMissingBody(missingCwd) : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
@@ -87,8 +91,12 @@ export async function GET(
       return NextResponse.json({ running: false });
     }
 
-    const state = await session.send({ type: "get_state" });
-    const lite = new URL(req.url).searchParams.get("lite") === "1";
+    const state = await session.send({ type: "get_state" }) as Record<string, unknown>;
+    const searchParams = new URL(req.url).searchParams;
+    // Both sides leave the system prompt out of a status read: upstream's client asks
+    // `?systemPrompt=0` (#1306), the Android client asks `?lite=1` (lib/agent-state-lite.ts).
+    if (searchParams.get("systemPrompt") === "0") delete state.systemPrompt;
+    const lite = searchParams.get("lite") === "1";
     return NextResponse.json({ running: true, state: lite ? liteAgentState(state) : state });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

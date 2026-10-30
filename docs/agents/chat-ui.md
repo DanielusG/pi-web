@@ -84,11 +84,19 @@ error, `title` carrying the raw `mcp__` name). After it:
 - the preview span reads `patchLabel ?? (codemode ? codemodeScriptPreview(code) : summary)`, where
   `summary` comes from `toolSummaryLine()` in `lib/tool-display.ts`. Upstream v0.11.1 grew its own
   `getToolPreview()` for that fallback; the fork keeps its richer line, so upstream's function came
-  in unused and was deleted during the merge;
+  in unused and was deleted at both the v0.11.1 and the v0.13.0 merge. What v0.13.0 brought is kept
+  instead: `resultPatchPath` (#1460). A call that names **no** file — an anchor-addressed edit, a
+  package tool — is labelled with the one file its result's patch changed; a call that does name a
+  file keeps its own path. `components/MessageView.test.mjs` pins both halves of that rule;
 - the fork's status icons (spinner while input streams, ✕ on error, ✓ on result) are kept alongside
   upstream's `codemodeCallCount`, duration and rotating chevron;
 - an expanded codemode call shows its script in a `<pre>` before `ToolArgsBody`, and `ToolArgsBody`
   is skipped for codemode so the script is not shown twice;
+- `ToolArgsBody` shows **upstream's flat rows** (#1324, `lib/tool-fields.ts` → `ToolFieldRows`) as
+  the argument view: one row per argument, a long or multi-line value kept inside the card. The
+  fork's own `getToolArgsView()` (`lib/tool-display.ts`) takes over exactly where rows cannot go — a
+  nested subtree, an empty object, a write shown as its file text (`getWrittenFileText` keeps such a
+  call out of rows), or a stream pi's partial parse could not resolve, which keeps its raw text;
 - the final assistant message is split through upstream's `getFinalAnswerViews()` cache
   (`lib/turn-views.ts`, adopted at v0.11.1) instead of the fork's inline
   `splitFinalAssistantBlocks`/`withAssistantBlocks` pair; the fork's own `previewText()` custom-message
@@ -104,6 +112,14 @@ Fork-only previews live beside upstream's truncation recovery and compaction foo
 `ProposedChangesPreview` (word-level diff of an edit/write result, `lib/word-diff.ts`),
 `ToolArgsBody` (`getToolArgsView()` in `lib/tool-display.ts`), and the pending diff fetched from
 `/api/edit-preview` (`lib/edit-preview.ts`) for an edit/write call that has no result yet.
+
+Upstream's v0.13.0 patch view is taken as it wrote it: `PatchDiffFiles` (exported) draws two code
+columns on a wide viewport and one column on a phone (#1325, `useIsMobile`), and `DiffGapRow` marks
+the lines a hunk leaves out between two hunks (#1304, `unifiedDiffLines`). The fork's `SplitFilesView`
+keeps its word-diff enrichment over that: line rows carry `inline` segments (`lib/word-diff.ts`) and
+`SplitDiffCellView` paints them, so a changed line arrives split over several spans. That is why
+`MessageView.test.mjs` reads the rendered **text** (`html.replace(/<[^>]*>/g, "")`) before checking a
+line shows whole — upstream asserts on markup this fork's highlighting necessarily breaks up.
 
 `MessageView` has **no** `onNavigate` prop: upstream's edit flow ("Edit from here") navigates inside
 `useAgentSession`'s `handleSend` (`handleNavigateRef`, with rollback when the prompt is rejected), so

@@ -32,7 +32,10 @@ test("uses a compact narrow-mobile toolbar with a floating action layer", () => 
 
 test("only renders the Agents switcher when the active session family has subagents", () => {
   assert.match(source, /const hasSubagentSessions = Boolean\(activeSessionFamily\?\.subagents\.length\)/);
-  assert.match(source, /\{hasSubagentSessions && \(\s*<button[\s\S]*?toggleTopPanel\("agents", mobile\)/);
+  // Upstream gates the button on its badge too (#1311); `getAgentsBadge` never returns null
+  // for a family that has subagents, so the switcher still shows whenever there are any.
+  assert.match(source, /const agentsBadge = activeSessionFamily \? getAgentsBadge\(activeSessionFamily\.subagents, runningSessionIds\) : null/);
+  assert.match(source, /\{hasSubagentSessions && agentsBadge && \(\s*<button[\s\S]*?toggleTopPanel\("agents", mobile\)/);
   assert.match(source, /activeTopPanel === "agents" && activeSessionFamily && selectedSession/);
 });
 

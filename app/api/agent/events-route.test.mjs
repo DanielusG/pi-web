@@ -6,7 +6,9 @@ const agentEventsSource = await readFile(new URL("./[id]/events/route.ts", impor
 const agentEventStreamSource = await readFile(new URL("../../../lib/agent-event-stream.ts", import.meta.url), "utf8");
 
 test("agent SSE starts sessions asynchronously and disables response buffering", () => {
-  assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise, \{ toolUpdates \}\)/);
+  // One options object carries the fork's `toolUpdates` and the debug panel's labels (#1443),
+  // so the call names all three: what the client asked for, the page's holder, the client itself.
+  assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise, \{[\s\S]*?toolUpdates,[\s\S]*?holder,[\s\S]*?describeStreamClient\(req\.headers\)/);
   assert.match(agentEventsSource, /sessionPromise = startRpcSession\([\s\S]*?\.then\(\(result\) => result\.session\)/);
   assert.doesNotMatch(agentEventsSource, /await startRpcSession\(/);
   assert.match(agentEventsSource, /if \(req\.signal\.aborted\) return new Response\(null, \{ status: 204 \}\)/);
@@ -22,8 +24,9 @@ test("agent SSE reuses one TextEncoder per stream", () => {
 test("agent SSE sends tool output tails only to clients that ask for them", () => {
   assert.match(agentEventsSource, /searchParams\.get\("toolUpdates"\) === "tail" \? "tail" : "full"/);
   // The per-client choice reaches the projection, and every projected event goes
-  // through the coalescing sender (`clientOptions` is named apart from the
-  // per-write `options` that carries `droppable`).
-  assert.match(agentEventStreamSource, /toClientAgentEvent\(event, clientOptions\)/);
+  // through the coalescing sender. `streamOptions` carries the fork's choices beside the
+  // debug panel's labels, and is named apart from the per-write `options` that carries
+  // `droppable`.
+  assert.match(agentEventStreamSource, /toClientAgentEvent\(event, streamOptions\)/);
   assert.match(agentEventStreamSource, /if \(clientEvent\) sendClientEvent\(clientEvent\)/);
 });

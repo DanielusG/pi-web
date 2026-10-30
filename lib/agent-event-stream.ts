@@ -1,10 +1,11 @@
 import {
+  AGENT_EVENT_HEARTBEAT_MS,
   isEventIncludedInSnapshot,
   toClientAgentEvent,
   type AgentEventLike,
   type ClientAgentEventOptions,
 } from "./agent-event-wire";
-import { acquireSessionLivenessLease } from "./session-liveness";
+import type { DebugEventStream } from "./debug-types";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
@@ -12,8 +13,6 @@ export interface AgentEventStreamSession {
   isAlive?(): boolean;
   onEvent(listener: (event: AgentEventLike) => void): () => void;
 }
-
-const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Backpressure for one SSE connection. The client is often a phone: when it
@@ -104,11 +103,59 @@ type StreamCloser = (closeController: boolean | "error") => void;
 const activeStreamClosers: Set<StreamCloser> =
   ((globalThis as Record<symbol, Set<StreamCloser>>)[CLOSER_REGISTRY] ??= new Set<StreamCloser>());
 
+/**
+ * What the debug panel lists of each live stream, keyed by its closer. A registry of its own:
+ * older module copies share the closer Set's shape, and a stream opened before a hot reload of
+ * this file is counted there but not listed here.
+ */
+const STREAM_INFO_REGISTRY: symbol = Symbol.for("pi-web.agentEventStreamInfos");
+interface AgentEventStreamInfo {
+  sessionId: string;
+  holder: string | null;
+  address: string | null;
+  client: string | null;
+  openedAt: number;
+  connectedAt: number | null;
+  lastWriteAt: number | null;
+  droppedEvents(): number;
+  queuedBytes(): number;
+}
+const streamInfos: Map<StreamCloser, AgentEventStreamInfo> =
+  ((globalThis as Record<symbol, Map<StreamCloser, AgentEventStreamInfo>>)[STREAM_INFO_REGISTRY] ??= new Map());
+
 /** Close every live SSE stream (called on process shutdown signals). */
 export function closeAllAgentEventStreams(): void {
   for (const close of [...activeStreamClosers]) {
     try { close("error"); } catch { /* stream already closed */ }
   }
+}
+
+/** The live streams, for the debug panel: times and counts, never the request or a payload. */
+export function listAgentEventStreams(): (DebugEventStream & { sessionId: string })[] {
+  const listed: (DebugEventStream & { sessionId: string })[] = [];
+  for (const info of streamInfos.values()) {
+    try {
+      listed.push({
+        sessionId: info.sessionId,
+        holder: info.holder,
+        address: info.address,
+        client: info.client,
+        openedAt: info.openedAt,
+        connectedAt: info.connectedAt,
+        lastWriteAt: info.lastWriteAt,
+        droppedEvents: info.droppedEvents(),
+        queuedBytes: info.queuedBytes(),
+      });
+    } catch {
+      // An entry another version of this file left behind.
+    }
+  }
+  return listed;
+}
+
+/** Every live agent event stream, those opened before a hot reload of this file included. */
+export function countAgentEventStreams(): number {
+  return activeStreamClosers.size;
 }
 
 function errorMessage(error: unknown): string {
@@ -118,17 +165,18 @@ function errorMessage(error: unknown): string {
 /**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
+ * `streamOptions` carries both sides' per-request choices: the fork's client options
+ * (e.g. the Android client's `?toolUpdates=tail`) and, for the debug panel, the page's id
+ * with the request's reported address and browser label — those three only label the stream.
  */
 export function createAgentEventStream(
   req: Request,
   sessionId: string,
   sessionPromise: Promise<AgentEventStreamSession>,
-  // The fork's per-client choices (e.g. the Android client's `?toolUpdates=tail`).
   // Named apart from the per-write `options` below, which carries `droppable`.
-  clientOptions: ClientAgentEventOptions = {},
+  streamOptions: ClientAgentEventOptions & { holder?: string | null; address?: string | null; client?: string | null } = {},
 ): ReadableStream<Uint8Array> {
   let cancelStream: (closeController: boolean | "error") => void = () => {};
-  let releaseLease: () => void = () => {};
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -152,9 +200,8 @@ export function createAgentEventStream(
       const cleanup = (closeController: boolean | "error", reason?: Error) => {
         if (closed) return;
         closed = true;
-        releaseLease();
-        releaseLease = () => {};
         activeStreamClosers.delete(cleanup);
+        streamInfos.delete(cleanup);
         if (heartbeat !== null) clearInterval(heartbeat);
         if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
         pendingToolUpdates.clear();
@@ -168,11 +215,22 @@ export function createAgentEventStream(
         }
       };
       cancelStream = cleanup;
-      releaseLease = acquireSessionLivenessLease(sessionId).release;
       activeStreamClosers.add(cleanup);
 
       const backlogLimitBytes = resolveBacklogLimitBytes();
       let droppedEvents = 0;
+      const info: AgentEventStreamInfo = {
+        sessionId,
+        holder: streamOptions.holder ?? null,
+        address: streamOptions.address ?? null,
+        client: streamOptions.client ?? null,
+        openedAt: Date.now(),
+        connectedAt: null,
+        lastWriteAt: null,
+        droppedEvents: () => droppedEvents,
+        queuedBytes: () => Math.max(0, STREAM_HIGH_WATER_MARK_BYTES - (controller.desiredSize ?? STREAM_HIGH_WATER_MARK_BYTES)),
+      };
+      streamInfos.set(cleanup, info);
       const enqueueText = (text: string, options?: { droppable?: boolean }) => {
         if (closed) return;
         const desiredSize = controller.desiredSize;
@@ -196,6 +254,7 @@ export function createAgentEventStream(
         }
         try {
           controller.enqueue(encoder.encode(text));
+          info.lastWriteAt = Date.now();
         } catch {
           cleanup(false);
         }
@@ -227,7 +286,7 @@ export function createAgentEventStream(
       };
       const forwardEvent = (event: AgentEventLike, snapshot: unknown) => {
         if (isEventIncludedInSnapshot(event, snapshot)) return;
-        const clientEvent = toClientAgentEvent(event, clientOptions);
+        const clientEvent = toClientAgentEvent(event, streamOptions);
         if (clientEvent) sendClientEvent(clientEvent);
       };
 
@@ -277,6 +336,7 @@ export function createAgentEventStream(
               .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
               .map((event) => event.id as string),
           });
+          info.connectedAt = Date.now();
           for (const event of bufferedEvents) forwardEvent(event, snapshot);
           if (snapshot !== undefined && snapshot !== null) {
             forwardEvent({ type: "message_start", message: snapshot }, undefined);
@@ -303,7 +363,7 @@ export function createAgentEventStream(
       }
       req.signal.addEventListener("abort", abortHandler, { once: true });
 
-      heartbeat = setInterval(() => enqueueText(":\n\n"), HEARTBEAT_INTERVAL_MS);
+      heartbeat = setInterval(() => encode({ type: "heartbeat" }, { droppable: true }), AGENT_EVENT_HEARTBEAT_MS);
 
       // Force the response headers through without claiming that the agent is
       // ready. The client waits for the later `connected` data event.

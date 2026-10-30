@@ -15,6 +15,7 @@ import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkCodeBackground } from "./code-background.mjs";
 import { checkModelDiscovery } from "./model-discovery.mjs";
 import { checkModelContext } from "./model-context.mjs";
+import { checkModelSelector } from "./model-selector.mjs";
 import { checkFilesPlacement, showSidebarSessions } from "./sidebar.mjs";
 import { checkSessionNavigation } from "./session-navigation.mjs";
 import { checkProjectNavigation, createProjectNavigationFixtures } from "./project-navigation.mjs";
@@ -493,7 +494,14 @@ try {
       const hideSidebar = page.getByRole("button", { name: "Hide sidebar", exact: true });
       const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
       await hideSidebar.or(showSidebar).waitFor({ state: "visible" });
-      if (await showSidebar.isVisible()) await showSidebar.click();
+      // That effect can also open the sidebar between the visible check and the click, so "Show sidebar" is
+      // gone and the click waits its full 30s for a button that will not come back. Retry against a short
+      // deadline: only the click's own timeout is ignored, and the wait below still fails if the sidebar
+      // never opens.
+      for (let attempt = 0; attempt < 5 && !(await hideSidebar.isVisible()); attempt++) {
+        await showSidebar.click({ timeout: 1_000 }).catch(() => {});
+        await page.waitForTimeout(200);
+      }
       await hideSidebar.waitFor({ state: "visible" });
       // The files sit below the sessions on a desktop; Settings › General ›
       // File browser brings the tabs back, and goes back.
@@ -505,6 +513,7 @@ try {
     await page.goto(`${base}/?session=${CODE_BACKGROUND}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();
     await checkCodeBackground(page);
+    await checkModelSelector(page, { base, project, artifacts });
     assert.deepEqual(errors, [], `Browser errors at width ${viewport.width}`);
     console.log(`PASS: ${viewport.width}px browser pagination, branch, markdown, code, tool call, and compaction navigation`);
     await context.tracing.stop();
