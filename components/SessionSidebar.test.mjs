@@ -441,11 +441,14 @@ test("the files tab's head holds the picker and its six buttons, always the same
 });
 
 test("the toolbar row is the chat bar's cells, and gives up labels only where they do not fit", () => {
-  // 36px with its line, as the chat's top bar beside it (AppShell, border-box
-  // from the global reset), so the two read as one bar; the chosen tab and
-  // the open search take its accent line.
-  assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: 36px;\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
-  assert.match(appShellSource, /borderBottom: "1px solid var\(--border\)", height: "calc\(36px \+ env\(safe-area-inset-top\)\)", paddingTop: "env\(safe-area-inset-top\)"/);
+  // Upstream v0.15.0 moved the bar height to --top-bar-height (36px, 44px on
+  // coarse pointers — touch-sized controls): the sidebar header and the chat's
+  // top bar read as one bar through the token; the chosen tab and the open
+  // search take its accent line.
+  assert.match(globalStyles, /--top-bar-height: 36px;/);
+  assert.match(globalStyles, /@media \(max-width: 640px\), \(pointer: coarse\) \{\s*:root \{\s*--top-bar-height: 44px;/);
+  assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: var\(--top-bar-height\);\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
+  assert.match(appShellSource, /borderBottom: "1px solid var\(--border\)", height: "calc\(var\(--top-bar-height\) \+ env\(safe-area-inset-top\)\)", paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(globalStyles, /^\* \{\s*box-sizing: border-box;/m);
   assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button,\s*\.sidebar-search-toggle \{[^}]*padding: 0 12px;\s*border: 0;\s*border-top: 2px solid transparent;\s*border-radius: 0;/);
   assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button \{\s*border-right: 1px solid var\(--border\);\s*\}/);
@@ -453,12 +456,15 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   // cell, and in the tabs layout the spacer leaves a gap after the last tab
   // at most widths. So New and the search read as two cells. The -1px margin
   // lays it over the last tab's line where the spacer has collapsed and keeps
-  // New's footprint; border-box keeps the fit levels' 36px cells 36px.
+  // New's footprint; border-box keeps the fit levels' cells square in the bar's
+  // height (--top-bar-height is 44px on coarse pointers, upstream v0.15.0).
   assert.match(sidebarStyles, /\n\.sidebar-new-button \{\s*margin-left: -1px;\s*border-left: 1px solid var\(--border\);\s*\}/);
   assert.equal((sidebarStyles.match(/border-left:/g) ?? []).length, 1, "one left line, not per layout");
   assert.doesNotMatch(sidebarStyles, /\.is-files-below \.sidebar-new-button/);
   assert.match(sidebarStyles, /\.sidebar-tab\.is-selected,\s*\.sidebar-search-toggle\.is-active \{\s*border-top-color: var\(--accent\);\s*background: var\(--bg-selected\);\s*color: var\(--text\);\s*\}/);
-  assert.match(sidebarStyles, /\.sidebar-search-toggle \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  // The search cell is square in the bar's own height (upstream v0.15.0), so the
+  // coarse-pointer 44px makes it touch-sized like the chat bar's buttons.
+  assert.match(sidebarStyles, /\.sidebar-search-toggle \{\s*width: var\(--top-bar-height\);\s*padding: 0;\s*\}/);
   // Measured, since the labels' widths change with the language: New keeps
   // its +, then the tabs their icons, or the brand's versions a smaller
   // type. A hidden label is still the name.
@@ -471,7 +477,7 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   // resizing: it calls the fit itself, after the commit and before paint.
   assert.match(source, /const fitHeader = useHeaderFit\(headerRef, \(stacked\s*\? \["below", t\("sidebar\.new"\)\]\s*: \["tabs", t\("sidebar\.tabSessions"\), t\("sidebar\.tabFiles"\), t\("sidebar\.new"\), explorerCwd && changesCount > 0 \? changesCount : "", sidebarTab\]\s*\)\.join\("\\n"\)\);/);
   assert.match(source, /<div ref=\{headerRef\} className="sidebar-header">/);
-  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-button,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-button \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-button,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-button \{\s*width: var\(--top-bar-height\);\s*padding: 0;\s*\}/);
   assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-tab-label \{\s*position: absolute;\s*width: 1px;\s*height: 1px;\s*overflow: hidden;\s*clip: rect\(0 0 0 0\);/);
   assert.match(sidebarStyles, /\.sidebar-header\[data-fit="2"\] \.sidebar-tab \{\s*padding: 0 11px;\s*\}/);
   assert.match(sidebarStyles, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand \{\s*font-size: 11px;\s*\}/);
@@ -568,4 +574,15 @@ test("a read or a mark in another tab reaches this one: the storage handler adop
   // The listener is registered for the storage event and taken off again.
   assert.match(source, /window\.addEventListener\("storage", onStorage\);/);
   assert.match(source, /window\.removeEventListener\("storage", onStorage\);/);
+});
+
+test("the favicon counts sessions that finished while the tab was hidden (#1484)", () => {
+  // The rows exclude the selected session ("already looking"), which is false
+  // while hidden: the badge takes those ids as a separate prop instead.
+  assert.match(source, /hiddenFinishedSessionIds\?: Set<string>;/);
+  assert.match(source, /countFaviconUnread\(unreadSessionIds, hiddenFinishedSessionIds\)/);
+  assert.match(
+    source,
+    /\}, \[awaitingInputSessionIds, unreadSessionIds, hiddenFinishedSessionIds\]\);/,
+  );
 });

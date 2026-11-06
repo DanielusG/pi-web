@@ -241,7 +241,9 @@ test("forking stays available during a run while in-session branch switches wait
   // in-session edit still waits because pi refuses navigate_tree mid-run.
   assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
-  assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
+  // Upstream #1502 replaced the fork's selection "Ask in new chat" with a plain Quote:
+  // inserting text starts no session, so bashRunning no longer gates the button.
+  assert.match(chatWindowSource, /onClick=\{quoteSelectionHere\}/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
 
   assert.match(leafChangeSource, /if \(bashRunningRef\.current \|\| agentRunningRef\.current \|\| isCompacting\) return;/);
@@ -712,21 +714,22 @@ test("drops queued extension UI when a tool change rebuilds the wrapper", () => 
   assert.doesNotMatch(unconditional, /setExtensionDialogs|setExtensionCustomUis/);
 });
 
-test("suppresses sounds and browser attention for the active subagent session", () => {
+test("suppresses sounds and browser attention for an active subagent or side chat session", () => {
   const completionSource = appShellSource.slice(
     appShellSource.indexOf("  const handleAgentEnd = useCallback"),
     appShellSource.indexOf("  const handleAttentionNeeded = useCallback"),
   );
   const attentionSource = appShellSource.slice(
     appShellSource.indexOf("  const handleAttentionNeeded = useCallback"),
-    appShellSource.indexOf("  const handleAutoName = useCallback"),
+    appShellSource.indexOf("  const handleExplorerRefresh = useCallback"),
   );
 
-  assert.match(chatWindowSource, /completionNotificationsEnabled = session\?\.relation\?\.kind !== "subagent"/);
+  // Upstream's isHiddenRelation (ADR 0007) covers both hidden kinds: subagents and side chats.
+  assert.match(chatWindowSource, /completionNotificationsEnabled = !isHiddenRelation\(session\?\.relation\)/);
   assert.match(chatWindowSource, /completionNotificationsEnabled && soundEnabledRef\.current/);
   assert.match(chatWindowSource, /!completionNotificationsEnabled \|\| !surfaced/);
-  assert.match(completionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
-  assert.match(attentionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
+  assert.match(completionSource, /end\.aborted \|\| end\.subagentsActive \|\| isHiddenRelation\(selectedSession\?\.relation\)\) return/);
+  assert.match(attentionSource, /if \(isHiddenRelation\(selectedSession\?\.relation\)\) return/);
 });
 
 test("routes blocking extension requests through deduplicated browser attention notifications", () => {

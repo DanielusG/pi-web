@@ -32,14 +32,16 @@ test("adds collapse without replacing cancel", () => {
 
 test("renders extension confirmation and options as markdown", () => {
   assert.match(source, /import \{ MarkdownBody \} from "\.\/MarkdownBody"/);
-  assert.match(dialogSource, /<MarkdownBody>\{request\.message\}<\/MarkdownBody>/);
-  assert.match(dialogSource, /role="button"[\s\S]*?data-extension-option[\s\S]*?<div inert>[\s\S]*?<MarkdownBody>\{option\}<\/MarkdownBody>/);
+  // Upstream v0.15.0 strips ANSI before rendering (pi's palette theme); the fork's inline
+  // card takes the same wrapping.
+  assert.match(dialogSource, /<MarkdownBody>\{stripAnsi\(request\.message\)\}<\/MarkdownBody>/);
+  assert.match(dialogSource, /role="button"[\s\S]*?data-extension-option[\s\S]*?<div inert>[\s\S]*?<MarkdownBody>\{stripAnsi\(option\)\}<\/MarkdownBody>/);
   assert.match(dialogSource, /ref=\{index === 0 \? focusFirstOption : undefined\}/);
 });
 
 test("preserves title newlines like pi's TUI and keeps long titles from hiding the body", () => {
   const header = dialogSource.slice(dialogSource.indexOf('role="dialog"'), dialogSource.indexOf("{request.method === \"confirm\""));
-  assert.match(header, /whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{request\.title\}/);
+  assert.match(header, /whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{stripAnsi\(request\.title\)\}/);
   // Fork layout: the dialog renders inline in the composer slot (it replaces the input bar),
   // so the card carries a viewport-based max-height and the title scrolls inside an absolute
   // cap derived from that limit — never a percentage, which resolves to none in a
@@ -51,7 +53,7 @@ test("preserves title newlines like pi's TUI and keeps long titles from hiding t
   // long title pushes the option list past the card's overflow edge.
   assert.match(header, /flexShrink: 1, minHeight: 0/);
   // Keyed by request so the next question of a sequence starts scrolled to the top.
-  assert.match(header, /key=\{request\.id\} id=\{dialogTitleId\} tabIndex=\{0\} style=\{\{ maxHeight: EXTENSION_DIALOG_TITLE_MAX_HEIGHT, overflowY: "auto",[^}]*\}\}>\{request\.title\}/);
+  assert.match(header, /key=\{request\.id\} id=\{dialogTitleId\} tabIndex=\{0\} style=\{\{ maxHeight: EXTENSION_DIALOG_TITLE_MAX_HEIGHT, overflowY: "auto",[^}]*\}\}>\{stripAnsi\(request\.title\)\}/);
   assert.doesNotMatch(dialogSource, /maxHeight: "50%"/);
   assert.doesNotMatch(dialogSource, /maxHeight: "50vh"/);
 });

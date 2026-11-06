@@ -16,7 +16,7 @@ test("uses a compact narrow-mobile toolbar with a floating action layer", () => 
   assert.match(source, /data-mobile-toolbar="true"[\s\S]*?flex: 1,[\s\S]*?minWidth: 0/);
   assert.match(
     source,
-    /data-mobile-toolbar-actions="true"[\s\S]*?position: "absolute"[\s\S]*?right: 0,[\s\S]*?left: TOP_BAR_ICON_BUTTON_SIZE/,
+    /data-mobile-toolbar-actions="true"[\s\S]*?position: "absolute"[\s\S]*?right: 0,[\s\S]*?left: `calc\(2 \* \$\{TOP_BAR_ICON_BUTTON_SIZE\}\)`/,
   );
 
   for (const action of ["branches", "agents", "tools"]) {
@@ -30,12 +30,14 @@ test("uses a compact narrow-mobile toolbar with a floating action layer", () => 
   assert.match(source, /\{!isMobile && renderNewSessionButton\(\)\}/);
 });
 
-test("only renders the Agents switcher when the active session family has subagents", () => {
-  assert.match(source, /const hasSubagentSessions = Boolean\(activeSessionFamily\?\.subagents\.length\)/);
-  // Upstream gates the button on its badge too (#1311); `getAgentsBadge` never returns null
-  // for a family that has subagents, so the switcher still shows whenever there are any.
+test("greys the Agents switcher without a session family and opens it only with one", () => {
+  // Upstream v0.15.0 extracted the button and shows it beside the phone's More
+  // always, greyed while no family is active; the switcher itself still needs one.
+  assert.match(source, /const renderAgentsButton = \(mobile: boolean\) => \(/);
+  assert.match(source, /cursor: activeSessionFamily \? "pointer" : "not-allowed", opacity: activeSessionFamily \? 1 : 0\.45,/);
   assert.match(source, /const agentsBadge = activeSessionFamily \? getAgentsBadge\(activeSessionFamily\.subagents, runningSessionIds\) : null/);
-  assert.match(source, /\{hasSubagentSessions && agentsBadge && \(\s*<button[\s\S]*?toggleTopPanel\("agents", mobile\)/);
+  assert.match(source, /\{!\(mobile && isNarrowMobile\) && renderAgentsButton\(mobile\)\}/);
+  assert.match(source, /\{isNarrowMobile && renderAgentsButton\(true\)\}/);
   assert.match(source, /activeTopPanel === "agents" && activeSessionFamily && selectedSession/);
 });
 

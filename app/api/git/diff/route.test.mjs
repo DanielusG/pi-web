@@ -92,7 +92,7 @@ test("returns ordinary modified and untracked text diffs", async () => {
   const tracked = path.join(root, "tracked.txt");
   fs.writeFileSync(tracked, "original\n");
   git(root, "add", ".");
-  git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture");
+  git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture");
   fs.writeFileSync(tracked, "updated\n");
   const untracked = path.join(root, "new.txt");
   fs.writeFileSync(untracked, "new text\n");
@@ -116,7 +116,7 @@ test("finds the file's repository when the cwd is a plain folder holding several
     fs.writeFileSync(path.join(repo, "src", "app.txt"), "original\n");
     fs.writeFileSync(path.join(repo, "gone.txt"), "tracked original\n");
     git(repo, "add", ".");
-    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture");
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture");
   }
   const [frontend, backend] = repos;
   fs.writeFileSync(path.join(frontend, "src", "app.txt"), "updated\n");
@@ -143,7 +143,7 @@ test("does not run the fsmonitor hook of a checkout other than the cwd's", { ski
   git(nested, "init", "--quiet");
   fs.writeFileSync(path.join(nested, "app.txt"), "original\n");
   git(nested, "add", ".");
-  git(nested, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture");
+  git(nested, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture");
   const marker = path.join(base, "fsmonitor-ran");
   const hook = path.join(base, "fsmonitor-hook.sh");
   fs.writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
@@ -163,7 +163,7 @@ test("preserves deleted tracked diffs with existing or missing parents", async (
   const files = [path.join(root, "deleted.txt"), path.join(nested, "deleted.txt")];
   for (const file of files) fs.writeFileSync(file, "tracked original\n");
   git(root, "add", ".");
-  git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture");
+  git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture");
   for (const file of files) fs.unlinkSync(file);
   fs.rmdirSync(nested);
   fs.rmdirSync(path.dirname(nested));
