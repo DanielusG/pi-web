@@ -60,6 +60,16 @@ bar unmounts while a blocking request is open; dialog state (`value` / `collapse
   `collapsed`, `full` and `fitWidth` together.
 - The status bar's command buttons (#1030: `onCommand={handleSend}`, `commandsDisabled={sessionBusy}`)
   are adopted unchanged; they work with the composer slot occupied by the dialog.
+- Upstream v0.15.0 colours extension UI with pi's palette theme (`lib/extension-ui-theme.ts`) and
+  strips ANSI before rendering it. The inline card took the same wraps: `stripAnsi` on the collapsed
+  pill's answer and first message line, the header title in both places this fork renders it, the
+  body `MarkdownBody`, and each option's `aria-label` and rendered label. Upstream's third title wrap
+  has no fork counterpart — the fork labels the dialog through `dialogTitleId` / `aria-labelledby`
+  rather than repeating the title in a hidden node — so the card has two title renders to upstream's
+  three. `ChatWindow.extension-request.test.mjs` asserts the wrapped forms.
+- What the inline card still **lacks** is upstream's `aria-expanded` on the collapsed pill and on
+  the collapse button: this fork's own rewrite dropped both before v0.15.0, the merge kept the
+  fork's shape, and nothing asserts the attribute. Worth adding on the next pass over the card.
 
 ## Message and composer geometry
 - **User bubble**: asymmetric radius `"14px 14px 4px 14px"` with a `color-mix(in srgb, var(--accent)
@@ -71,6 +81,17 @@ bar unmounts while a blocking request is open; dialog state (`value` / `collapse
   compact control is radius 10 and, since upstream's compaction rework, carries **no** streaming
   gating — `hooks/useAgentSession.test.mjs` forbids `isStreaming && !isCompacting` in that block and
   requires `cursor: "pointer"`.
+- **Run controls stay icon-only**: the header cleanup (`docs/PLAN-header-cleanup.md`) removed the
+  steer/followUp text labels, so upstream v0.15.0's `chat-composer-run-label` spans were dropped in
+  the merge and the buttons keep only their `title` / `aria-label`. The row carries upstream's
+  `chat-composer-row` class (the fork's `composer-card` was a class no stylesheet defined), and the
+  compaction and Stop buttons take upstream's `controlSize` — 44px on a phone, 32px elsewhere —
+  with the fork's `var(--danger)` tints.
+- A text selection offers two actions, both upstream's now: **Quote** (#1502, `quoteSelectionHere`,
+  the selection as a blockquote in the composer) and **Ask in side chat** (`askInSideChat`, which
+  asks the fork route for a side chat). The fork's own selection action "Ask in new chat"
+  (`onAskInNewChat`) is gone — Quote covers copying the selection — and
+  `hooks/useAgentSession.test.mjs` pins `onClick={quoteSelectionHere}`.
 - **Settings panels** (`ModelsConfig`, `PluginsConfig`, `SkillsConfig`, `DirectoryPicker`,
   `FileExplorer`, `ProjectTrustDialog`) follow upstream's rewritten shared `SettingsUi` blocks and
   localisation; the fork's contribution there is colour only — hardcoded hex replaced by
@@ -92,11 +113,13 @@ error, `title` carrying the raw `mcp__` name). After it:
   upstream's `codemodeCallCount`, duration and rotating chevron;
 - an expanded codemode call shows its script in a `<pre>` before `ToolArgsBody`, and `ToolArgsBody`
   is skipped for codemode so the script is not shown twice;
-- `ToolArgsBody` shows **upstream's flat rows** (#1324, `lib/tool-fields.ts` → `ToolFieldRows`) as
-  the argument view: one row per argument, a long or multi-line value kept inside the card. The
-  fork's own `getToolArgsView()` (`lib/tool-display.ts`) takes over exactly where rows cannot go — a
-  nested subtree, an empty object, a write shown as its file text (`getWrittenFileText` keeps such a
-  call out of rows), or a stream pi's partial parse could not resolve, which keeps its raw text;
+- `ToolArgsBody` shows **upstream's flat rows** (#1324) as the argument view: `toolFieldsOfInput()`
+  in `lib/tool-fields.ts` turns the input into `ToolField`s, `ToolFieldRows` in
+  `components/MessageView.tsx` draws them — one row per argument, a long or multi-line value kept
+  inside the card. The fork's own `getToolArgsView()` (`lib/tool-display.ts`) takes over exactly
+  where rows cannot go — a nested subtree, an empty object, a write shown as its file text
+  (`getWrittenFileText`, also in `components/MessageView.tsx`, keeps such a call out of rows), or a
+  stream pi's partial parse could not resolve, which keeps its raw text;
 - the final assistant message is split through upstream's `getFinalAnswerViews()` cache
   (`lib/turn-views.ts`, adopted at v0.11.1) instead of the fork's inline
   `splitFinalAssistantBlocks`/`withAssistantBlocks` pair; the fork's own `previewText()` custom-message
@@ -150,3 +173,12 @@ the reload after the run. `MessageView` keeps the fork's word-diff rows (`Inline
 The fork's header cleanup removed the `systemPrompt` state and `SystemPromptPanel` from
 `components/AppShell.tsx`. Upstream's session-switch resets still call `setBranchSwitchLocked(false)`
 (keep) but also `setSystemPrompt(null)` (drop — that state does not exist here).
+
+v0.15.0 rewrote the message list as an inline IIFE again; the merge took its content and kept the
+memo. `renderMessage` gained the side-chat divider (`msg.customType === SIDE_BOUNDARY_MESSAGE_TYPE`
+renders `SideChatDivider`), its options read `recoverTruncation?: boolean; turnDurationMs?: number;
+withNotices?: boolean` in upstream's order, and the JSX still renders `{messageListNode}`. The mobile
+toolbar actions are upstream's Agents button alone (`renderChatToolbarActions`: no System,
+Full-history or Generate-title), and `handleAgentEnd` / `handleAttentionNeeded` decide through
+`isHiddenRelation(selectedSession?.relation)` (`lib/session-family.ts`), so a subagent's or a side
+chat's tab counts as hidden for sounds and browser attention.

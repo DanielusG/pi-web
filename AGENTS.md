@@ -37,6 +37,8 @@ pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them 
 ## File Map
 
 ```
+app/
+  manifest.webmanifest/route.ts  GET the PWA manifest (upstream moved app/manifest.ts into this route at v0.15.0)
 app/api/
   sessions/route.ts                GET list all sessions (?perProject=&project=&offset=&recentHours=&ids=&firstMessageChars= trim the response per project window — fork additions, Android client)
   sessions/[id]/route.ts           GET/PATCH/DELETE a session
@@ -120,6 +122,8 @@ lib/
   session-fork.ts           forkSessionBranch(): the sidebar's Fork, a leaf-branch copy on a fresh SessionManager named after its source, typed refusals; createSideSession(): the same copy as a side chat
   side-session.ts           a side chat's metadata entry, allowed tools, hidden boundary message, own entries for usage
   side-chat-client.ts       client: ask the fork route for a side chat, refusals as translated notices
+  session-family.ts         one family's shape over the session list: relation kinds, isHiddenRelation (subagent or side), listSessionFamilies, the Agents badge
+  session-tool-selection.ts readSessionToolSelection(): the parent's tool pin read over the whole file, so the side chat's copy carries it
   session-fork-name.ts      client-safe Fork naming: source title + " · " + 4 hex; splitting the suffix off for the row and toast
   session-delete.ts         deleteSessions(): session files with their subagents, re-parenting what stays, wrapper shutdown, pins/archive cleanup
   session-tree.ts           sidebar row model: pinned section, project groups and their order, archived predicate, virtual rows, drop targets
@@ -133,6 +137,7 @@ lib/
   project-groups.ts         recent projects and their activity for the sidebar's project groups
   project-identity.ts       projectIdentityKey(): the grouping key for a path, win32 case-folded
   workspace-memory.ts       last open session per workspace in localStorage, keyed by project id
+  panel-tab-order.ts        the panel's tab order (#1511): orderPanelTabs and movePanelTab behind the draggable tabs
   extension-dialog-fit.ts   a dialog's fitted width from the code blocks and tables that scroll sideways (#947) — the fork applies it inside the inline card, see docs/agents/chat-ui.md
   font-preferences.ts       Settings › General font family and weight choices, per browser (var(--font-ui) / --font-mono)
   chat-phase-label.ts       the running agent's phase label shown in the composer
@@ -147,8 +152,7 @@ lib/
   terminal-theme.ts         the terminal panel's own dark/light choice, beside the app theme
   ansi.ts                   ANSI escapes stripped from custom panel lines and tool output
   bash-output.ts            bash output file of a tool result: no-follow read under the temp root
-  file-upload-client.ts     uploadFiles() with the conflict strategies of POST /api/files
-  mcp-override.ts           project `.pi/mcp.json` entries that change only `enabled`/`exposure` of a global server
+  file-upload-client.ts     uploadFiles() with the conflict strategies of POST /api/files ?type=upload, shared by the explorer and chat drops
   normalize.ts              normalizeToolCalls(): file-format vs our toolCall field names
   message-keys.ts           client-safe React keys of chat messages: a run's messages keep theirs when the file is read again
   message-signatures.ts     provider thinking/text signatures stripped from the copies the browser reads
@@ -171,8 +175,8 @@ lib/
   model-image-limits.ts     client-safe: a custom model's inputLimits.images.resize.maxBytes in the draft, the Save check
   model-provider-check.ts   client-safe: Save refuses a models.json provider entry pi rejects on its own (Add provider's empty stub, oauth without a Base URL)
   subagent-settings.ts      read/write ~/.pi/agent/agents/settings.json
+  test-provider-env.mjs     test-only: strip and restore every provider credential pi reads (an ambient ANTHROPIC_AUTH_TOKEN makes anthropic available and fills the model lists)
   file-access.ts            allowed file roots for /api/files and worktrees
-  file-upload-client.ts     browser upload to /api/files ?type=upload, shared by the explorer and chat drops
   linked-directory.ts       directory links leading outside the allowed roots + the allow-link check
   file-paths.ts             client/server path encoding helpers
   file-version.ts           a watched file's size+mtime version: viewers skip reloading an unchanged file on reconnect
@@ -212,7 +216,7 @@ lib/
   mcp-config-values.ts      client-safe: the values pi resolves and the PI_WEB_PASSWORD rule
   mcp-config-read.ts        Settings › MCP reads of both mcp.json files; nothing resolved or run
   mcp-config-file.ts        the mcp.json writer: SDK editor's bytes, lock, atomic write, typed refusals
-  mcp-override.ts           project overrides of global servers: the SDK's isOverride() and loader refusals
+  mcp-override.ts           project `.pi/mcp.json` entries that override a global server: the SDK's isOverride() and loader refusals, `enabled`/`exposure` changes only
   mcp-json-error.ts         JSON.parse error messages that never quote the source
   mcp-undo.ts               removed mcp.json entries kept 60 s for undo; only a token reaches the browser
   mcp-status.ts             last known connection state per mcp.json entry (tests and sessions)
@@ -252,6 +256,7 @@ components/
   ProjectTrustDialog.tsx   trust confirmation listing the project's MCP servers
   AgentsConfig.tsx         built-in subagent toggle + agent profile editor
   SessionChatPanel.tsx     right-panel tab of a subagent or side chat: a ChatWindow for that session
+  side-tab-state.ts        a root's side tabs in localStorage (#1512): append, restore against the session list
   DebugPanel.tsx           Debug top panel (toolbar, left of the stats): page and server state, its own tick and poll, error boundary
   debug-panel-state.ts     pure helpers of DebugPanel: formatting, server clock, poller, issues, session grouping, poll samples
   PluginsConfig.tsx        Settings › Plugins: installed package plugins
@@ -300,6 +305,11 @@ hooks/
   useTheme.ts              theme state
   useTerminalTheme.ts      the terminal's own dark/light choice (localStorage), apart from the app theme
 
+docs/adr/                      architecture records (0007: side chats are a Fork copy with a boundary entry)
+
+Dockerfile · compose.yaml · .dockerignore · .env.example   container image and compose setup, how to run
+                                                          them in docs/docker.md
+
 android/
   Native Kotlin + Jetpack Compose client (standalone, talks to the same HTTP + SSE API)
   README.md           source of truth for the app — features, build, install
@@ -338,8 +348,9 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 - **A refused path shows nothing in the Android new-session sheet**: `SessionsViewModel.validateCwd`
   puts the reason in `state.error` and `NewSessionSheet` never reads it (`AssistProjectSheet` does).
 - **`components/SystemPromptPanel.tsx` is dead here**: the fork's header cleanup left no
-  `systemPrompt` state in `AppShell`, so nothing imports it — only `docs/agents/chat-ui.md` and
-  `components/AppShell.tools-panel.test.mjs` mention it, the second to prove the import is gone.
+  `systemPrompt` state in `AppShell`, so nothing imports it. What mentions it is the file itself,
+  `components/AppShell.tools-panel.test.mjs` (to prove the import is gone), this file's entry,
+  `docs/agents/chat-ui.md` and the older merge REPORTs — no code.
   It stays because upstream still ships the file and deleting it turns every future merge into a
   modify/delete conflict; its `system.*` keys in `lib/i18n/messages/*` are upstream's too.
 - **`.github/` is deleted here, unlike the entry above**: `a8420e7` removed upstream's
@@ -348,15 +359,26 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
   `.github/workflows/publish.yml` (npm Trusted Publishing) as an added file, and it is removed the
   same way: this fork does not publish from GitHub Actions. Upstream still ships the directory, so
   a merge touching it raises a modify/delete conflict or drops a new workflow in — keep the
-  deletion, do not take upstream's copy. Nothing referenced the workflows: no README badge, no docs
-  mention (`demo-pages.yml` had already been dropped with `demo/`).
+  deletion, do not take upstream's copy. No README badge references them. `docs/release.md` does —
+  it reads as upstream's release procedure, with `publish.yml` as the mechanism — and v0.15.0 added
+  `docs/docker.md`, which says the same for the GHCR images (`:latest` and the major/minor tags
+  published by that workflow). Those two docs now describe a pipeline this fork does not ship, so
+  anything here is published by hand; keep the deletion, and expect the docs to keep pointing at the
+  missing workflow. (`demo-pages.yml` had already been dropped with `demo/`; at v0.15.0 upstream
+  edited `publish.yml` (`2bf9c6e5`: one Release workflow per tag) and `demo-pages.yml`, and added
+  then removed `container.yml` in the same range, so each edit came as a modify/delete conflict and
+  both files were dropped again.)
 - **`app/settings.css` was never retuned to the fork's tokens**: it still carries 16 hardcoded
   `#ef4444` rules (upstream's v0.12.2 Settings changes added one to the 15 the fork left). Only
   `.skill-instructions-status.is-error` moved to `var(--danger)` at the v0.12.0 merge, because it
   sat beside inline `var(--danger)` uses in the same component. Retuning the rest is a separate
   choice — `app/settings.css` has no test asserting token forms.
-- **pi strips a `mcp.json` BOM, pi-web does not**: pi 1.4's `dist/mcp/config.js` calls `stripBom()`
-  before parsing, while `lib/mcp-config-read.ts` and `lib/mcp-config-file.ts` still `JSON.parse` the
+- **`ChatWindow`'s notice shelf still paints success as `#10b981`**: the error and warning lines
+  beside it read `var(--danger)` / `var(--warning)`, while the success line kept upstream's literal.
+  Pre-existing (the fork retuned two of three); noticed at the v0.15.0 merge.
+- **pi strips a `mcp.json` BOM, pi-web does not**: pi's MCP config loader calls `stripBom()` before
+  parsing — 1.5 keeps it at `dist/extensions/mcp/config.js`, where this entry was written against
+  1.4's `dist/mcp/config.js` — while `lib/mcp-config-read.ts` and `lib/mcp-config-file.ts` still `JSON.parse` the
   raw bytes. A `mcp.json` saved with a byte-order mark therefore loads in the CLI and is refused by
   Settings › MCP, with the parse error naming nothing useful. Matching pi means stripping the BOM
   in both readers (found while auditing the 1.2.0 → 1.4.0 SDK jump for the v0.13.0 merge).
@@ -394,7 +416,10 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 
 Fork UI-refresh tokens live beside them: `--radius-sm` (7) `--radius-md` (9) `--radius-lg` (12)
 `--radius-xl` (14), `--shadow-sm` `--shadow-md` `--shadow-lg` (theme-aware), `--ease`, `--danger`,
-`--success`, `--chat-content-max-width`, `--chat-font-size-offset`.
+`--success`, `--warning` (amber, defined in both themes), `--chat-content-max-width`,
+`--chat-font-size-offset`. Upstream v0.15.0 brings `--top-bar-height` (36px, 44px under
+`(max-width: 640px), (pointer: coarse)`): the sidebar header and the chat's top bar read as one bar
+through that token — see [client-platform.md](docs/agents/client-platform.md).
 
 The sidebar keeps its own stylesheets — `app/sidebar.css` (tabs, project groups, session rows, files
 tab) and `app/sidebar-menu.css` (row and group menus, mobile sheets, undo toast). Upstream wrote them

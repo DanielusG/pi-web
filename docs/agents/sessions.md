@@ -34,9 +34,10 @@ pi's `navigateTree()` refuses while streaming or compacting: the file has one le
 Pi stores `{type:"toolCall", id, name, arguments}`; `ToolCallContent` uses `{toolCallId, toolName, input}`. `normalizeToolCalls()` (`lib/normalize.ts`) converts in both `session-reader.ts` (file load) and `handleAgentEvent` (`hooks/useAgentSession.ts`, streaming).
 
 ## The fork's context route carries both sides (v0.12.2)
-- `GET /api/sessions/[id]/context` keeps its fork-only `?tail` / `?before` paging, `jsonResponse` and
-  `contextUsage` (`computeFileContextUsage` over the entries the context is built from, skipped on
-  `before` pages) *around* upstream's v0.12.2 notices: `attachTranscriptNotices(
+- `GET /api/sessions/[id]/context` keeps upstream's own `?tail` / `?before` paging (upstream added
+  them when it bounded the history load, #509/#555), and wraps them in the fork's `jsonResponse` and
+  `contextUsage` (`computeFileContextUsage` in `lib/cold-context.ts` over the entries the context is
+  built from, skipped on `before` pages) *around* upstream's v0.12.2 notices: `attachTranscriptNotices(
   readSessionTranscriptNotices(...), buildSessionContext(entries, before ?? leafId, { excludeLeaf:
   Boolean(before) }))`. `app/api/sessions/context-route-fork.test.mjs` reads the wrapped call text,
   so a merge that drops either side fails there rather than quietly; `?tail` and `?before` are what
