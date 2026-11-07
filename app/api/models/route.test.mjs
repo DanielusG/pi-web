@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import { promisify } from "node:util";
 import { createJiti } from "jiti";
+import { restoreProviderEnv, stripProviderEnv } from "../../../lib/test-provider-env.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,13 +18,11 @@ const agentDir = join(root, "agent");
 const repo = join(root, "repo");
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const previousOffline = process.env.PI_OFFLINE;
-const preservedEnv = {};
-for (const key of ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
-  if (key in process.env) {
-    preservedEnv[key] = process.env[key];
-    delete process.env[key];
-  }
-}
+// Every provider credential goes, not only the API keys: on a machine running Claude Code the
+// proxy's ANTHROPIC_AUTH_TOKEN makes anthropic authenticated, and `getAvailable()` then answers
+// the built-in catalog beside this test's acme provider — which breaks the exact-list asserts
+// upstream wrote (they pass on upstream's tree only in a bare environment).
+const providerEnv = stripProviderEnv();
 process.env.PI_CODING_AGENT_DIR = agentDir;
 // The list is served from the SDK's own data and the models.json below, so the route
 // never reaches for the network here.
@@ -60,9 +59,7 @@ const { GET } = await jiti.import("./route.ts");
 allowFileRoot(repo);
 
 after(async () => {
-  for (const [key, val] of Object.entries(preservedEnv)) {
-    process.env[key] = val;
-  }
+  restoreProviderEnv(providerEnv);
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
   if (previousOffline === undefined) delete process.env.PI_OFFLINE;
@@ -87,9 +84,9 @@ test("a removed worktree is listed from the repo it branched from", async () => 
   // Not merely some list: the same one the repo answers, which is what a session that ran
   // without worktree isolation gets.
   assert.deepEqual(fromRemoved.body, fromRepo.body);
-  // pi 1.5 lists signed-out providers too, so the built-in catalog rides along;
-  // the acme part must exist for the equality above to say something.
-  assert.deepEqual(fromRemoved.body.modelList.filter((m) => m.provider === "acme").map((m) => `${m.provider}:${m.id}`), ["acme:one"], "an empty list would make the comparison say nothing");
+  // With every credential gone acme is the only provider `getAvailable()` answers for, so the
+  // exact list says something about the equality above rather than about the machine's shell.
+  assert.deepEqual(fromRemoved.body.modelList.map((m) => `${m.provider}:${m.id}`), ["acme:one"], "an empty list would make the comparison say nothing");
 });
 
 test("the repo a removed worktree falls back to is authorized as any other cwd", async () => {
@@ -152,14 +149,13 @@ test("honors ?scope=all on demand and reports isScoped accurately", async () => 
     const all = await models(repo, "all");
     assert.equal(all.status, 200);
     assert.equal(all.body.isScoped, false);
-    // "all" carries the built-in catalog too (pi 1.5 lists signed-out providers);
-    // what must hold is that every models.json provider rides along unscoped.
+    // Unscoped on the same credential-free runtime: acme's two models, and nothing that an
+    // ambient token would smuggle in.
     assert.deepEqual(
-      all.body.modelList.filter((m) => m.provider === "acme").map((m) => `${m.provider}:${m.id}`),
+      all.body.modelList.map((m) => `${m.provider}:${m.id}`),
       ["acme:one", "acme:two"],
     );
-    assert.deepEqual(all.body.modelList.filter((m) => m.provider === "acme").map((m) => m.providerName), ["Acme Gateway", "Acme Gateway"]);
-    assert.ok(all.body.modelList.some((m) => m.provider === "anthropic"), "an unscoped list carries the built-in catalog");
+    assert.deepEqual(all.body.modelList.map((m) => m.providerName), ["Acme Gateway", "Acme Gateway"]);
 
     // Caches are independent: scoped call still returns scoped models
     const scopedAgain = await models(repo);

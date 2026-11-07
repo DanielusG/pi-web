@@ -35,6 +35,8 @@ test("greys the Agents switcher without a session family and opens it only with 
   // always, greyed while no family is active; the switcher itself still needs one.
   assert.match(source, /const renderAgentsButton = \(mobile: boolean\) => \(/);
   assert.match(source, /cursor: activeSessionFamily \? "pointer" : "not-allowed", opacity: activeSessionFamily \? 1 : 0\.45,/);
+  // Greyed reads as unusable only if it is unusable: the button itself is disabled.
+  assert.match(source, /disabled=\{!activeSessionFamily\}/);
   assert.match(source, /const agentsBadge = activeSessionFamily \? getAgentsBadge\(activeSessionFamily\.subagents, runningSessionIds\) : null/);
   assert.match(source, /\{!\(mobile && isNarrowMobile\) && renderAgentsButton\(mobile\)\}/);
   assert.match(source, /\{isNarrowMobile && renderAgentsButton\(true\)\}/);
