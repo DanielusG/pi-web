@@ -161,6 +161,12 @@ the existing path (`ImageAttachments`: compression, EXIF, limits). Documents tak
   names files that are gone.
 - **A slash command with attachments is a prompt**, as with images, and the prefix in front
   keeps pi from expanding `/skill:` or a prompt template in it.
+- **The composer's dropdowns open once the keyboard is down** (`rememberAfterKeyboard`, the
+  paperclip and the thinking chip). A dropdown is a focusable popup: opened over the keyboard,
+  it takes focus from the text field, the keyboard closes while the menu shows, and the menu
+  jumps down with the composer. A non-focusable popup keeps the keyboard but lets the tap that
+  dismisses it through to what lies below (it opened a bubble's image), so the tap hides the
+  keyboard and the menu opens when the IME inset reaches 0 (about 300 ms; 1 s at most).
 
 ## Session search (`lib/session-find.ts`)
 `GET /api/sessions/find?q=&project=&sort=recent|relevance&limit=` searches every session the way

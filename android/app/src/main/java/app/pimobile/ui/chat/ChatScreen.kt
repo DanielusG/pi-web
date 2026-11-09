@@ -29,10 +29,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -78,8 +80,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -106,6 +110,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
@@ -162,7 +167,9 @@ import app.pimobile.ui.markdown.Markdown
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -1781,6 +1788,34 @@ private fun GhostChip(
     }
 }
 
+/**
+ * [action] once the keyboard is down: a composer dropdown takes focus from the text
+ * field, so opened over the keyboard it would show while the keyboard closes and then
+ * jump down with the composer. With the keyboard already closed it runs at once.
+ */
+@Composable
+private fun rememberAfterKeyboard(action: () -> Unit): () -> Unit {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val ime = WindowInsets.ime
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val current by rememberUpdatedState(action)
+    return remember(keyboard, ime, density, scope) {
+        {
+            if (ime.getBottom(density) == 0) {
+                current()
+            } else {
+                keyboard?.hide()
+                scope.launch {
+                    // A keyboard that does not go (or reports no change) must not keep the menu shut.
+                    withTimeoutOrNull(1_000) { snapshotFlow { ime.getBottom(density) }.first { it == 0 } }
+                    current()
+                }
+            }
+        }
+    }
+}
+
 /** Where the composer's paperclip takes an attachment from. */
 enum class AttachSource { Camera, Gallery, File }
 
@@ -1789,12 +1824,13 @@ enum class AttachSource { Camera, Gallery, File }
 private fun AttachButton(active: Boolean, enabled: Boolean, onAttach: (AttachSource) -> Unit) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
+    val openMenu = rememberAfterKeyboard { open = true }
     Box {
         Box(
             Modifier
                 .size(34.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .clickable(enabled = enabled) { open = true },
+                .clickable(enabled = enabled, onClick = openMenu),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -1836,10 +1872,11 @@ private fun AttachButton(active: Boolean, enabled: Boolean, onAttach: (AttachSou
 private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabled: Boolean = true) {
     val t = Pi.tokens
     var open by remember { mutableStateOf(false) }
+    val openMenu = rememberAfterKeyboard { open = true }
     val levels =
         state.model?.let { state.thinkingLevels[it.key] }?.takeIf { it.isNotEmpty() } ?: FALLBACK_THINKING_LEVELS
     Box {
-        GhostChip(state.thinkingLevel ?: "default", onClick = { open = true }, enabled = enabled)
+        GhostChip(state.thinkingLevel ?: "default", onClick = openMenu, enabled = enabled)
         DropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
