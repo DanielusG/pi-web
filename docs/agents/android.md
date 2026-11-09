@@ -117,6 +117,45 @@ path) changes the app too. `FolderBrowserTest` pins the parsing and the breadcru
   content: it closes the path or new-folder field first, then returns to the projects page;
   only Back on the projects page dismisses the sheet.
 
+## Composer attachments (`lib/session-attachments.ts`, `lib/attachment-prefix.ts`)
+The composer's paperclip offers three sources: **Take photo** (the camera app through
+`TakePicture`, writing into the FileProvider's `cache/camera/`), **Photo gallery** (the system
+photo picker) and **Document** (`OpenMultipleDocuments`, any type). Photos stay prompt images on
+the existing path (`ImageAttachments`: compression, EXIF, limits). Documents take the fork route
+`POST /api/sessions/[id]/attachments`, and the prompt only names them.
+- **Where they land:** `<agentDir>/pi-web-attachments/<session id>/<6 hex>_<safe name>` (admin's
+  choice, 2026-11-09): beside pi's sessions and the other `pi-web-*` files, out of the project and
+  its git tree, and not in `/tmp`, which is a tmpfs on the admin's machine (gone at reboot, so old
+  chats would name missing files). The 6 hex are `randomUUID()`'s first characters, drawn again
+  when taken (`wx`); the safe name keeps letters, digits, `.`, `_`, `-`. Folder 0700, files 0600.
+  The route answers for a live wrapper too: a chat's first send runs `ensure_session` and uploads
+  before pi has written the session file.
+- **The prompt prefix** is a contract on both sides — `lib/attachment-prefix.ts` and
+  `data/AttachmentPrefix.kt` build and split the same text, and `AttachmentPrefixTest` and
+  `lib/attachment-prefix.test.mjs` pin the same expected string:
+  `Attachments from the user (you should probably read them; Pi saved them in <dir>):`, one
+  `- <path> (original name: <name>)` line per file, then `\n\n---\n\n` and what the user typed (no
+  separator when they typed nothing). A name's control characters become spaces, so a line
+  stays a line.
+- **What reads it back:** the app's user bubble shows a chip per file (tap: the file viewer
+  with `?sessionId=`, which reads a path outside the roots because the user message names it —
+  [files-and-access.md](files-and-access.md)) and the text after the prefix; copy and Edit from
+  here use that text. Upstream's `catalogFirstMessage()` strips the prefix (the list row shows the
+  typed text, or the file names for files alone; without it 500 code units of paths filled the
+  row's budget), and so does the app's chat title, which `GET /api/sessions/[id]` hands whole.
+  The web bubble still shows the raw prefix: rendering it there is a later step.
+- **Upload at send time**, after `ensure_session`: a document picked in a chat with no session
+  yet has nowhere to go, and nothing is left on the server for a draft dropped unsent. The app
+  keeps a private copy in `cache/attachments/` from pick to delivery, so a failed send puts the
+  files back in the composer after the picker's read grant has lapsed; copies a killed process
+  left go after a day. A failure before the prompt is sent is always a rejection (text and files
+  come back); the already-uploaded copies of a failed send stay until the session is deleted.
+- **Deleted with the session:** `deleteSessions()` removes each deleted id's folder (best
+  effort, after the files). A Fork copies the parent's messages, so a fork of a deleted session
+  names files that are gone.
+- **A slash command with attachments is a prompt**, as with images, and the prefix in front
+  keeps pi from expanding `/skill:` or a prompt template in it.
+
 ## Session search (`lib/session-find.ts`)
 `GET /api/sessions/find?q=&project=&sort=recent|relevance&limit=` searches every session the way
 pi's `/resume` selector does; the app's list has a search mode on top of it

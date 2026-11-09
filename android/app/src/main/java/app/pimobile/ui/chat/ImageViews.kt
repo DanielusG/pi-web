@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -45,14 +46,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.pimobile.data.AttachedFile
 import app.pimobile.data.AttachedImage
+import app.pimobile.data.AttachmentRef
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.ImagePayload
+import app.pimobile.ui.files.fileIcon
+import app.pimobile.ui.formatBytes
 import app.pimobile.ui.theme.KeepUiScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
@@ -68,9 +74,19 @@ private fun rememberDecoded(data: String, maxPx: Int): Bitmap? =
         value = withContext(Dispatchers.Default) { ImageAttachments.decodeBase64(data, maxPx) }
     }.value
 
-/** Composer strip: 56dp thumbnails with a remove badge, plus spinners for images still being read. */
+/**
+ * Composer strip: 56dp thumbnails and document tiles with a remove badge, plus spinners for
+ * images and documents still being read.
+ */
 @Composable
-fun AttachmentStrip(images: List<AttachedImage>, pending: Int, onRemove: (Long) -> Unit) {
+fun AttachmentStrip(
+    images: List<AttachedImage>,
+    pending: Int,
+    onRemove: (Long) -> Unit,
+    files: List<AttachedFile> = emptyList(),
+    pendingFiles: Int = 0,
+    onRemoveFile: (Long) -> Unit = {},
+) {
     val t = Pi.tokens
     var preview by remember { mutableStateOf<ImagePayload?>(null) }
     Row(
@@ -101,22 +117,38 @@ fun AttachmentStrip(images: List<AttachedImage>, pending: Int, onRemove: (Long) 
                         )
                     }
                 }
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 6.dp, y = (-6).dp)
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(t.surface)
-                        .border(1.dp, t.border, CircleShape)
-                        .clickable { onRemove(image.id) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(PiIcons.Close, contentDescription = "Remove image", tint = t.textSecondary, modifier = Modifier.size(10.dp))
-                }
+                RemoveBadge("Remove image", Modifier.align(Alignment.TopEnd)) { onRemove(image.id) }
             }
         }
-        repeat(pending) {
+        files.forEach { file ->
+            Box(Modifier.padding(top = 6.dp, end = 6.dp)) {
+                Row(
+                    Modifier
+                        .height(56.dp)
+                        .widthIn(max = 200.dp)
+                        .clip(shape)
+                        .border(1.dp, t.border, shape)
+                        .background(t.muted)
+                        .padding(start = 10.dp, end = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(fileIcon(file.name, isDir = false), null, tint = t.textSecondary, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            file.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = t.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.MiddleEllipsis,
+                        )
+                        Text(formatBytes(file.size), style = MaterialTheme.typography.labelSmall, color = t.textTertiary, maxLines = 1)
+                    }
+                }
+                RemoveBadge("Remove file", Modifier.align(Alignment.TopEnd)) { onRemoveFile(file.id) }
+            }
+        }
+        repeat(pending + pendingFiles) {
             Box(Modifier.padding(top = 6.dp, end = 6.dp)) {
                 Box(
                     Modifier
@@ -132,6 +164,64 @@ fun AttachmentStrip(images: List<AttachedImage>, pending: Int, onRemove: (Long) 
         }
     }
     preview?.let { ImagePreviewDialog(it, onDismiss = { preview = null }) }
+}
+
+/** The round badge overhanging a composer tile's corner. */
+@Composable
+private fun RemoveBadge(description: String, modifier: Modifier, onClick: () -> Unit) {
+    val t = Pi.tokens
+    Box(
+        modifier
+            .offset(x = 6.dp, y = (-6).dp)
+            .size(20.dp)
+            .clip(CircleShape)
+            .background(t.surface)
+            .border(1.dp, t.border, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(PiIcons.Close, contentDescription = description, tint = t.textSecondary, modifier = Modifier.size(10.dp))
+    }
+}
+
+/**
+ * Documents named by a user message's attachment prefix (data/AttachmentPrefix.kt): a chip per
+ * file, opening its saved copy on the server. A pending bubble's chips do not open: the server
+ * has not named the copies yet.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MessageAttachments(files: List<AttachmentRef>, onOpen: ((String) -> Unit)?, modifier: Modifier = Modifier) {
+    val t = Pi.tokens
+    val shape = RoundedCornerShape(10.dp)
+    FlowRow(
+        modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        files.forEach { file ->
+            Row(
+                Modifier
+                    .widthIn(max = 240.dp)
+                    .clip(shape)
+                    .background(t.surface)
+                    .border(1.dp, t.border, shape)
+                    .clickable(enabled = onOpen != null) { onOpen?.invoke(file.path) }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(fileIcon(file.name, isDir = false), null, tint = t.textSecondary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    file.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = t.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                )
+            }
+        }
+    }
 }
 
 /** Images inside a user bubble; tap opens the full-screen preview (web: ImagePreview). */

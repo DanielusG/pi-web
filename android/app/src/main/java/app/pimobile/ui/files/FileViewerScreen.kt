@@ -80,6 +80,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import app.pimobile.data.FileKind
 import app.pimobile.data.FilePaths
 import app.pimobile.ui.baseName
+import app.pimobile.ui.formatBytes
 import app.pimobile.ui.chat.DiffView
 import app.pimobile.ui.markdown.HeadingScale
 import app.pimobile.ui.markdown.LazyMarkdown
@@ -525,12 +526,6 @@ private fun displayLine(line: String, wrap: Boolean): String {
     val expanded = if ('\t' in line) line.replace("\t", "    ") else line
     val max = if (wrap) MAX_WRAP_CHARS else MAX_NOWRAP_CHARS
     return if (expanded.length <= max) expanded else expanded.take(max) + " … ${expanded.length - max} more characters"
-}
-
-private fun formatBytes(bytes: Long): String = when {
-    bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    bytes >= 1024 -> "${bytes / 1024} KB"
-    else -> "$bytes B"
 }
 
 @Composable

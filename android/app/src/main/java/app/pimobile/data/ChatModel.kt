@@ -43,6 +43,8 @@ sealed interface ChatItem {
         /** Edit from here targets the message itself: the SDK moves the leaf to its parent (none for the first). */
         val entryId: String? = null,
         val timestamp: Long? = null,
+        /** Documents named by the prompt's attachment prefix; [text] is what follows it. */
+        val attachments: List<AttachmentRef> = emptyList(),
     ) : ChatItem
 
     data class Assistant(
@@ -224,7 +226,9 @@ object Messages {
     fun item(message: LoadedMessage): ChatItem? {
         val json = message.json
         return when (json.str("role")) {
-            "user" -> contentText(json["content"]).let { text ->
+            "user" -> contentText(json["content"]).let { raw ->
+                val split = AttachmentPrefix.split(raw)
+                val text = split?.body ?: raw
                 ChatItem.User(
                     message.key,
                     text,
@@ -233,6 +237,7 @@ object Messages {
                     SlashDisplay.skillExpansionToCommand(text),
                     entryId = message.entryId,
                     timestamp = json.long("timestamp"),
+                    attachments = split?.attachments.orEmpty(),
                 )
             }
             "assistant" -> ChatItem.Assistant(

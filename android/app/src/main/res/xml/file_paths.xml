@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="shared" path="shared/" />
+    <!-- The camera app writes the composer's photo here (ChatScreen). -->
+    <cache-path name="camera" path="camera/" />
 </paths>

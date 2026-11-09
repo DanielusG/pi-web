@@ -3,7 +3,9 @@
 package app.pimobile.ui.chat
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -118,10 +120,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import java.io.File
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
 import app.pimobile.data.ChatResumeStore
@@ -222,6 +226,41 @@ fun ChatScreen(
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(ImageAttachments.MAX_IMAGES),
     ) { uris -> vm.addImages(resolver, uris) }
+    // Documents of any type: uploaded to the server at send time and named in the prompt.
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> vm.addFiles(resolver, uris) }
+    // The camera app writes into the app cache (FileProvider `camera/`); the photo then attaches
+    // as a gallery pick does. Saveable: the app may be recreated while the camera is open.
+    var cameraUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        val uri = cameraUri?.let(Uri::parse)
+        cameraUri = null
+        if (saved && uri != null) vm.addImages(resolver, listOf(uri))
+    }
+    fun attach(source: AttachSource) {
+        when (source) {
+            AttachSource.Camera -> {
+                // One photo at a time: an earlier capture is already read into the composer.
+                val dir = File(context.cacheDir, "camera").apply { deleteRecursively(); mkdirs() }
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.files",
+                    File(dir, "photo-${System.currentTimeMillis()}.jpg"),
+                )
+                cameraUri = uri.toString()
+                try {
+                    camera.launch(uri)
+                } catch (_: ActivityNotFoundException) {
+                    cameraUri = null
+                    vm.showNotice("No camera app available")
+                }
+            }
+            AttachSource.Gallery ->
+                imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            AttachSource.File -> filePicker.launch(arrayOf("*/*"))
+        }
+    }
 
     // --- Voice dictation (long-press send, Nemotron ASR server) ---
     var voicePressHeld by remember { mutableStateOf(false) }
@@ -593,10 +632,9 @@ fun ChatScreen(
                     onStop = vm::abort,
                     onModels = { showModels = true },
                     onThinking = vm::selectThinking,
-                    onAttach = {
-                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    },
+                    onAttach = ::attach,
                     onRemoveImage = vm::removeImage,
+                    onRemoveFile = vm::removeFile,
                     focusRequester = composerFocus,
                     voiceAvailable = vm.hasAsr(),
                     onVoiceStart = { onVoiceStart() },
@@ -666,6 +704,7 @@ fun ChatScreen(
                         onEditFromHere = item.entryId?.takeIf { canNavigate }?.let { id ->
                             { editRequest = EditRequest(id, item.command ?: item.text) }
                         },
+                        onOpenFile = { path -> onOpenFile(path, false) },
                     )
 
                     is ChatItem.Assistant -> AssistantMessage(
@@ -1483,8 +1522,9 @@ private fun Composer(
     onStop: () -> Unit,
     onModels: () -> Unit,
     onThinking: (String) -> Unit,
-    onAttach: () -> Unit,
+    onAttach: (AttachSource) -> Unit,
     onRemoveImage: (Long) -> Unit,
+    onRemoveFile: (Long) -> Unit,
     focusRequester: FocusRequester,
     voiceAvailable: Boolean,
     onVoiceStart: () -> Unit,
@@ -1504,10 +1544,11 @@ private fun Composer(
     }
     var imageWarningDismissed by remember { mutableStateOf(false) }
     LaunchedEffect(hasImages) { if (!hasImages) imageWarningDismissed = false }
-    val hasContent = draft.text.isNotBlank() || hasImages
+    val hasFiles = state.files.isNotEmpty()
+    val hasContent = draft.text.isNotBlank() || hasImages || hasFiles
     val stopping = state.running && !hasContent
-    // Wait for picked images to finish reading, so none is silently left behind.
-    val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0))
+    // Wait for picked images and documents to finish reading, so none is silently left behind.
+    val enabled = !pending && (stopping || (hasContent && state.pendingImages == 0 && state.pendingFiles == 0))
     val dictating = state.dictating
     // Dictation indicator: a soft red halo around the composer card (colored
     // shadow, which can spread outside the card bounds — unlike a blur layer).
@@ -1566,8 +1607,15 @@ private fun Composer(
                 .border(1.dp, if (focused) t.borderStrong else t.border, shape)
                 .padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 8.dp),
         ) {
-            if (hasImages || state.pendingImages > 0) {
-                AttachmentStrip(state.attachments, state.pendingImages, onRemoveImage)
+            if (hasImages || hasFiles || state.pendingImages > 0 || state.pendingFiles > 0) {
+                AttachmentStrip(
+                    images = state.attachments,
+                    pending = state.pendingImages,
+                    onRemove = onRemoveImage,
+                    files = state.files,
+                    pendingFiles = state.pendingFiles,
+                    onRemoveFile = onRemoveFile,
+                )
             }
             BasicTextField(
                 value = draft,
@@ -1609,20 +1657,7 @@ private fun Composer(
                         .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(enabled = !pending, onClick = onAttach),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            PiIcons.Image,
-                            contentDescription = "Attach image",
-                            tint = if (hasImages) t.accent else t.textSecondary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                    AttachButton(active = hasImages || hasFiles, enabled = !pending, onAttach = onAttach)
                     GhostChip(
                         modelName ?: "Model",
                         onClick = onModels,
@@ -1743,6 +1778,57 @@ private fun GhostChip(
         Text(label, style = style, color = t.textSecondary, maxLines = 1)
         Spacer(Modifier.width(3.dp))
         Icon(PiIcons.ChevronDown, null, tint = t.textTertiary, modifier = Modifier.size(13.dp))
+    }
+}
+
+/** Where the composer's paperclip takes an attachment from. */
+enum class AttachSource { Camera, Gallery, File }
+
+/** The paperclip: a photo taken now or picked (prompt images), or any document (uploaded, named in the prompt). */
+@Composable
+private fun AttachButton(active: Boolean, enabled: Boolean, onAttach: (AttachSource) -> Unit) {
+    val t = Pi.tokens
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(enabled = enabled) { open = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                PiIcons.Paperclip,
+                contentDescription = "Attach",
+                tint = if (active) t.accent else t.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = RoundedCornerShape(14.dp),
+            containerColor = t.surface,
+            border = BorderStroke(1.dp, t.border),
+            shadowElevation = 6.dp,
+        ) {
+            KeepUiScale {
+                listOf(
+                    Triple(AttachSource.Camera, PiIcons.Camera, "Take photo"),
+                    Triple(AttachSource.Gallery, PiIcons.Image, "Photo gallery"),
+                    Triple(AttachSource.File, PiIcons.File, "Document"),
+                ).forEach { (source, icon, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label, style = MaterialTheme.typography.bodyMedium, color = t.text) },
+                        leadingIcon = { Icon(icon, null, tint = t.textSecondary, modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            open = false
+                            onAttach(source)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -58,6 +58,19 @@ object PiIcons {
             "M21 15l-5-5L5 21",
         )
     }
+    val Paperclip by lazy {
+        lineIcon(
+            "Paperclip",
+            "M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48",
+        )
+    }
+    val Camera by lazy {
+        lineIcon(
+            "Camera",
+            "M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z",
+            "M12 10a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+        )
+    }
     val Close by lazy { lineIcon("Close", "M18 6L6 18", "M6 6l12 12") }
     val Warning by lazy {
         lineIcon("Warning", "M10.3 2.9L1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01")

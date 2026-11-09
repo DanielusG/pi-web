@@ -88,7 +88,12 @@ private fun clip(text: String): String =
     else text.take(MAX_OUTPUT_CHARS) + "\n… ${text.length - MAX_OUTPUT_CHARS} more characters"
 
 @Composable
-fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
+fun UserBubble(
+    item: ChatItem.User,
+    onEditFromHere: (() -> Unit)? = null,
+    /** Opens an attached document's saved copy in the file viewer. */
+    onOpenFile: ((String) -> Unit)? = null,
+) {
     val t = Pi.tokens
     Column(
         Modifier
@@ -103,6 +108,13 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
                 .background(t.muted)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
+            if (item.attachments.isNotEmpty()) {
+                MessageAttachments(
+                    item.attachments,
+                    onOpen = onOpenFile?.takeUnless { item.pending },
+                    Modifier.padding(top = 6.dp, bottom = if (item.text.isNotBlank() || item.images.isNotEmpty()) 8.dp else 6.dp),
+                )
+            }
             if (item.images.isNotEmpty()) {
                 MessageImages(
                     item.images,
@@ -112,7 +124,7 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
             val command = item.command
             if (command != null) {
                 SkillCommand(item.key, command, item.text)
-            } else if (item.text.isNotBlank() || item.images.isEmpty()) {
+            } else if (item.text.isNotBlank() || (item.images.isEmpty() && item.attachments.isEmpty())) {
                 SelectionContainer {
                     Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
                 }

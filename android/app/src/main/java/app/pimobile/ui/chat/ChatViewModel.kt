@@ -11,9 +11,13 @@ import app.pimobile.data.ApiException
 import app.pimobile.data.AskForm
 import app.pimobile.data.AskUserQuestion
 import app.pimobile.data.AsrClient
+import app.pimobile.data.AttachedFile
 import app.pimobile.data.AttachedImage
+import app.pimobile.data.AttachmentPrefix
+import app.pimobile.data.AttachmentRef
 import app.pimobile.data.Block
 import app.pimobile.data.ChatItem
+import app.pimobile.data.FileAttachments
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.ImagePayload
 import app.pimobile.data.LoadedMessage
@@ -68,6 +72,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.io.File
 import java.io.IOException
 import java.util.Locale
 import kotlin.math.roundToLong
@@ -176,6 +181,10 @@ data class ChatUiState(
     val attachments: List<AttachedImage> = emptyList(),
     /** Picked images still being read and compressed. */
     val pendingImages: Int = 0,
+    /** Documents to upload with the next message (camera photos and gallery picks are [attachments]). */
+    val files: List<AttachedFile> = emptyList(),
+    /** Picked documents still being copied into the app cache. */
+    val pendingFiles: Int = 0,
     /** Extension, prompt and skill commands from `get_commands`; built-ins are local. */
     val slashCommands: List<SlashCommand> = emptyList(),
     val slashCommandsLoading: Boolean = false,
@@ -304,56 +313,77 @@ class ChatViewModel(
     fun send(text: String) {
         val message = text.trim()
         val images = _state.value.attachments
-        if (message.isEmpty() && images.isEmpty()) return
-        _state.update { it.copy(attachments = emptyList()) }
+        val files = _state.value.files
+        if (message.isEmpty() && images.isEmpty() && files.isEmpty()) return
+        _state.update { it.copy(attachments = emptyList(), files = emptyList()) }
         viewModelScope.launch {
             val steering = _state.value.running
+            fun userJson(text: String) = buildJsonObject {
+                put("role", "user")
+                if (images.isEmpty()) {
+                    put("content", text)
+                } else {
+                    putJsonArray("content") {
+                        if (text.isNotEmpty()) addJsonObject { put("type", "text"); put("text", text) }
+                        images.forEach { addJsonObject { putImage(it.payload) } }
+                    }
+                }
+            }
+            // Until the server names the saved copies, the bubble's chips carry the names only
+            // (a pending bubble's chips do not open).
             val optimistic = LoadedMessage(
                 key = "pending-${localCounter++}",
                 entryId = null,
-                json = buildJsonObject {
-                    put("role", "user")
-                    if (images.isEmpty()) {
-                        put("content", message)
-                    } else {
-                        putJsonArray("content") {
-                            if (message.isNotEmpty()) addJsonObject { put("type", "text"); put("text", message) }
-                            images.forEach { addJsonObject { putImage(it.payload) } }
-                        }
-                    }
-                },
+                json = userJson(AttachmentPrefix.wrap("…", files.map { AttachmentRef(it.name, it.name) }, message)),
                 pending = true,
             )
             if (!steering) {
                 messages = messages + optimistic
                 publishMessages()
-                if (_state.value.title.isBlank() && message.isNotEmpty()) {
-                    _state.update { it.copy(title = message.lineSequence().first().take(80)) }
+                val title = message.ifEmpty { files.joinToString(", ") { it.name } }
+                if (_state.value.title.isBlank() && title.isNotEmpty()) {
+                    _state.update { it.copy(title = title.lineSequence().first().take(80)) }
                 }
                 promptPending = true
                 optimisticKey = optimistic.key
-                setRunning(if (images.isEmpty() && message.startsWith("/")) "Running command…" else "Starting…")
+                setRunning(
+                    when {
+                        files.isNotEmpty() -> "Uploading files…"
+                        images.isEmpty() && message.startsWith("/") -> "Running command…"
+                        else -> "Starting…"
+                    },
+                )
             }
             lastSendAt = SystemClock.elapsedRealtime()
             var sessionId = _state.value.sessionId
+            // Before the prompt goes out, every failure leaves nothing running: the message comes back.
+            var promptSent = false
             try {
                 if (sessionId == null) sessionId = ensureSession()
+                val prompt = if (files.isEmpty()) message else uploadFiles(sessionId, files, message)
+                if (prompt != message && !steering) {
+                    messages = messages.map { if (it.key == optimistic.key) it.copy(json = userJson(prompt)) else it }
+                    publishMessages()
+                    setRunning("Starting…")
+                }
                 ensureEvents(sessionId)
                 withTimeoutOrNull(60_000) { connected.first { it } }
                     ?: throw IOException("Could not open the event stream")
+                promptSent = true
                 api.command(sessionId, buildJsonObject {
                     put("type", "prompt")
-                    put("message", message)
+                    put("message", prompt)
                     if (images.isNotEmpty()) {
                         putJsonArray("images") { images.forEach { addJsonObject { putImage(it.payload) } } }
                     }
                     if (steering) put("streamingBehavior", "steer")
                 })
+                files.forEach { it.file.delete() }
                 if (steering) _state.update { it.copy(notice = "Steering message sent") }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val rejected = (e as? ApiException)?.code == "prompt_rejected" ||
+                val rejected = !promptSent || (e as? ApiException)?.code == "prompt_rejected" ||
                     sessionId == null || !connected.value
                 if (rejected) {
                     if (!steering) {
@@ -368,6 +398,7 @@ class ChatViewModel(
                             error = e.message ?: "Message not sent",
                             restoredDraft = message.ifEmpty { null },
                             attachments = (images + it.attachments).take(ImageAttachments.MAX_IMAGES),
+                            files = (files + it.files).take(FileAttachments.MAX_FILES),
                         )
                     }
                 } else {
@@ -412,6 +443,8 @@ class ChatViewModel(
 
     override fun onCleared() {
         asr?.stop()
+        // Unsent documents' cache copies; a send in flight deletes its own once delivered.
+        _state.value.files.forEach { it.file.delete() }
         super.onCleared()
     }
 
@@ -452,6 +485,68 @@ class ChatViewModel(
 
     fun removeImage(id: Long) = _state.update { state ->
         state.copy(attachments = state.attachments.filterNot { it.id == id })
+    }
+
+    private val attachmentCache by lazy { File(context.cacheDir, "attachments") }
+
+    /** Copies picked documents into the app cache off the main thread; they upload at send time. */
+    fun addFiles(resolver: ContentResolver, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val current = _state.value
+        val room = (FileAttachments.MAX_FILES - current.files.size - current.pendingFiles).coerceAtLeast(0)
+        val accepted = uris.take(room)
+        if (accepted.size < uris.size) {
+            _state.update { it.copy(notice = "A message can include at most ${FileAttachments.MAX_FILES} files") }
+        }
+        if (accepted.isEmpty()) return
+        _state.update { it.copy(pendingFiles = it.pendingFiles + accepted.size) }
+        viewModelScope.launch {
+            val failures = mutableListOf<String>()
+            for (uri in accepted) {
+                val id = localCounter++.toLong()
+                var file = try {
+                    withContext(Dispatchers.IO) { FileAttachments.load(resolver, uri, id, attachmentCache) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failures += e.message ?: "Could not read the file"
+                    null
+                }
+                val state = _state.value
+                if (file != null && state.files.sumOf { it.size } + file.size > FileAttachments.MAX_TOTAL_BYTES) {
+                    file.file.delete()
+                    file = null
+                    failures += "Attachments must total ${FileAttachments.MAX_TOTAL_BYTES / (1024 * 1024)} MB or less"
+                }
+                _state.update {
+                    it.copy(
+                        files = if (file != null) it.files + file else it.files,
+                        pendingFiles = (it.pendingFiles - 1).coerceAtLeast(0),
+                    )
+                }
+            }
+            failures.distinct().firstOrNull()?.let { message -> _state.update { it.copy(error = message) } }
+        }
+    }
+
+    fun removeFile(id: Long) {
+        _state.value.files.firstOrNull { it.id == id }?.file?.delete()
+        _state.update { state -> state.copy(files = state.files.filterNot { it.id == id }) }
+    }
+
+    /** Uploads [files] and answers the prompt that names them before [message]. */
+    private suspend fun uploadFiles(sessionId: String, files: List<AttachedFile>, message: String): String {
+        val body = api.uploadAttachments(sessionId, files).asObj()
+        val dir = body?.str("dir") ?: throw IOException("The server did not save the attachments")
+        val saved = body.arr("files").orEmpty().mapNotNull { it.asObj() }
+        if (saved.size != files.size) throw IOException("The server did not save the attachments")
+        val refs = saved.mapIndexed { index, file ->
+            AttachmentRef(
+                path = file.str("path") ?: throw IOException("The server did not save the attachments"),
+                name = file.str("name") ?: files[index].name,
+            )
+        }
+        return AttachmentPrefix.wrap(dir, refs, message)
     }
 
     fun abort() {
@@ -811,7 +906,9 @@ class ChatViewModel(
         val current = _state.value
         val command = builtinSlashCommand(text) ?: return false
         // Images make it a prompt; while running, only streaming-safe built-ins run here.
-        if (current.attachments.isNotEmpty() || (current.running && !command.availableWhileStreaming)) return false
+        if (current.attachments.isNotEmpty() || current.files.isNotEmpty() ||
+            (current.running && !command.availableWhileStreaming)
+        ) return false
         if (current.commandPending) return true
         val args = text.trim().substringAfter("/${command.name}").trim()
         _state.update { it.copy(commandPending = true) }
@@ -1185,7 +1282,7 @@ class ChatViewModel(
                     thinkingLevel = state.str("thinkingLevel") ?: current.thinkingLevel,
                     model = state.obj("model")?.let { modelRef(it, "id") } ?: current.model,
                     queued = state.obj("queuedMessages")?.let {
-                        it.arr("steering").strings() + it.arr("followUp").strings()
+                        (it.arr("steering").strings() + it.arr("followUp").strings()).map(AttachmentPrefix::display)
                     } ?: current.queued,
                 )
             }
@@ -1425,7 +1522,10 @@ class ChatViewModel(
             "prompt_error" -> _state.update { it.copy(error = event.str("errorMessage") ?: "Prompt failed") }
             "extension_error" -> _state.update { it.copy(error = "Extension error: ${event.str("error")}") }
             "queue_update" -> _state.update {
-                it.copy(queued = event.arr("steering").strings() + event.arr("followUp").strings())
+                it.copy(
+                    queued = (event.arr("steering").strings() + event.arr("followUp").strings())
+                        .map(AttachmentPrefix::display),
+                )
             }
             "auto_retry_start" -> setStatus(
                 "Retrying (${event.int("attempt") ?: "?"}/${event.int("maxAttempts") ?: "?"}): ${event.str("errorMessage").orEmpty()}",
@@ -1585,8 +1685,10 @@ class ChatViewModel(
         put("mimeType", image.mimeType)
     }
 
+    // GET /api/sessions/[id] hands the whole first message: an attachment prefix gives way to the text after it.
     private fun titleOf(info: JsonObject): String =
         info.str("name")?.takeIf { it.isNotBlank() }
-            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }?.let(SlashDisplay::display)
+            ?: info.str("firstMessage")?.takeUnless { it == "(no messages)" }
+                ?.let { SlashDisplay.display(AttachmentPrefix.display(it)) }
             ?: "New session"
 }

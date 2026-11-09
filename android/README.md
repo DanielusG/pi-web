@@ -103,9 +103,18 @@ It has **not yet been tested against a real pi-web with a real model.**
   - Decline sends the package's decline. Back collapses the card to a pill and leaves the
     question open.
   - A finished call reads as its answers in the message list.
+- **Attachments** (paperclip in the composer): take a photo now, pick photos from the
+  gallery, or attach documents of any type.
+  - Photos go to the model as prompt images (rules below).
+  - Documents are uploaded at send time to the server's
+    `~/.pi/agent/pi-web-attachments/<session id>/` and named before the message in a short
+    "Attachments from the user" list, so the model reads them with its tools. At most 10 per
+    message, 25 MB each, 100 MB in all.
+  - Sent messages show a chip per document; tap one to preview it in the file viewer.
+  - A session's attachments are deleted with it.
 - **Image attachments:**
-  - The image button in the composer opens the system photo picker, which needs no
-    storage permission.
+  - Photo gallery opens the system photo picker, which needs no storage permission. Take
+    photo opens the camera app; the shot attaches like a picked image.
   - Limits and compression follow pi-web's composer: at most 10 images of 10 MB each.
     Files over 1 MB (except GIF) are re-encoded as JPEG q85, long side 1024 px, and the
     original is kept when that isn't smaller.
@@ -308,7 +317,7 @@ between SDK releases.
 |---|---|
 | Notifications, part 2 | Real push (FCM), so runs started while the app is closed notify too, would need a backend addition. |
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
-| Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
+| Images, part 2 | Pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
 | Files, part 2 | Syntax highlighting in the source view, upload, file tabs, git diff, worktrees (`/api/worktrees`). |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |

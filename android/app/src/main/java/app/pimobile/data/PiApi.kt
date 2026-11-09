@@ -18,8 +18,11 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okio.buffer
@@ -77,6 +80,20 @@ class PiApi {
     )
 
     suspend fun delete(path: String): JsonElement = execute(request(path).delete().build())
+
+    /**
+     * Fork route (Android client): saves [files] under the server's
+     * `<agentDir>/pi-web-attachments/<sessionId>/` and answers `{ dir, files: [{ path, name, size }] }`.
+     */
+    suspend fun uploadAttachments(sessionId: String, files: List<AttachedFile>): JsonElement {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            files.forEach { file ->
+                val type = (file.mimeType ?: "application/octet-stream").toMediaTypeOrNull()
+                addFormDataPart("files", file.name, file.file.asRequestBody(type))
+            }
+        }.build()
+        return execute(request("/api/sessions/${encode(sessionId)}/attachments").post(body).build())
+    }
 
     /** POST /api/agent/[id]; returns the `data` field of `{ success, data }`. */
     suspend fun command(sessionId: String, command: JsonObject): JsonElement {

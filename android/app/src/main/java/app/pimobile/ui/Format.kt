@@ -57,3 +57,9 @@ fun relativeTime(epochMillis: Long, now: Long = System.currentTimeMillis()): Str
 /** ISO-8601 timestamps from the API as epoch millis; 0 when unparseable. */
 fun isoMillis(iso: String): Long =
     runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrDefault(0L)
+
+fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
+}
