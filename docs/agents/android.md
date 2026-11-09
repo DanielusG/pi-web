@@ -55,6 +55,21 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
   its rows when few match), not a fixed `heightIn` — a fixed height gets clipped once the keyboard
   takes its space.
 
+## Chat size (`ScaledUi` in `ui/theme/Theme.kt`)
+Settings › "Chat size" (DataStore key still `chat_font_scale`, 0.5–1.5) scales the whole chat
+screen: `MainActivity` wraps `ChatScreen` in `ScaledUi(scale)`, which provides a `LocalDensity`
+with `density × scale`, so every dp and sp inside shrinks together. Write chat sizes as plain
+dp/sp; never multiply them by the scale. sp→dp is delegated to the display density, so Android 14's
+nonlinear font scaling still applies.
+- `Dialog`, `ModalBottomSheet`, `DropdownMenu` and `Popup` compose in a window of their own, which
+  provides the display density again. Wrap their content in `KeepUiScale` (it reads `LocalUiScale`,
+  which does cross into the window). What is set on the component itself — shape, container
+  padding, `Modifier.width` — stays at display size, so a fixed menu width goes on a `Box` inside.
+- `LocalConfiguration.screenWidthDp/HeightDp` are display dp and no longer match the scaled dp:
+  read `screenSizeDp()`.
+- At 150 % the screen is about 274 dp wide: rows that must fit one line (the message footer) are
+  `FlowRow`s.
+
 ## Session list paging (`lib/session-list-page.ts`)
 A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
 - `GET /api/sessions?perProject=N` answers with `projects` (key, root, total, most recent activity,

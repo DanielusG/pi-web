@@ -181,11 +181,12 @@ It has **not yet been tested against a real pi-web with a real model.**
 - **Context indicator:**
   - A ring in the chat header shows the % of the context window used.
   - Tapping it shows context tokens, input/output, cache read/write, cache hit rate, cost, message counts and active time.
-- **Chat font size:**
-  - Settings > "Chat font size" steps A−/A+ in 0.1× increments from 0.5× to 1.5× of the
-    base sizes (default 1.0×, chat body 16sp → 8–24sp) and scales the chat text:
-    messages, code blocks, LaTeX, tool output and the composer. Headings, lists and math
-    follow the body proportionally; labels and the rest of the app stay fixed.
+- **Chat size:**
+  - Settings > "Chat size" steps A−/A+ in 0.1× increments from 0.5× to 1.5× (default 1.0×)
+    and scales the whole chat screen together: text and its line spacing, padding, icons,
+    the header, tool cards, the composer, and the dialogs and sheets opened from the chat.
+    It scales the screen's density (`ScaledUi`), so the layout keeps its proportions; the
+    session list, files and settings stay at their own size.
   - Stored in the local DataStore like the other chat preferences; nothing is sent to
     the server.
 - **Files:**

@@ -40,6 +40,7 @@ import app.pimobile.data.BranchRow
 import app.pimobile.data.SessionTree
 import app.pimobile.data.TreeNode
 import app.pimobile.ui.theme.GeistMono
+import app.pimobile.ui.theme.KeepUiScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 
@@ -64,31 +65,33 @@ fun TreeSheet(tree: List<TreeNode>, leafId: String?, onDismiss: () -> Unit, onSe
             )
         },
     ) {
-        Text(
-            "Branches",
-            style = MaterialTheme.typography.titleLarge,
-            color = t.text,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-        if (rows.isEmpty()) {
+        KeepUiScale {
             Text(
-                "This session has no branches",
-                style = MaterialTheme.typography.bodyMedium,
-                color = t.textSecondary,
-                modifier = Modifier
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-                    .navigationBarsPadding(),
+                "Branches",
+                style = MaterialTheme.typography.titleLarge,
+                color = t.text,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
-            return@ModalBottomSheet
-        }
-        LazyColumn(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding(),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
-        ) {
-            itemsIndexed(rows, key = { index, row -> "$index:${row.targetId}" }) { _, row ->
-                BranchRowView(row, current = row.targetId == leafId, onClick = { onSelect(row.targetId) })
+            if (rows.isEmpty()) {
+                Text(
+                    "This session has no branches",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.textSecondary,
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .navigationBarsPadding(),
+                )
+                return@KeepUiScale
+            }
+            LazyColumn(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
+            ) {
+                itemsIndexed(rows, key = { index, row -> "$index:${row.targetId}" }) { _, row ->
+                    BranchRowView(row, current = row.targetId == leafId, onClick = { onSelect(row.targetId) })
+                }
             }
         }
     }

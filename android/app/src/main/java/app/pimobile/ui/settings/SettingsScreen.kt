@@ -281,7 +281,7 @@ fun SettingsScreen(app: PiApp, canGoBack: Boolean, onBack: () -> Unit, onConnect
                 }
             }
             Spacer(Modifier.height(18.dp))
-            FieldLabel("Chat font size")
+            FieldLabel("Chat size")
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),

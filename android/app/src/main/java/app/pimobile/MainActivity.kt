@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,8 +49,8 @@ import app.pimobile.ui.sessions.SessionsScreen
 import app.pimobile.ui.sessions.SessionsViewModel
 import app.pimobile.ui.settings.ServerOutdatedScreen
 import app.pimobile.ui.settings.SettingsScreen
-import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.PiTheme
+import app.pimobile.ui.theme.ScaledUi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -264,7 +263,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                 }
                 val insert by entry.savedStateHandle.getStateFlow<String?>(INSERT_KEY, null).collectAsState()
                 val chatFontScale by app.settings.chatFontScale.collectAsStateWithLifecycle(initialValue = 1f)
-                CompositionLocalProvider(LocalChatFontScale provides chatFontScale) {
+                ScaledUi(chatFontScale) {
                     ChatScreen(
                         vm,
                         app.resumeStore,

@@ -1,5 +1,9 @@
 # Plan: configurable chat font size (Android app)
 
+> Superseded: the setting is now "Chat size" and scales the whole chat screen through
+> `LocalDensity` (`ScaledUi`); `LocalChatFontScale` is gone. See
+> [docs/agents/android.md](agents/android.md) › "Chat size".
+
 Make the chat text size configurable in the native Android client, scoped to the chat
 surface only. Settings live locally in the app (DataStore); no API changes.
 

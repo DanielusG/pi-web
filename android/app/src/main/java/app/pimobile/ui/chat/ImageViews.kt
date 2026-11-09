@@ -53,6 +53,7 @@ import androidx.compose.ui.window.DialogProperties
 import app.pimobile.data.AttachedImage
 import app.pimobile.data.ImageAttachments
 import app.pimobile.data.ImagePayload
+import app.pimobile.ui.theme.KeepUiScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import kotlinx.coroutines.Dispatchers
@@ -187,37 +188,39 @@ private fun MessageImage(image: ImagePayload, maxSide: Dp, onClick: () -> Unit) 
 @Composable
 fun ImagePreviewDialog(image: ImagePayload, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        val bitmap = rememberDecoded(image.data, PREVIEW_DECODE_PX)
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (bitmap != null) {
-                Image(
-                    remember(bitmap) { bitmap.asImageBitmap() },
-                    contentDescription = "Preview image",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                )
-            } else {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = Color.White)
-            }
+        KeepUiScale {
+            val bitmap = rememberDecoded(image.data, PREVIEW_DECODE_PX)
             Box(
                 Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.14f))
-                    .clickable(onClick = onDismiss),
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.92f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(PiIcons.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
+                if (bitmap != null) {
+                    Image(
+                        remember(bitmap) { bitmap.asImageBitmap() },
+                        contentDescription = "Preview image",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                    )
+                } else {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = Color.White)
+                }
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.14f))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(PiIcons.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
             }
         }
     }

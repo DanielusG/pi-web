@@ -103,7 +103,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -146,7 +145,7 @@ import app.pimobile.ui.relativeTime
 import app.pimobile.ui.shortPath
 import app.pimobile.ui.theme.Geist
 import app.pimobile.ui.theme.GeistMono
-import app.pimobile.ui.theme.LocalChatFontScale
+import app.pimobile.ui.theme.KeepUiScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.PiPrimaryButton
@@ -154,6 +153,7 @@ import app.pimobile.ui.theme.PiSecondaryButton
 import app.pimobile.ui.theme.ShimmerText
 import app.pimobile.ui.theme.StatusDot
 import app.pimobile.ui.theme.piTextFieldColors
+import app.pimobile.ui.theme.screenSizeDp
 import app.pimobile.ui.markdown.Markdown
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -761,28 +761,30 @@ private fun EditFromHereDialog(restoresText: Boolean, onDismiss: () -> Unit, onC
     val t = Pi.tokens
     val shape = RoundedCornerShape(20.dp)
     Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .clip(shape)
-                .background(t.background)
-                .border(1.dp, t.border, shape)
-                .padding(20.dp),
-        ) {
-            Text("Edit from here?", style = MaterialTheme.typography.titleMedium, color = t.text)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                (
-                        if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
-                        else "The session goes back to this point. "
-                        ) + "Later messages stay saved as a branch you can reopen with /tree.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = t.textSecondary,
-            )
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                PiSecondaryButton("Cancel", onClick = onDismiss)
-                Spacer(Modifier.width(8.dp))
-                PiPrimaryButton("Edit from here", onClick = onConfirm)
+        KeepUiScale {
+            Column(
+                Modifier
+                    .clip(shape)
+                    .background(t.background)
+                    .border(1.dp, t.border, shape)
+                    .padding(20.dp),
+            ) {
+                Text("Edit from here?", style = MaterialTheme.typography.titleMedium, color = t.text)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    (
+                            if (restoresText) "The session goes back to just before this message and its text returns to the composer. "
+                            else "The session goes back to this point. "
+                            ) + "Later messages stay saved as a branch you can reopen with /tree.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.textSecondary,
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    PiSecondaryButton("Cancel", onClick = onDismiss)
+                    Spacer(Modifier.width(8.dp))
+                    PiPrimaryButton("Edit from here", onClick = onConfirm)
+                }
             }
         }
     }
@@ -1002,28 +1004,30 @@ private fun TtsBar(
                 border = BorderStroke(1.dp, t.border),
                 shadowElevation = 8.dp,
             ) {
-                TTS_SPEEDS.forEach { (value, label) ->
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    speedLabel(value),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (value == speed) t.accent else t.text,
-                                    modifier = Modifier.width(48.dp),
-                                )
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (value == speed) t.accent else t.textSecondary,
-                                )
-                            }
-                        },
-                        onClick = {
-                            onSpeed(value)
-                            speedMenuOpen = false
-                        },
-                    )
+                KeepUiScale {
+                    TTS_SPEEDS.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        speedLabel(value),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (value == speed) t.accent else t.text,
+                                        modifier = Modifier.width(48.dp),
+                                    )
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (value == speed) t.accent else t.textSecondary,
+                                    )
+                                }
+                            },
+                            onClick = {
+                                onSpeed(value)
+                                speedMenuOpen = false
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -1213,25 +1217,27 @@ private fun AbortSubagentDialog(agent: SubagentInfo, onDismiss: () -> Unit, onCo
     val t = Pi.tokens
     val shape = RoundedCornerShape(20.dp)
     Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .clip(shape)
-                .background(t.background)
-                .border(1.dp, t.border, shape)
-                .padding(20.dp),
-        ) {
-            Text("Abort this subagent?", style = MaterialTheme.typography.titleMedium, color = t.text)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "\"${agent.title}\" is stopped mid-run; the parent session sees the aborted result.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = t.textSecondary,
-            )
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                PiSecondaryButton("Cancel", onClick = onDismiss)
-                Spacer(Modifier.width(8.dp))
-                PiPrimaryButton("Abort", onClick = onConfirm)
+        KeepUiScale {
+            Column(
+                Modifier
+                    .clip(shape)
+                    .background(t.background)
+                    .border(1.dp, t.border, shape)
+                    .padding(20.dp),
+            ) {
+                Text("Abort this subagent?", style = MaterialTheme.typography.titleMedium, color = t.text)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "\"${agent.title}\" is stopped mid-run; the parent session sees the aborted result.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.textSecondary,
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    PiSecondaryButton("Cancel", onClick = onDismiss)
+                    Spacer(Modifier.width(8.dp))
+                    PiPrimaryButton("Abort", onClick = onConfirm)
+                }
             }
         }
     }
@@ -1296,9 +1302,11 @@ private fun ContextIndicator(state: ChatUiState, onStatsOpened: () -> Unit) {
             containerColor = t.surface,
             border = BorderStroke(1.dp, t.border),
             shadowElevation = 8.dp,
-            modifier = Modifier.width(288.dp),
         ) {
-            ContextDetails(state)
+            // The width inside the scaled content, not on the menu: its window is not scaled.
+            KeepUiScale {
+                Box(Modifier.width(288.dp)) { ContextDetails(state) }
+            }
         }
     }
 }
@@ -1571,7 +1579,7 @@ private fun Composer(
                     .focusRequester(focusRequester)
                     .onFocusChanged { focused = it.isFocused }
                     .onPreviewKeyEvent(onKey),
-                textStyle = typography.bodyLarge.copy(color = t.text, fontSize = typography.bodyLarge.fontSize * LocalChatFontScale.current),
+                textStyle = typography.bodyLarge.copy(color = t.text),
                 cursorBrush = SolidColor(t.text),
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -1580,7 +1588,7 @@ private fun Composer(
                         if (draft.text.isEmpty()) {
                             Text(
                                 if (state.running) "Steer the agent…" else "Ask pi anything…",
-                                style = typography.bodyLarge.copy(fontSize = typography.bodyLarge.fontSize * LocalChatFontScale.current),
+                                style = typography.bodyLarge,
                                 color = t.textTertiary,
                             )
                         }
@@ -1754,22 +1762,24 @@ private fun ThinkingChip(state: ChatUiState, onThinking: (String) -> Unit, enabl
             border = BorderStroke(1.dp, t.border),
             shadowElevation = 6.dp,
         ) {
-            levels.forEach { level ->
-                DropdownMenuItem(
-                    text = { Text(level, style = MaterialTheme.typography.bodyMedium, color = t.text) },
-                    trailingIcon = {
-                        if (level == state.thinkingLevel) Icon(
-                            PiIcons.Check,
-                            null,
-                            tint = t.text,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    },
-                    onClick = {
-                        open = false
-                        onThinking(level)
-                    },
-                )
+            KeepUiScale {
+                levels.forEach { level ->
+                    DropdownMenuItem(
+                        text = { Text(level, style = MaterialTheme.typography.bodyMedium, color = t.text) },
+                        trailingIcon = {
+                            if (level == state.thinkingLevel) Icon(
+                                PiIcons.Check,
+                                null,
+                                tint = t.text,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            open = false
+                            onThinking(level)
+                        },
+                    )
+                }
             }
         }
     }
@@ -1792,72 +1802,71 @@ private fun ModelSheet(state: ChatUiState, onDismiss: () -> Unit, onSelect: (Mod
             )
         },
     ) {
-        Text(
-            "Model",
-            style = MaterialTheme.typography.titleLarge,
-            color = t.text,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-        if (state.models.isEmpty()) {
+        KeepUiScale {
             Text(
-                "No models available. Configure providers in pi-web.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = t.textSecondary,
-                modifier = Modifier.padding(24.dp),
+                "Model",
+                style = MaterialTheme.typography.titleLarge,
+                color = t.text,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
-        }
-        LazyColumn(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding(),
-            contentPadding = PaddingValues(bottom = 16.dp),
-        ) {
-            state.models.groupBy { it.provider }.forEach { (provider, options) ->
-                item(key = "provider:$provider") {
-                    Text(
-                        provider.uppercase(),
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
-                        color = t.textTertiary,
-                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
-                    )
-                }
-                items(options, key = { it.key }) { option ->
-                    val selected =
-                        state.model?.let { it.provider == option.provider && it.modelId == option.id } == true
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (selected) t.muted else Color.Transparent)
-                            .clickable { onSelect(option) }
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                option.name,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * LocalChatFontScale.current,
-                                ),
-                                color = t.text
-                            )
-                            Text(
-                                option.id,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = GeistMono,
-                                    fontWeight = FontWeight.Normal
-                                ),
-                                color = t.textTertiary,
+            if (state.models.isEmpty()) {
+                Text(
+                    "No models available. Configure providers in pi-web.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = t.textSecondary,
+                    modifier = Modifier.padding(24.dp),
+                )
+            }
+            LazyColumn(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                contentPadding = PaddingValues(bottom = 16.dp),
+            ) {
+                state.models.groupBy { it.provider }.forEach { (provider, options) ->
+                    item(key = "provider:$provider") {
+                        Text(
+                            provider.uppercase(),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, letterSpacing = 0.8.sp),
+                            color = t.textTertiary,
+                            modifier = Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(options, key = { it.key }) { option ->
+                        val selected =
+                            state.model?.let { it.provider == option.provider && it.modelId == option.id } == true
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) t.muted else Color.Transparent)
+                                .clickable { onSelect(option) }
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    option.name,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                    color = t.text
+                                )
+                                Text(
+                                    option.id,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = GeistMono,
+                                        fontWeight = FontWeight.Normal
+                                    ),
+                                    color = t.textTertiary,
+                                )
+                            }
+                            if (selected) Icon(
+                                PiIcons.Check,
+                                contentDescription = "Selected",
+                                tint = t.text,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                        if (selected) Icon(
-                            PiIcons.Check,
-                            contentDescription = "Selected",
-                            tint = t.text,
-                            modifier = Modifier.size(18.dp)
-                        )
                     }
                 }
             }
@@ -1894,13 +1903,13 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
     // Back cancels the request while the card is expanded (web: Esc).
     BackHandler(enabled = !collapsed) { vm.respondDialog(cancelled = true) }
 
-    val configuration = LocalConfiguration.current
-    val maxCardHeight = minOf(360.dp, configuration.screenHeightDp.dp * 0.45f)
+    val screen = screenSizeDp()
+    val maxCardHeight = minOf(360.dp, screen.height * 0.45f)
     // RPC-mode extensions fold option lists and previews into the title: left unbounded it
     // takes the whole card and squeezes the options and the buttons out (web: same cap).
     val maxTitleHeight = maxCardHeight * 0.4f
     val titleScroll = remember(dialog.id) { ScrollState(0) }
-    val maxSummaryWidth = configuration.screenWidthDp.dp * 0.34f
+    val maxSummaryWidth = screen.width * 0.34f
 
     Column(
         Modifier
@@ -1983,7 +1992,7 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                         Text(
                             title,
                             style = typography.bodyLarge.copy(
-                                fontSize = 14.sp * LocalChatFontScale.current,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                             ),
                             color = t.text,
@@ -2071,7 +2080,6 @@ private fun ExtensionDialogView(dialog: ExtensionDialog, vm: ChatViewModel) {
                             textStyle = typography.bodyMedium.copy(
                                 fontFamily = GeistMono,
                                 color = t.text,
-                                fontSize = typography.bodyMedium.fontSize * LocalChatFontScale.current,
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()

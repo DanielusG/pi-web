@@ -31,7 +31,6 @@ import app.pimobile.data.arr
 import app.pimobile.data.int
 import app.pimobile.data.str
 import app.pimobile.ui.theme.GeistMono
-import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -103,10 +102,6 @@ fun toolSummaryLine(name: String, input: JsonObject?): String {
 private const val MAX_DIFF_LINES = 400
 private val DiffText = TextStyle(fontFamily = GeistMono, fontSize = 12.sp, lineHeight = 19.sp)
 
-/** Diff text follows the chat font setting like the rest of the tool output. */
-@Composable
-private fun diffText(): TextStyle = DiffText.copy(fontSize = DiffText.fontSize * LocalChatFontScale.current)
-
 /** Unified diff with line numbers and word-level highlights (pi-web's split view, adapted to phone width). */
 @Composable
 fun DiffView(files: List<DiffFile>, modifier: Modifier = Modifier, maxLines: Int = MAX_DIFF_LINES) {
@@ -131,7 +126,7 @@ fun DiffView(files: List<DiffFile>, modifier: Modifier = Modifier, maxLines: Int
             if (files.size > 1 && file.path != null) {
                 Text(
                     file.path,
-                    style = diffText().copy(fontWeight = FontWeight.Medium),
+                    style = DiffText.copy(fontWeight = FontWeight.Medium),
                     color = t.textSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 )
@@ -159,7 +154,7 @@ private fun DiffRow(line: DiffLine, gutter: Dp) {
     if (line.kind == DiffKind.Gap) {
         Text(
             "⋯",
-            style = diffText(),
+            style = DiffText,
             color = t.textTertiary,
             textAlign = TextAlign.End,
             modifier = Modifier
@@ -209,7 +204,7 @@ private fun DiffRow(line: DiffLine, gutter: Dp) {
     ) {
         Text(
             (line.newNumber ?: line.oldNumber)?.toString().orEmpty(),
-            style = diffText(),
+            style = DiffText,
             color = t.textTertiary,
             textAlign = TextAlign.End,
             modifier = Modifier
@@ -218,13 +213,13 @@ private fun DiffRow(line: DiffLine, gutter: Dp) {
         )
         Text(
             marker,
-            style = diffText().copy(fontWeight = FontWeight.SemiBold),
+            style = DiffText.copy(fontWeight = FontWeight.SemiBold),
             color = markerColor,
             modifier = Modifier.width(14.dp),
         )
         Text(
             text,
-            style = diffText(),
+            style = DiffText,
             color = t.text,
             modifier = Modifier
                 .weight(1f)

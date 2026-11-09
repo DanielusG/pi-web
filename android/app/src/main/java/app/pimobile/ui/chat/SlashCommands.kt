@@ -32,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pimobile.ui.theme.GeistMono
 import app.pimobile.ui.theme.Pi
+import app.pimobile.ui.theme.screenSizeDp
 
 /** Declaration order is the palette's group order (web: SLASH_SOURCES). */
 enum class SlashSource(val label: String) {
@@ -153,7 +153,7 @@ fun SlashCommandMenu(
     val t = Pi.tokens
     val typography = MaterialTheme.typography
     val density = LocalDensity.current
-    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val screenHeight = screenSizeDp().height
     val imeHeight = with(density) { WindowInsets.ime.getBottom(density).toDp() }
     // Web: min(72.8vh, 598px, room above the input); ~250dp keeps the top bar and input in view.
     val maxHeight = minOf(598.dp, screenHeight * 0.728f, screenHeight - imeHeight - 250.dp).coerceAtLeast(120.dp)

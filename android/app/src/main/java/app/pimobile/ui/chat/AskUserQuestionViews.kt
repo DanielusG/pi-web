@@ -42,7 +42,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,13 +55,13 @@ import app.pimobile.data.QuestionnaireSummary
 import app.pimobile.ui.markdown.CodeBlock
 import app.pimobile.ui.markdown.Markdown
 import app.pimobile.ui.theme.GeistMono
-import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.PiPrimaryButton
 import app.pimobile.ui.theme.PiSecondaryButton
 import app.pimobile.ui.theme.StatusDot
 import app.pimobile.ui.theme.piTextFieldColors
+import app.pimobile.ui.theme.screenSizeDp
 
 // The native ask_user_question dialog (data/AskUserQuestion.kt), in the composer slot like the
 // extension dialog and with its card look: one tab per question plus a review tab when there are
@@ -101,8 +100,7 @@ fun AskUserQuestionDialog(
 
     BackHandler(enabled = !form.collapsed) { onForm { it.copy(collapsed = true) } }
 
-    val configuration = LocalConfiguration.current
-    val maxCardHeight = minOf(520.dp, configuration.screenHeightDp.dp * 0.6f)
+    val maxCardHeight = minOf(520.dp, screenSizeDp().height * 0.6f)
     val title = when {
         onReview -> "Review your answers"
         question != null -> question.question
@@ -177,7 +175,7 @@ fun AskUserQuestionDialog(
                     Text(
                         title,
                         style = typography.bodyLarge.copy(
-                            fontSize = 14.sp * LocalChatFontScale.current,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                         ),
                         color = t.text,
@@ -630,7 +628,7 @@ fun AskUserSummaryCard(
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         question.question,
-                        style = typography.bodySmall.copy(fontSize = typography.bodySmall.fontSize * LocalChatFontScale.current),
+                        style = typography.bodySmall,
                         color = t.textSecondary,
                     )
                     if (answer != null) {
@@ -638,10 +636,7 @@ fun AskUserSummaryCard(
                             Text("→ ", style = typography.bodyMedium, color = t.textTertiary)
                             Text(
                                 AskUserQuestion.summaryText(answer),
-                                style = typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = typography.bodyMedium.fontSize * LocalChatFontScale.current,
-                                ),
+                                style = typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                 color = t.text,
                                 modifier = Modifier.weight(1f, fill = false),
                             )

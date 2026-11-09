@@ -68,7 +68,6 @@ import app.pimobile.ui.markdown.CodeBlock
 import app.pimobile.ui.markdown.Markdown
 import app.pimobile.ui.markdown.StreamingMarkdown
 import app.pimobile.ui.theme.GeistMono
-import app.pimobile.ui.theme.LocalChatFontScale
 import app.pimobile.ui.theme.Pi
 import app.pimobile.ui.theme.PiIcons
 import app.pimobile.ui.theme.ShimmerText
@@ -115,7 +114,7 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
                 SkillCommand(item.key, command, item.text)
             } else if (item.text.isNotBlank() || item.images.isEmpty()) {
                 SelectionContainer {
-                    Text(item.text, style = chatBody(), color = t.text)
+                    Text(item.text, style = MaterialTheme.typography.bodyLarge, color = t.text)
                 }
             }
         }
@@ -131,6 +130,7 @@ fun UserBubble(item: ChatItem.User, onEditFromHere: (() -> Unit)? = null) {
 }
 
 /** Web: MessageView's bottom row — copy, listen, edit from here and the time. Always shown: touch has no hover. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MessageFooter(
     copyText: String,
@@ -150,7 +150,9 @@ fun MessageFooter(
             copied = false
         }
     }
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+    // Flows: where the row runs out of width (a large Chat size), the time moves to a line of its
+    // own instead of wrapping a character per line.
+    FlowRow(modifier, itemVerticalAlignment = Alignment.CenterVertically) {
         if (copyText.isNotBlank()) {
             FooterAction(
                 icon = if (copied) PiIcons.Check else PiIcons.Copy,
@@ -248,7 +250,7 @@ private fun SkillCommand(key: String, command: String, expansion: String) {
                 name,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = GeistMono,
-                    fontSize = 15.sp * LocalChatFontScale.current,
+                    fontSize = 15.sp,
                 ),
                 color = t.accent,
                 maxLines = 1,
@@ -264,7 +266,7 @@ private fun SkillCommand(key: String, command: String, expansion: String) {
         }
         if (args.isNotEmpty()) {
             SelectionContainer {
-                Text(args, style = chatBody(), color = t.text)
+                Text(args, style = MaterialTheme.typography.bodyLarge, color = t.text)
             }
         }
     }
@@ -489,9 +491,7 @@ private fun ThinkingBlock(text: String, needsLoad: Boolean, streaming: Boolean, 
                 )
                 Text(
                     shown,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = MaterialTheme.typography.bodyMedium.fontSize * LocalChatFontScale.current,
-                    ),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = t.textSecondary,
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
@@ -532,21 +532,7 @@ internal fun lastLines(text: String, count: Int): String {
 private val MonoSmall = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, lineHeight = 18.sp)
 private val MonoOutput = TextStyle(fontFamily = GeistMono, fontSize = 12.5.sp, lineHeight = 19.sp)
 
-/**
- * Styles scaled by the chat font setting: message text, tool names, paths and output follow
- * it; the labelSmall chrome (timestamps, durations) stays fixed.
- */
-@Composable
-private fun monoSmall(size: TextUnit = MonoSmall.fontSize): TextStyle =
-    MonoSmall.copy(fontSize = size * LocalChatFontScale.current)
-
-@Composable
-private fun monoOutput(): TextStyle = MonoOutput.copy(fontSize = MonoOutput.fontSize * LocalChatFontScale.current)
-
-@Composable
-private fun chatBody(): TextStyle = MaterialTheme.typography.bodyLarge.copy(
-    fontSize = MaterialTheme.typography.bodyLarge.fontSize * LocalChatFontScale.current,
-)
+private fun monoSmall(size: TextUnit = MonoSmall.fontSize): TextStyle = MonoSmall.copy(fontSize = size)
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -733,7 +719,7 @@ private fun ResultBody(result: ToolResult) {
             val shape = RoundedCornerShape(10.dp)
             Text(
                 clip(text),
-                style = monoOutput(),
+                style = MonoOutput,
                 color = t.danger,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -757,7 +743,7 @@ private fun OutputArea(text: String) {
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Text(text, style = monoOutput(), color = t.textSecondary, softWrap = false)
+        Text(text, style = MonoOutput, color = t.textSecondary, softWrap = false)
     }
 }
 

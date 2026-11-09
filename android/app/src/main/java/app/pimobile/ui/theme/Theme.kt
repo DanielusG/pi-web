@@ -15,10 +15,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pimobile.R
@@ -87,12 +93,52 @@ val DarkTokens = PiTokens(
 
 val LocalPiTokens = staticCompositionLocalOf { LightTokens }
 
+/** The scale of the enclosing [ScaledUi], read again by [KeepUiScale] in windows opened under it. */
+val LocalUiScale = staticCompositionLocalOf { 1f }
+
 /**
- * Chat text size, as a multiple of the base sizes (Settings → "Chat font size").
- * Provided around the chat screen only; surfaces outside it read the 1f default
- * and are unaffected.
+ * Draws [content] at [scale] times its size (Settings → "Chat size", around the chat screen).
+ * It scales LocalDensity, so every dp and sp inside shrinks or grows together: text, line
+ * heights, padding, icons and bars keep their proportions. Window insets are pixels and stay
+ * right; LocalConfiguration's dp sizes do not, so read those through [screenSizeDp]. Dialogs,
+ * sheets and menus get their window's own density back: wrap their content in [KeepUiScale].
  */
-val LocalChatFontScale = staticCompositionLocalOf { 1f }
+@Composable
+fun ScaledUi(scale: Float, content: @Composable () -> Unit) {
+    val current = LocalDensity.current
+    // Applied again inside a scaled composition, it replaces the scale instead of compounding it.
+    val base = (current as? ScaledDensity)?.base ?: current
+    val density = remember(base, scale) { if (scale == 1f) base else ScaledDensity(base, scale) }
+    CompositionLocalProvider(LocalUiScale provides scale, LocalDensity provides density, content = content)
+}
+
+/**
+ * Dialogs, bottom sheets and dropdown menus compose in a window of their own, which provides
+ * the display's density again. Their content wrapped in this takes the scale of the [ScaledUi]
+ * they were opened from; the frame the component draws around it (shape, container padding, a
+ * width given to the component itself) stays at the display's size.
+ */
+@Composable
+fun KeepUiScale(content: @Composable () -> Unit) = ScaledUi(LocalUiScale.current, content)
+
+/** [base] with every dp and sp [scale] times larger; sp to dp stays [base]'s (nonlinear font scaling). */
+private class ScaledDensity(val base: Density, val scale: Float) : Density {
+    override val density = base.density * scale
+    override val fontScale: Float get() = base.fontScale
+    override fun TextUnit.toDp(): Dp = with(base) { this@toDp.toDp() }
+    override fun Dp.toSp(): TextUnit = with(base) { this@toSp.toSp() }
+    override fun equals(other: Any?) = other is ScaledDensity && other.base == base && other.scale == scale
+    override fun hashCode() = base.hashCode() * 31 + scale.hashCode()
+}
+
+/** LocalConfiguration's screen size in this composition's dp: under [ScaledUi] they differ. */
+@Composable
+@ReadOnlyComposable
+fun screenSizeDp(): DpSize {
+    val configuration = LocalConfiguration.current
+    val scale = LocalDensity.current.density / (configuration.densityDpi / 160f)
+    return DpSize((configuration.screenWidthDp / scale).dp, (configuration.screenHeightDp / scale).dp)
+}
 
 object Pi {
     val tokens: PiTokens
