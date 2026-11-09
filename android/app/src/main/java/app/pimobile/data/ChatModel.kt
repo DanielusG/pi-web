@@ -111,6 +111,21 @@ object Messages {
      * while the GET was in flight, keep that tail, dropping anything the
      * snapshot already contains.
      */
+    /**
+     * The messages loaded before a fresh snapshot's first one, which a reload keeps. The
+     * snapshot is the branch's last page; when its first entry is already in [loaded], every
+     * message before it there is one of that entry's ancestors, so it belongs to the new
+     * history too. Without this, a reload (coming back to the screen, the end of a run) drops
+     * the pages "Load earlier messages" or a session search jump brought in, and the message
+     * on screen with them. A snapshot that starts elsewhere (a compaction summary, a branch
+     * not loaded) keeps nothing.
+     */
+    fun olderThanSnapshot(fresh: List<LoadedMessage>, loaded: List<LoadedMessage>): List<LoadedMessage> {
+        val first = fresh.firstOrNull()?.entryId ?: return emptyList()
+        val index = loaded.indexOfFirst { it.entryId == first }
+        return if (index > 0) loaded.subList(0, index) else emptyList()
+    }
+
     fun mergeSnapshot(
         fresh: List<LoadedMessage>,
         localAtRequest: List<LoadedMessage>,

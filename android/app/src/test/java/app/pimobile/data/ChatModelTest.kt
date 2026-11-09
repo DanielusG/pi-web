@@ -42,6 +42,30 @@ class ChatModelTest {
             },
         )
 
+    // older pages loaded before a reload ("Load earlier", a search jump)
+
+    private fun entry(id: String) = assistant(id, "text $id", entryId = id)
+
+    @Test
+    fun keepsTheAncestorsLoadedBeforeTheSnapshot() {
+        val loaded = listOf(entry("e1"), entry("e2"), entry("e3"), entry("e4"))
+        // The reload's last page starts at e3: e1 and e2 come before it on the same path.
+        val fresh = listOf(entry("e3"), entry("e4"), entry("e5"))
+        assertEquals(listOf(entry("e1"), entry("e2")), Messages.olderThanSnapshot(fresh, loaded))
+    }
+
+    @Test
+    fun keepsNothingWhenTheSnapshotStartsElsewhere() {
+        val loaded = listOf(entry("e1"), entry("e2"))
+        // A compaction summary, or a page of a branch never loaded here.
+        assertEquals(emptyList<LoadedMessage>(), Messages.olderThanSnapshot(listOf(entry("c1"), entry("e2")), loaded))
+        // The snapshot already starts at the first loaded message: nothing older to keep.
+        assertEquals(emptyList<LoadedMessage>(), Messages.olderThanSnapshot(listOf(entry("e1"), entry("e2")), loaded))
+        // A first message without an entry id says nothing about where it sits.
+        assertEquals(emptyList<LoadedMessage>(), Messages.olderThanSnapshot(listOf(user("x", "local")), loaded))
+        assertEquals(emptyList<LoadedMessage>(), Messages.olderThanSnapshot(emptyList(), loaded))
+    }
+
     // unchanged local list: the snapshot wins outright
 
     @Test

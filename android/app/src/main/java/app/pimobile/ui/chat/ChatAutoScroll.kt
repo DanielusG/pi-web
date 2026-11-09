@@ -185,6 +185,20 @@ class BottomFollow internal constructor(
         anchorOffset = offset
     }
 
+    /**
+     * Brings the message at [index] (a session search hit) to the top of the viewport and
+     * detaches, so neither the follow nor a saved position moves it; that message is then the
+     * anchor, which is what leaving the screen saves. A scroll in progress (the follow's own
+     * jump to the end) is cancelled by this one.
+     */
+    fun jumpTo(index: Int, key: String) {
+        attached = false
+        firstPass = false
+        anchorKey = key
+        anchorOffset = 0
+        scope.launch { listState.jumpTo(index) }
+    }
+
     fun scrollToEnd() {
         attached = true
         scope.launch {

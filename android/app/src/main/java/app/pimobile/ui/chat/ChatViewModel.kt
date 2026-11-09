@@ -144,6 +144,8 @@ data class ChatUiState(
     val status: String? = null,
     val link: LinkState = LinkState.Idle,
     val hasMore: Boolean = false,
+    /** A message key to scroll to once (a session search hit); [ChatViewModel.jumpHandled] clears it. */
+    val jumpTo: String? = null,
     val loadingEarlier: Boolean = false,
     val model: ModelRef? = null,
     val thinkingLevel: String? = null,
@@ -213,6 +215,10 @@ data class ChatUiState(
 
 private val DEFAULT_TOOLS = listOf("read", "bash", "edit", "write")
 private const val STATE_POLL_MS = 15_000L
+/** A search jump loads older history this many entries at a time (the server caps a page at 1000)... */
+private const val JUMP_PAGE = 200
+/** ...and gives up past this many pages, opening the chat at its end. */
+private const val JUMP_MAX_PAGES = 10
 private const val IDLE_CLOSE_MS = 30_000L
 private const val LEASE_RENEW_MS = 30_000L
 /** Background time after which the chat closes its event stream. */
@@ -242,6 +248,8 @@ class ChatViewModel(
      * [watchRunState] only while the subagent bar has an active row.
      */
     private val runStatus: StateFlow<RunSnapshot?> = MutableStateFlow(null),
+    /** A session search hit: the chat opens at this message entry instead of its end. */
+    jumpEntryId: String? = null,
     /** Remembers the last chat cwd for fresh-session launches (assistant trigger). */
     private val saveLastCwd: (String) -> Unit = {},
 ) : ViewModel() {
@@ -283,7 +291,8 @@ class ChatViewModel(
         viewModelScope.launch { loadModels() }
         if (sessionId != null) {
             viewModelScope.launch {
-                refreshSession(sessionId)
+                refreshSession(sessionId, holdLoading = jumpEntryId != null)
+                jumpEntryId?.let { locate(sessionId, it) }
                 reconcile(sessionId)
                 refreshSubagents()
             }
@@ -841,6 +850,9 @@ class ChatViewModel(
 
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
+
+    /** The screen scrolled to [ChatUiState.jumpTo]. */
+    fun jumpHandled() = _state.update { it.copy(jumpTo = null) }
     fun consumeRestoredDraft() = _state.update { it.copy(restoredDraft = null) }
     fun consumeEditDraft() = _state.update { it.copy(editDraft = null) }
     fun showNotice(message: String) = _state.update { it.copy(notice = message) }
@@ -1008,7 +1020,8 @@ class ChatViewModel(
         return id
     }
 
-    private suspend fun refreshSession(id: String) {
+    /** [holdLoading]: the loading row stays up, for [locate] to take it down once it has paged. */
+    private suspend fun refreshSession(id: String, holdLoading: Boolean = false) {
         val localAtRequest = messages
         try {
             val body = api.get("/api/sessions/${PiApi.encode(id)}?deferThinking=1&deferMedia=1").asObj() ?: return
@@ -1025,12 +1038,14 @@ class ChatViewModel(
             // delivered messages) must not wipe them: the GET response and the SSE
             // events are unordered on the wire, and pi persists a message only
             // after emitting its message_end.
-            messages = Messages.mergeSnapshot(fresh, localAtRequest, messages)
-            oldestEntryId = context?.str("oldestEntryId")
+            val older = Messages.olderThanSnapshot(fresh, localAtRequest)
+            messages = older + Messages.mergeSnapshot(fresh, localAtRequest, messages)
+            // With older pages kept, the oldest loaded entry and "Load earlier" stay theirs.
+            if (older.isEmpty()) oldestEntryId = context?.str("oldestEntryId")
             _state.update { state ->
                 state.copy(
-                    loading = false,
-                    hasMore = context?.bool("hasMore") == true,
+                    loading = holdLoading,
+                    hasMore = if (older.isEmpty()) context?.bool("hasMore") == true else state.hasMore,
                     cwd = info?.str("cwd") ?: state.cwd,
                     title = info?.let { titleOf(it) } ?: state.title,
                     model = context?.obj("model")?.let { modelRef(it, "modelId") } ?: state.model,
@@ -1044,11 +1059,59 @@ class ChatViewModel(
                     contextWindow = if (contextUsage != null) contextUsage.long("contextWindow") else state.contextWindow,
                 )
             }
-            publishMessages()
+            // A held load shows nothing until [locate] has the history it pages in.
+            if (!holdLoading) publishMessages()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             _state.update { it.copy(loading = false, error = e.message ?: e.toString()) }
+        }
+    }
+
+    /**
+     * Opens the chat at a session search hit (web: ChatWindow's `searchTarget`). Older pages
+     * of [JUMP_PAGE] entries are loaded until [entryId] is among the messages, at most
+     * [JUMP_MAX_PAGES] of them, while the screen keeps its loading row, so the list does not
+     * show its end first. A message on another branch, or before a compaction, is not in this
+     * history: the chat opens at its end and says so.
+     */
+    private suspend fun locate(id: String, entryId: String) {
+        var found = messages.any { it.entryId == entryId }
+        var pages = 0
+        try {
+            while (!found && _state.value.hasMore && pages < JUMP_MAX_PAGES) {
+                val before = oldestEntryId ?: break
+                val body = api.get(
+                    "/api/sessions/${PiApi.encode(id)}/context?before=${PiApi.encode(before)}&tail=$JUMP_PAGE" +
+                        "&deferThinking=1&deferMedia=1",
+                ).asObj()
+                val context = body?.obj("context") ?: break
+                val page = parseContext(context)
+                messages = page + messages
+                oldestEntryId = context.str("oldestEntryId") ?: oldestEntryId
+                _state.update { it.copy(hasMore = context.bool("hasMore") == true) }
+                pages += 1
+                if (page.isEmpty()) break
+                found = page.any { it.entryId == entryId }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The pages loaded so far stay; the chat opens at its end.
+        }
+        // One update: the list composes with its history, the loading row gone and the jump set.
+        _state.update {
+            it.copy(
+                items = messages.mapNotNull(Messages::item),
+                toolResults = Messages.toolResults(messages),
+                loading = false,
+                jumpTo = if (found) entryId else null,
+                notice = when {
+                    found || it.error != null -> it.notice
+                    pages >= JUMP_MAX_PAGES -> "The message found is further back than the app loads"
+                    else -> "The message found is not in this branch's history"
+                },
+            )
         }
     }
 

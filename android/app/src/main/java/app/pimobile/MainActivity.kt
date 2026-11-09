@@ -124,11 +124,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun chatRoute(id: String?, cwd: String, focus: Boolean = false): String =
+/** [entry]: a message to open the chat at (a session search hit) instead of its end. */
+private fun chatRoute(id: String?, cwd: String, focus: Boolean = false, entry: String? = null): String =
     if (id == null) "chat?cwd=${Uri.encode(cwd)}&focus=$focus"
-    else "chat?id=${Uri.encode(id)}&cwd=${Uri.encode(cwd)}&focus=$focus"
+    else "chat?id=${Uri.encode(id)}&cwd=${Uri.encode(cwd)}&focus=$focus" + (entry?.let { "&entry=${Uri.encode(it)}" } ?: "")
 
-private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}&focus={focus}"
+private const val CHAT_ROUTE = "chat?id={id}&cwd={cwd}&focus={focus}&entry={entry}"
 
 private const val SESSIONS_ROUTE = "sessions?newSheet={newSheet}"
 
@@ -231,6 +232,7 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                     vm = vm,
                     serverLabel = app.api.config.baseUrl.removePrefix("http://").removePrefix("https://"),
                     onOpen = { id, cwd -> nav.navigate(chatRoute(id, cwd)) },
+                    onOpenAt = { id, cwd, entry -> nav.navigate(chatRoute(id, cwd, entry = entry)) },
                     onNew = { cwd -> nav.navigate(chatRoute(null, cwd)) },
                     onSettings = { nav.navigate("settings") },
                     // No chat to mention into from here.
@@ -244,13 +246,15 @@ private fun PiNavHost(app: PiApp, openRequests: MutableStateFlow<OpenRequest?>, 
                     navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
                     navArgument("cwd") { type = NavType.StringType; defaultValue = "" },
                     navArgument("focus") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("entry") { type = NavType.StringType; nullable = true; defaultValue = null },
                 ),
             ) { entry ->
                 val id = entry.arguments?.getString("id")
                 val cwd = entry.arguments?.getString("cwd").orEmpty()
                 val focus = entry.arguments?.getBoolean("focus") ?: false
+                val jumpEntry = entry.arguments?.getString("entry")
                 val vm = viewModel {
-                    ChatViewModel(app, app.api, id, cwd, app::onRunActive, app.runStatus.snapshot) { last ->
+                    ChatViewModel(app, app.api, id, cwd, app::onRunActive, app.runStatus.snapshot, jumpEntryId = jumpEntry) { last ->
                         navScope.launch { app.settings.saveLastCwd(last) }
                     }
                 }

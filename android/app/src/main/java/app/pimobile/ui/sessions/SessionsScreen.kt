@@ -90,6 +90,8 @@ fun SessionsScreen(
     vm: SessionsViewModel,
     serverLabel: String,
     onOpen: (id: String, cwd: String) -> Unit,
+    /** A search hit: the session opened at the message the search found. */
+    onOpenAt: (id: String, cwd: String, entryId: String) -> Unit = { id, cwd, _ -> onOpen(id, cwd) },
     onNew: (cwd: String) -> Unit,
     onSettings: () -> Unit,
     onBrowse: (root: String) -> Unit = {},
@@ -155,7 +157,11 @@ fun SessionsScreen(
                 onSort = vm.search::setSort,
                 onMore = vm.search::showMore,
                 onRetry = vm.search::retry,
-                onOpen = { hit -> onOpen(hit.row.id, hit.row.cwd) },
+                onOpen = { hit ->
+                    // A hit in the name only (or in a message without an id) opens the session at its end.
+                    val entry = hit.snippet?.entryId
+                    if (entry != null) onOpenAt(hit.row.id, hit.row.cwd, entry) else onOpen(hit.row.id, hit.row.cwd)
+                },
                 onLongClick = { sheetRow = it },
                 modifier = Modifier.padding(padding),
             )

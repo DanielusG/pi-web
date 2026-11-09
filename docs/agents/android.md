@@ -111,6 +111,21 @@ pi's `/resume` selector does; the app's list has a search mode on top of it
   characters each side), and the hit in the name (`nameMatch`). A word pi matched only as
   scattered letters has no snippet. The app marks the title instead of repeating a snippet that
   is the title (an unnamed session's first message).
+- **Opening at the hit** (web: ChatWindow's `searchTarget`, which loads one extra page of 200 and
+  then gives up): the chat route takes `entry`, and `ChatViewModel.locate()` keeps the loading row
+  up while it pages `context?before=&tail=200` until the entry is a message of the list (a message's
+  item key is its entry id), at most 10 pages. It then publishes the list, the end of loading and
+  `jumpTo` in one update; `ChatScreen` hands the index to `BottomFollow.jumpTo()`, which detaches
+  the follow (or it would pull the list back to its end) and scrolls, and the row is marked with
+  the muted fill for about 2.5 s. Not found (another branch, before a compaction, further back than
+  10 pages) opens at the end with a notice. The jump scrolls to the message's top, not to the text
+  block inside it.
+- **A reload keeps the older pages** (`Messages.olderThanSnapshot`): `refreshSession` replaced the
+  list with the branch's last 50 entries, so coming back to the screen (`onForeground` reloads) cut
+  away a jump's pages, and "Load earlier"'s, with the message on screen. When the snapshot's first
+  entry is already loaded, everything before it is one of its ancestors and stays, with the old
+  `oldestEntryId` and `hasMore`; a snapshot starting elsewhere (a compaction summary, another
+  branch) keeps nothing, as before.
 - **In the app** the search lives in `SessionsViewModel` (`SessionSearch`), so Back from a result's
   chat finds it as it was left; Back from the search closes and forgets it. The project chip lists
   the paged list's projects (its `key` is the route's `project`), the sort switch is the file

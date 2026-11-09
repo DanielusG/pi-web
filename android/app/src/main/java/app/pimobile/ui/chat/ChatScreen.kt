@@ -10,6 +10,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
@@ -81,7 +82,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -423,6 +428,27 @@ fun ChatScreen(
         follow.onComposed(listKeys.size - 1, listKeys, state.items, state.streaming, state.liveTools, state.toolResults)
     }
 
+    // A session search hit: scrolled to once the history holding it is in, then marked for a
+    // moment, as the web flashes its search target.
+    var flashKey by remember { mutableStateOf<String?>(null) }
+    val flash = remember { Animatable(0f) }
+    LaunchedEffect(state.jumpTo) {
+        val key = state.jumpTo ?: return@LaunchedEffect
+        val index = listKeys.indexOf(key)
+        if (index >= 0) {
+            follow.jumpTo(index, key)
+            flashKey = key
+        }
+        vm.jumpHandled()
+    }
+    LaunchedEffect(flashKey) {
+        if (flashKey == null) return@LaunchedEffect
+        flash.snapTo(1f)
+        delay(900)
+        flash.animateTo(0f, tween(1600))
+        flashKey = null
+    }
+
     // Slash palette (web: ChatInput). Commands load once per `/` typed; Back closes
     // the palette until the query changes, like Escape on the web.
     val slashQuery = slashQuery(draft.text)
@@ -621,6 +647,19 @@ fun ChatScreen(
                 item("empty") { EmptyChat(state.cwd) }
             }
             items(state.items, key = { it.key }, contentType = { it::class.simpleName }) { item ->
+                // Always the same Box, so the flash coming and going never resets the item's state.
+                Box(
+                    if (item.key == flashKey) Modifier.drawBehind {
+                        val padX = 10.dp.toPx()
+                        val padY = 8.dp.toPx()
+                        drawRoundRect(
+                            color = t.muted.copy(alpha = t.muted.alpha * flash.value),
+                            topLeft = Offset(-padX, -padY),
+                            size = Size(size.width + 2 * padX, size.height + 2 * padY),
+                            cornerRadius = CornerRadius(14.dp.toPx()),
+                        )
+                    } else Modifier,
+                ) {
                 when (item) {
                     is ChatItem.User -> UserBubble(
                         item,
@@ -660,6 +699,7 @@ fun ChatScreen(
 
                     is ChatItem.Bash -> BashCard(item)
                     is ChatItem.Notice -> NoticeRow(item)
+                }
                 }
             }
             state.streaming?.let { streaming ->

@@ -36,8 +36,11 @@ It has **not yet been tested against a real pi-web with a real model.**
   A project chip limits it to one project of the list ("All projects" by default), a
   Relevance / Recent switch is pi's Sort, and each row shows the project, the hit marked in
   the name or in a snippet of the message, 50 rows a page up to 200. Tapping opens the
-  session; long-press opens the rename/delete sheet; Back from the chat finds the search as
-  it was left, Back from the search returns to the list.
+  session at the message found — older history loaded as far as needed (up to 2000 entries),
+  the message at the top of the screen and marked for a moment; a hit in the name only opens
+  the session at its end, and one on another branch or before a compaction opens it at its end
+  with a notice. Long-press opens the rename/delete sheet; Back from the chat finds the search
+  as it was left, Back from the search returns to the list.
 - **New session:** pick any project of the session list — all of them come back from the paged
   `GET /api/sessions?perProject=`, newest activity first, with the session count — filtered by name
   or path; or type a path (validated by the server). The session is created on the first message.
@@ -67,7 +70,8 @@ It has **not yet been tested against a real pi-web with a real model.**
     subagent's own chat, long-press an active row to abort it. The open/closed choice
     survives Back from the child's chat; a new session starts closed.
   - "Load earlier messages" paging, which keeps the message under the top edge where it was
-    instead of sliding the content away.
+    instead of sliding the content away. A reload (coming back to the screen, the end of a run)
+    keeps the older pages already loaded, so it does not cut the history back to its last page.
   - Position and unsent composer text restored per session when the chat comes back — from the
     list, from another chat opened over it (a notification tap), after Back, and when the app is
     reopened while its process is alive. Anchored by the message's entryId, so whatever the agent
@@ -298,7 +302,6 @@ between SDK releases.
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
 | Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
-| Session management | Opening a search result at the message it found (search, rename and delete ship). |
 | Files, part 2 | Syntax highlighting in the source view, upload, file tabs, git diff, worktrees (`/api/worktrees`). |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
