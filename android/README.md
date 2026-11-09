@@ -43,7 +43,14 @@ It has **not yet been tested against a real pi-web with a real model.**
   as it was left, Back from the search returns to the list.
 - **New session:** pick any project of the session list — all of them come back from the paged
   `GET /api/sessions?perProject=`, newest activity first, with the session count — filtered by name
-  or path; or type a path (validated by the server). The session is created on the first message.
+  or path. A folder that is no project yet is picked under "Other folder", which browses the
+  server's folders as the web's directory picker does (`GET /api/cwd/browse`): a tap opens a
+  folder, the breadcrumb goes back up, the pencil takes a typed or pasted path (`~/` works),
+  dot folders stay folded under "Show N hidden folders", "New folder" creates one inside the
+  folder on screen and opens it, and "Start here" checks the folder with `/api/cwd/validate`
+  (a refusal shows its reason under the list). It opens where it was left last time while the
+  app stays in memory, else in the server's home (its drives on Windows); Back returns to the
+  projects. The session is created on the first message.
 - **System assistant trigger:** the app declares `android.intent.action.ASSIST`, so on
   devices where the user can choose the default assistant (Settings > Apps > Default
   apps > Assistant app) Pi Mobile can be picked. The system triggers — swipe up from

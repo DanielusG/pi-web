@@ -73,6 +73,9 @@ class SessionsViewModel(
     /** The search of every session (pi's `/resume` rules), opened from the list's header. */
     val search = SessionSearch(api, viewModelScope)
 
+    /** The server's folders, for a new session in a directory that is no project yet. */
+    val folders = FolderBrowser(api, viewModelScope)
+
     /** Reloads and page fetches both rewrite [SessionsUiState.groups]: one at a time. */
     private val lists = Mutex()
 

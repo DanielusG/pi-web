@@ -242,8 +242,8 @@ fun SessionsScreen(
         NewSessionSheet(
             projects = state.groups,
             loading = state.loading,
+            browser = vm.folders,
             onDismiss = { showNew = false },
-            validate = vm::validateCwd,
             onStart = { cwd ->
                 showNew = false
                 onNew(cwd)
@@ -605,20 +605,20 @@ private fun ErrorState(title: String, message: String, onRetry: () -> Unit, onSe
 /**
  * Every project of the paged session list as a pickable directory: `GET /api/sessions?perProject=`
  * sends all project groups, newest activity first, so the list is complete and the filter is what
- * makes it usable to scroll. A directory outside the list is typed and validated by `/api/cwd/validate`.
+ * makes it usable to scroll. A directory outside the list is picked on the sheet's second page,
+ * [FolderBrowserPage], which browses the server's folders.
  */
 @Composable
 private fun NewSessionSheet(
     projects: List<ProjectGroup>,
     loading: Boolean,
+    browser: FolderBrowser,
     onDismiss: () -> Unit,
-    validate: suspend (String) -> String?,
     onStart: (String) -> Unit,
 ) {
     val t = Pi.tokens
-    val scope = rememberCoroutineScope()
-    var path by rememberSaveable { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
+    var browsing by rememberSaveable { mutableStateOf(false) }
     // The server's whole project list arrives in one response; the filter narrows it in the app.
     val matches = remember(query, projects) {
         val needle = query.trim().lowercase()
@@ -629,12 +629,12 @@ private fun NewSessionSheet(
                 shortPath(it.root).lowercase().contains(needle)
         }
     }
-    var busy by remember { mutableStateOf(false) }
+    val browsed by browser.state.collectAsStateWithLifecycle()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        // Fully expanded, so the weighted list gets the height it asks for and the typed-path row
-        // stays above the keyboard instead of being pushed off screen.
+        // Fully expanded, so the weighted list gets the height it asks for and the rows below it
+        // stay above the keyboard instead of being pushed off screen.
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = t.background,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
@@ -648,7 +648,7 @@ private fun NewSessionSheet(
             )
         },
     ) {
-        // Header, filter and the typed path stay put; only the project rows scroll.
+        // Header, filter and the last row stay put; only the rows between them scroll.
         Column(
             Modifier
                 .fillMaxWidth()
@@ -656,6 +656,16 @@ private fun NewSessionSheet(
                 .imePadding()
                 .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
         ) {
+            if (browsing) {
+                FolderBrowserPage(
+                    browser = browser,
+                    title = "Other folder",
+                    chooseLabel = "Start here",
+                    onBack = { browsing = false },
+                    onChoose = onStart,
+                )
+                return@Column
+            }
             Text("New session", style = MaterialTheme.typography.titleLarge, color = t.text)
             Text(
                 "Pick the working directory on the server",
@@ -684,7 +694,7 @@ private fun NewSessionSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
-            // The space left between the filter and the typed path: the list fills it when there are
+            // The space left between the filter and the last row: the list fills it when there are
             // many matches and hugs its rows when there are few, so the box never grows empty.
             Column(Modifier.fillMaxWidth().weight(1f)) {
                 if (matches.isNotEmpty()) {
@@ -746,7 +756,7 @@ private fun NewSessionSheet(
                                 color = t.textSecondary,
                             )
                             else -> Text(
-                                "No project yet — type a directory below",
+                                "No project yet — pick a folder below",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = t.textSecondary,
                             )
@@ -755,31 +765,35 @@ private fun NewSessionSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    placeholder = { Text("Other directory", style = MaterialTheme.typography.bodyMedium) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = piTextFieldColors(),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f),
-                )
+            // Where the browser opens: the folder it was left in, else the server's home.
+            val lastFolder = browsed.listing?.path?.ifEmpty { null }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(GroupShape)
+                    .border(1.dp, t.border, GroupShape)
+                    .clickable { browsing = true }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(PiIcons.Plus, null, tint = t.textTertiary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Other folder", style = MaterialTheme.typography.labelLarge, color = t.text)
+                    Text(
+                        lastFolder?.let(::shortPath) ?: "Browse the server's folders",
+                        style = if (lastFolder != null) {
+                            MaterialTheme.typography.labelSmall.copy(fontFamily = GeistMono, fontWeight = FontWeight.Normal)
+                        } else {
+                            MaterialTheme.typography.labelSmall
+                        },
+                        color = t.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
-                PiPrimaryButton(
-                    "Start",
-                    enabled = path.isNotBlank(),
-                    loading = busy,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            val cwd = validate(path)
-                            busy = false
-                            if (cwd != null) onStart(cwd)
-                        }
-                    },
-                )
+                Icon(PiIcons.ChevronRight, contentDescription = null, tint = t.textTertiary, modifier = Modifier.size(16.dp))
             }
         }
     }

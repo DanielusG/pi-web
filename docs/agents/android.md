@@ -75,6 +75,33 @@ A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
   upstream's cut lifted first. `app/api/sessions/detail-route-fork.test.mjs` pins the ceiling.
 - The app treats a response without `projects` as an outdated server.
 
+## New-session folder browser (`ui/sessions/FolderBrowser*.kt`)
+A folder that is no project yet is picked on the new-session sheet's second page ("Other
+folder"), which browses the server through upstream's own `/api/cwd/browse` — the route the web's
+`components/DirectoryPicker.tsx` uses; nothing fork-only is involved, so a merge that changes the
+route's shape (`path`, `parentPath`, `directories`, `drives` on a Windows server asked for no
+path) changes the app too. `FolderBrowserTest` pins the parsing and the breadcrumb.
+- **The commit point is "Start here"**, as the web's "Select this folder": it posts the folder on
+  screen to `/api/cwd/validate`, which also calls `allowFileRoot()` — a cwd that skipped it would
+  not open in the files screen. "New folder" opens the created folder rather than choosing it,
+  as on the web. While the path field is open both are disabled, the web's `hasUncommittedPath`
+  rule: the folder on screen is not the one typed, and a refused path stays in the field with the
+  reason under the list. The field uses the URI keyboard (`/` on its first layer).
+- **The breadcrumb is built in the app** (`FolderBrowser.crumbs`) from the path alone: the route
+  answers only the immediate `parentPath`. On a Windows server it starts at "Drives" (the route
+  without `path`), then the drive; a UNC `\\server\share` is its own root.
+- **Dot folders are folded** under "Show N hidden folders": the route lists them, sorted first
+  by Node's `localeCompare`, and in a home directory they pushed the real folders off the first
+  screen. The web picker lists everything; this is the app's deviation.
+- **The state lives in `SessionsViewModel.folders`**, so the next "Other folder" opens where the
+  last one was left (fetched again; the server's home when that folder is gone), the way the web
+  starts its picker from the last custom path. Memory only, unlike the web's localStorage: a
+  restarted app opens at the home again. The sheet's own `browsing` flag is
+  `rememberSaveable`, so a reopened sheet starts on the projects page.
+- **Back inside the sheet** goes through a `BackHandler` composed inside `ModalBottomSheet`'s
+  content: it closes the path or new-folder field first, then returns to the projects page;
+  only Back on the projects page dismisses the sheet.
+
 ## Session search (`lib/session-find.ts`)
 `GET /api/sessions/find?q=&project=&sort=recent|relevance&limit=` searches every session the way
 pi's `/resume` selector does; the app's list has a search mode on top of it

@@ -347,8 +347,6 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
   the mkdir belongs next to that call (`getRepoRoot` failing already leaves nothing behind). Both the
   subagent runtime and the sidebar's worktrees go through `addWorktree`, so it is out of a subagent
   change's scope to move it.
-- **A refused path shows nothing in the Android new-session sheet**: `SessionsViewModel.validateCwd`
-  puts the reason in `state.error` and `NewSessionSheet` never reads it (`AssistProjectSheet` does).
 - **`components/SystemPromptPanel.tsx` is dead here**: the fork's header cleanup left no
   `systemPrompt` state in `AppShell`, so nothing imports it. What mentions it is the file itself,
   `components/AppShell.tools-panel.test.mjs` (to prove the import is gone), this file's entry,
