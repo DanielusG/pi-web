@@ -144,6 +144,12 @@ the existing path (`ImageAttachments`: compression, EXIF, limits). Documents tak
   typed text, or the file names for files alone; without it 500 code units of paths filled the
   row's budget), and so does the app's chat title, which `GET /api/sessions/[id]` hands whole.
   The web bubble still shows the raw prefix: rendering it there is a later step.
+- **An extension may put text before the prefix.** pi stores the prompt after the extensions'
+  `input` handlers, and the admin's timestamp extension puts a `⏱` timestamp in front of every
+  prompt, so a split anchored at the start found nothing and the bubble showed the raw list.
+  Both sides look for the header anywhere (its first occurrence) and keep what precedes it as
+  the *lead*, shown before the typed text in the bubble, the list row and the title, as such a
+  message reads without attachments.
 - **Upload at send time**, after `ensure_session`: a document picked in a chat with no session
   yet has nowhere to go, and nothing is left on the server for a draft dropped unsent. The app
   keeps a private copy in `cache/attachments/` from pick to delivery, so a failed send puts the

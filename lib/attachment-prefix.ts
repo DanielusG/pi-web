@@ -10,6 +10,10 @@
 //   ---
 //
 //   <what the user typed, absent when they typed nothing>
+//
+// An extension's `input` handler may rewrite the prompt before pi stores it
+// (a timestamp put in front, say), so the prefix is looked for past such a
+// lead too and the lead is kept with the body.
 
 export interface AttachmentRef {
   /** Absolute path of the saved copy. */
@@ -19,6 +23,8 @@ export interface AttachmentRef {
 }
 
 export interface SplitAttachmentPrefix {
+  /** Text an extension put before the prefix ("" when none), shown with the body. */
+  lead: string;
   dir: string;
   attachments: AttachmentRef[];
   /** The message after the prefix: what the user typed, "" for attachments alone. */
@@ -47,10 +53,12 @@ export function withAttachmentPrefix(dir: string, attachments: AttachmentRef[], 
   return body ? `${prefix}\n\n---\n\n${body}` : prefix;
 }
 
-/** The prefix and the body apart, or null when [text] does not start with a complete prefix. */
+/** The lead, the prefix and the body apart, or null when [text] holds no complete prefix. */
 export function splitAttachmentPrefix(text: string): SplitAttachmentPrefix | null {
-  if (!text.startsWith(HEADER_START)) return null;
-  const lines = text.split("\n");
+  const start = text.indexOf(HEADER_START);
+  if (start < 0) return null;
+  const lead = text.slice(0, start);
+  const lines = text.slice(start).split("\n");
   const header = lines[0];
   if (!header.endsWith(HEADER_END)) return null;
   const dir = header.slice(HEADER_START.length, header.length - HEADER_END.length);
@@ -69,17 +77,18 @@ export function splitAttachmentPrefix(text: string): SplitAttachmentPrefix | nul
   }
   if (attachments.length === 0) return null;
 
-  if (index === lines.length) return { dir, attachments, body: "" };
+  if (index === lines.length) return { lead, dir, attachments, body: "" };
   if (lines[index] !== "" || lines[index + 1] !== "---" || lines[index + 2] !== "") return null;
-  return { dir, attachments, body: lines.slice(index + 3).join("\n") };
+  return { lead, dir, attachments, body: lines.slice(index + 3).join("\n") };
 }
 
 /**
- * [text] as a list shows it: the body without the prefix, or the attached names
- * when the user sent files alone. Text without a prefix is returned unchanged.
+ * [text] as a list shows it: the lead and body without the prefix, or the lead
+ * and the attached names when the user sent files alone. Text without a prefix
+ * is returned unchanged.
  */
 export function attachmentDisplayText(text: string): string {
   const split = splitAttachmentPrefix(text);
   if (!split) return text;
-  return split.body || split.attachments.map((file) => file.name).join(", ");
+  return split.lead + (split.body || split.attachments.map((file) => file.name).join(", "));
 }

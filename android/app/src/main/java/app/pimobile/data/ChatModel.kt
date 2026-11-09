@@ -228,7 +228,7 @@ object Messages {
         return when (json.str("role")) {
             "user" -> contentText(json["content"]).let { raw ->
                 val split = AttachmentPrefix.split(raw)
-                val text = split?.body ?: raw
+                val text = split?.text ?: raw
                 ChatItem.User(
                     message.key,
                     text,

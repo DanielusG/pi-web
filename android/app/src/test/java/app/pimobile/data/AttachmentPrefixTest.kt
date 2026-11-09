@@ -60,6 +60,20 @@ class AttachmentPrefixTest {
     }
 
     @Test
+    fun `a lead an extension put before the prefix is kept apart`() {
+        // e.g. a timestamp extension's input handler: "⏱ <time>" on its own line, or on the header's.
+        for (lead in listOf("⏱ 2026-11-09 20:45:12\n", "[20:45] ")) {
+            val split = AttachmentPrefix.split(lead + expected)
+            assertEquals(AttachmentPrefix.Split(dir, files, "Summarize these", lead), split)
+            assertEquals("${lead}Summarize these", split?.text)
+            assertEquals("${lead}Summarize these", AttachmentPrefix.display(lead + expected))
+            val alone = lead + AttachmentPrefix.format(dir, files)
+            assertEquals(lead.trimEnd(), AttachmentPrefix.split(alone)?.text)
+            assertEquals("${lead}text1.txt, my document (1).pdf", AttachmentPrefix.display(alone))
+        }
+    }
+
+    @Test
     fun `text that only looks like a prefix is not split`() {
         assertNull(AttachmentPrefix.split("Attachments from the user are below"))
         assertNull(AttachmentPrefix.split(expected.replace("\n\n---\n\n", "\n---\n")))

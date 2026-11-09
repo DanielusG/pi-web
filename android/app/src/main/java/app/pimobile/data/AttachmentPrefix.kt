@@ -16,9 +16,17 @@ data class AttachmentRef(val path: String, val name: String)
  *
  * <what the user typed, absent when they typed nothing>
  * ```
+ *
+ * An extension's `input` handler may rewrite the prompt before pi stores it (a
+ * timestamp put in front, say), so the prefix is looked for past such a lead too
+ * and the lead is kept with the body.
  */
 object AttachmentPrefix {
-    data class Split(val dir: String, val attachments: List<AttachmentRef>, val body: String)
+    /** [lead]: text an extension put before the prefix, "" when none. */
+    data class Split(val dir: String, val attachments: List<AttachmentRef>, val body: String, val lead: String = "") {
+        /** The message's text with the prefix left out: the lead, then the typed text. */
+        val text: String get() = if (body.isEmpty()) lead.trimEnd() else lead + body
+    }
 
     private const val HEADER_START = "Attachments from the user (you should probably read them; Pi saved them in "
     private const val HEADER_END = "):"
@@ -38,16 +46,18 @@ object AttachmentPrefix {
         else -> format(dir, attachments) + "\n\n---\n\n" + body
     }
 
-    /** [text] as a one-line list shows it: the body, or the attached names for files alone (server: attachmentDisplayText). */
+    /** [text] as a one-line list shows it: lead and body, or lead and the attached names for files alone (server: attachmentDisplayText). */
     fun display(text: String): String {
         val split = split(text) ?: return text
-        return split.body.ifEmpty { split.attachments.joinToString(", ") { it.name } }
+        return split.lead + split.body.ifEmpty { split.attachments.joinToString(", ") { it.name } }
     }
 
-    /** The prefix and the body apart, or null when [text] does not start with a complete prefix. */
+    /** The lead, the prefix and the body apart, or null when [text] holds no complete prefix. */
     fun split(text: String): Split? {
-        if (!text.startsWith(HEADER_START)) return null
-        val lines = text.split("\n")
+        val start = text.indexOf(HEADER_START)
+        if (start < 0) return null
+        val lead = text.substring(0, start)
+        val lines = text.substring(start).split("\n")
         val header = lines[0]
         if (!header.endsWith(HEADER_END)) return null
         val dir = header.substring(HEADER_START.length, header.length - HEADER_END.length)
@@ -67,8 +77,8 @@ object AttachmentPrefix {
         }
         if (attachments.isEmpty()) return null
 
-        if (index == lines.size) return Split(dir, attachments, "")
+        if (index == lines.size) return Split(dir, attachments, "", lead)
         if (lines[index] != "" || lines.getOrNull(index + 1) != "---" || lines.getOrNull(index + 2) != "") return null
-        return Split(dir, attachments, lines.drop(index + 3).joinToString("\n"))
+        return Split(dir, attachments, lines.drop(index + 3).joinToString("\n"), lead)
     }
 }
