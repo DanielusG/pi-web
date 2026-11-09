@@ -70,6 +70,9 @@ class SessionsViewModel(
 
     private var listVersion: Long? = null
 
+    /** The search of every session (pi's `/resume` rules), opened from the list's header. */
+    val search = SessionSearch(api, viewModelScope)
+
     /** Reloads and page fetches both rewrite [SessionsUiState.groups]: one at a time. */
     private val lists = Mutex()
 

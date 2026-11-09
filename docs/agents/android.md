@@ -75,6 +75,48 @@ A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
   upstream's cut lifted first. `app/api/sessions/detail-route-fork.test.mjs` pins the ceiling.
 - The app treats a response without `projects` as an outdated server.
 
+## Session search (`lib/session-find.ts`)
+`GET /api/sessions/find?q=&project=&sort=recent|relevance&limit=` searches every session the way
+pi's `/resume` selector does; the app's list has a search mode on top of it
+(`ui/sessions/SessionSearch*.kt`). The web sidebar keeps upstream's literal
+`/api/sessions/search`.
+- **pi's matcher, not a copy.** `parseSearchQuery` / `matchSession` live in the SDK's
+  `dist/modes/interactive/components/session-selector-search.js`, which the package does not
+  export; it is imported by file URL from the SDK pi-web resolves (as `lib/pi-sdk-internals.ts`
+  does for MCP). A query means what it means in the TUI and follows pi's changes (1.5 already
+  replaced 1.2's fuzzy-over-everything with tiers: name, then exact text, then scattered letters of
+  the name or cwd only). An upgrade that moves or renames the module turns the route into a 503
+  with the reason; `lib/session-find.test.mjs` pins the exports and compares the order with pi's own
+  `filterAndSortSessions` over `SessionManager.listAll()` of the same files.
+- **The text** is what pi's `SessionManager` puts in `allMessagesText`: the user and assistant
+  text blocks of every entry of the file (all branches, no thinking, tool calls or tool
+  results), blocks and messages joined with a space; the test compares the two. The name comes
+  from the catalogue. Side chats are left out (each copies its parent's text); subagent runs are
+  searched and labelled `subagent · <profile>` in the app.
+- **Sort:** `relevance` is the default, because the TUI's default Threaded sort ranks by score
+  as soon as there is a query; `recent` keeps the catalogue's newest-first order and stops
+  reading after `limit + 1` hits. `limit` is 50 by default, 200 at most; `hasMore` says there
+  are others. The app pages 50 at a time up to 200, then says to refine the query.
+- **Cost:** files are read 8 at a time with a 10 s budget (`truncated` with `scanned` / `total`
+  when it runs out). The extracted text stays in a process-wide cache of 32 M characters, keyed
+  by path, size and mtime, so typing a longer query does not reread every file; on 76 fixture
+  sessions a cold search took ~0.5 s and a warm one ~20 ms.
+- **`re:` runs the user's pattern on the server's event loop.** JavaScript has no regex
+  timeout, so a catastrophic pattern over a long transcript stalls pi-web until it finishes.
+  Accepted: only someone who can already use the server can search, as the TUI runs the same
+  pattern on the user's own machine; the query is capped at 200 characters. An invalid pattern is
+  `queryError` with pi's message, and nothing matches, as in the TUI.
+- **Where the hit is** is pi-web's own addition: the first message block where a phrase, a
+  literal word or the regex occurs, in query order (`snippet`: entry id, block index, 80
+  characters each side), and the hit in the name (`nameMatch`). A word pi matched only as
+  scattered letters has no snippet. The app marks the title instead of repeating a snippet that
+  is the title (an unnamed session's first message).
+- **In the app** the search lives in `SessionsViewModel` (`SessionSearch`), so Back from a result's
+  chat finds it as it was left; Back from the search closes and forgets it. The project chip lists
+  the paged list's projects (its `key` is the route's `project`), the sort switch is the file
+  viewer's segmented control, the hint line is the TUI's (`"phrase" exact · re:<pattern> regex`),
+  and the mark is the muted fill, never the accent.
+
 ## Subagent runs
 `GET /api/sessions/[id]/subagents` lists a session's subagent runs for the app's session view.
 

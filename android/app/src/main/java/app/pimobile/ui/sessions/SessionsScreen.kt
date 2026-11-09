@@ -2,6 +2,7 @@
 
 package app.pimobile.ui.sessions
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -96,6 +97,7 @@ fun SessionsScreen(
     startWithNewSheet: Boolean = false,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val search by vm.search.state.collectAsStateWithLifecycle()
     val t = Pi.tokens
     // Active sessions across all projects: running first, then waiting, most recent first.
     val active = state.groups
@@ -119,18 +121,45 @@ fun SessionsScreen(
     }
     var showNew by rememberSaveable { mutableStateOf(startWithNewSheet) }
     var sheetRow by remember { mutableStateOf<SessionRow?>(null) }
+    BackHandler(enabled = search.open) { vm.search.close() }
 
     Scaffold(
         containerColor = t.background,
-        topBar = { SessionsHeader(serverLabel, runningCount = state.running.size, waitingCount = state.waiting.size, onSettings = onSettings) },
-        floatingActionButton = { NewSessionButton(onClick = { showNew = true }) },
+        topBar = {
+            if (search.open) {
+                SessionSearchBar(search.query, vm.search::setQuery, onClose = vm.search::close)
+            } else {
+                SessionsHeader(
+                    serverLabel,
+                    runningCount = state.running.size,
+                    waitingCount = state.waiting.size,
+                    onSearch = vm.search::open,
+                    onSettings = onSettings,
+                )
+            }
+        },
+        floatingActionButton = { if (!search.open) NewSessionButton(onClick = { showNew = true }) },
         snackbarHost = {
             SnackbarHost(snackbar) { data ->
                 Snackbar(data, shape = RoundedCornerShape(12.dp), containerColor = t.text, contentColor = t.background)
             }
         },
     ) { padding ->
-        PullToRefreshBox(
+        if (search.open) {
+            SessionSearchList(
+                state = search,
+                projects = state.groups,
+                running = state.running,
+                waiting = state.waiting,
+                onScope = vm.search::setScope,
+                onSort = vm.search::setSort,
+                onMore = vm.search::showMore,
+                onRetry = vm.search::retry,
+                onOpen = { hit -> onOpen(hit.row.id, hit.row.cwd) },
+                onLongClick = { sheetRow = it },
+                modifier = Modifier.padding(padding),
+            )
+        } else PullToRefreshBox(
             isRefreshing = state.refreshing,
             onRefresh = { vm.refresh(force = true) },
             modifier = Modifier
@@ -220,14 +249,15 @@ fun SessionsScreen(
         SessionActionsSheet(
             row = row,
             onDismiss = { sheetRow = null },
-            rename = { name -> vm.rename(row.id, name) },
-            delete = { vm.delete(row.id) },
+            // A row renamed or deleted from the results: the results are asked again.
+            rename = { name -> vm.rename(row.id, name).also { if (it == null && search.open) vm.search.retry() } },
+            delete = { vm.delete(row.id).also { if (it == null && search.open) vm.search.retry() } },
         )
     }
 }
 
 @Composable
-private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount: Int, onSettings: () -> Unit) {
+private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount: Int, onSearch: () -> Unit, onSettings: () -> Unit) {
     val t = Pi.tokens
     Row(
         Modifier
@@ -261,6 +291,9 @@ private fun SessionsHeader(serverLabel: String, runningCount: Int, waitingCount:
                     )
                 }
             }
+        }
+        IconButton(onClick = onSearch) {
+            Icon(PiIcons.Search, contentDescription = "Search sessions", tint = t.textSecondary, modifier = Modifier.size(20.dp))
         }
         IconButton(onClick = onSettings) {
             Icon(PiIcons.Sliders, contentDescription = "Server settings", tint = t.textSecondary, modifier = Modifier.size(20.dp))

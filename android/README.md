@@ -30,6 +30,14 @@ It has **not yet been tested against a real pi-web with a real model.**
   long-press on a session for rename/delete
   (bottom sheet: pre-filled rename field with the web's no-op check, delete with
   inline confirmation).
+- **Session search:** the search button in the list's header searches every session with
+  pi's `/resume` rules (`GET /api/sessions/find`, run by pi's own matcher on the server):
+  words in the name, the messages, the id or the folder, `"exact phrase"`, `re:<pattern>`.
+  A project chip limits it to one project of the list ("All projects" by default), a
+  Relevance / Recent switch is pi's Sort, and each row shows the project, the hit marked in
+  the name or in a snippet of the message, 50 rows a page up to 200. Tapping opens the
+  session; long-press opens the rename/delete sheet; Back from the chat finds the search as
+  it was left, Back from the search returns to the list.
 - **New session:** pick any project of the session list — all of them come back from the paged
   `GET /api/sessions?perProject=`, newest activity first, with the session count — filtered by name
   or path; or type a path (validated by the server). The session is created on the first message.
@@ -259,7 +267,7 @@ app/src/main/java/app/pimobile/
   data/Json.kt             lenient JsonObject accessors
   notify/RunStatus.kt      the one run-state SSE connection (list + notification service)
   notify/RunWatcherService.kt foreground service: finished / waiting notifications
-  ui/sessions/             session list + new-session sheet
+  ui/sessions/             session list, new-session sheet, session search (pi /resume rules)
   ui/settings/             server settings, assistant project picker, "Update pi-web" screen
   ui/chat/ChatViewModel.kt run lifecycle, SSE loop, reconnect, reconcile, commands
   ui/chat/ChatScreen.kt    list, composer, model sheet, extension dialogs
@@ -290,7 +298,7 @@ between SDK releases.
 | Tool views, part 2 | write (content + preview), read, bash, grep/find/ls, Agent/subagent views, following the tested edit pattern. |
 | Images, part 2 | Camera capture and pasting from the keyboard; assistant image blocks and tool-result images (URL form needs auth). |
 | Branches & forks | Tree view, `navigate_tree`, fork from a message. |
-| Session management | Search. (Rename and delete ship via the long-press sheet.) |
+| Session management | Opening a search result at the message it found (search, rename and delete ship). |
 | Files, part 2 | Syntax highlighting in the source view, upload, file tabs, git diff, worktrees (`/api/worktrees`). |
 | Terminal | SSE + POST exist server-side; needs a terminal emulator view. |
 | Extension widgets/status/custom panels | Only blocking dialogs and notify are handled. |
