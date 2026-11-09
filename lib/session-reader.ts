@@ -12,6 +12,7 @@ import { getThinkingPreview, isMessageGroupAnchor } from "./message-display";
 import { projectIdentityKey } from "./project-identity";
 import { sessionPathKey } from "./session-path";
 import { skillExpansionToCommand } from "./slash-display";
+import { attachmentDisplayText } from "./attachment-prefix";
 import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images";
 import { resolveProject, type ProjectInfo } from "./worktree";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
@@ -232,7 +233,9 @@ function resolveScannedSessionRelation(
 const CATALOG_FIRST_MESSAGE_MAX = 500;
 
 export function catalogFirstMessage(text: string): string {
-  const display = skillExpansionToCommand(text) ?? text;
+  // Fork: a prompt's attachment prefix (lib/attachment-prefix.ts) would fill the
+  // whole budget with paths; the row shows what the user typed.
+  const display = attachmentDisplayText(skillExpansionToCommand(text) ?? text);
   if (display.length <= CATALOG_FIRST_MESSAGE_MAX) return display;
   const last = display.charCodeAt(CATALOG_FIRST_MESSAGE_MAX - 1);
   return display.slice(0, last >= 0xd800 && last <= 0xdbff ? CATALOG_FIRST_MESSAGE_MAX - 1 : CATALOG_FIRST_MESSAGE_MAX);

@@ -134,6 +134,27 @@ test("deletes a project's sessions in one request, with their subagents, keeping
   assert.deepEqual(Object.keys(readSessionUiState().sessions), ["keep-root"]);
 });
 
+test("a deleted session's attachment folder goes with it; a kept one's stays (fork, Android client)", async (t) => {
+  const { dir, sessionsDir, ids } = await scratchAgentDir(t);
+  const cwd = "/work/alpha";
+  const gone = "0b7e6f3c-1d2a-4c55-9e1f-2a3b4c5d6e7f";
+  const kept = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+  await writeSession(sessionsDir, "gone", { id: gone, cwd });
+  await writeSession(sessionsDir, "kept", { id: kept, cwd });
+  ids.push(gone, kept);
+  for (const id of [gone, kept]) {
+    await mkdir(join(dir, "pi-web-attachments", id), { recursive: true });
+    await writeFile(join(dir, "pi-web-attachments", id, "a1b2c3_notes.txt"), "notes");
+  }
+
+  const response = await post({ ids: [gone] });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).deleted, [gone]);
+  assert.equal(existsSync(join(dir, "pi-web-attachments", gone)), false);
+  assert.equal(existsSync(join(dir, "pi-web-attachments", kept, "a1b2c3_notes.txt")), true);
+});
+
 test("deletes one side chat alone, and still takes the rest with its parent", async (t) => {
   const { sessionsDir, ids } = await scratchAgentDir(t);
   const cwd = "/work/alpha";

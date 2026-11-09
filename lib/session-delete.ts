@@ -28,6 +28,7 @@ import {
 import { sessionPathKey } from "./session-path";
 import { forgetSessionUiState } from "./session-ui-state";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
+import { deleteSessionAttachments } from "./session-attachments";
 import { readSideRelation } from "./side-session";
 import type { SessionEntry } from "./types";
 
@@ -247,6 +248,14 @@ export async function deleteSessions(
     }
     invalidateSessionPathCache(deletedId);
     invalidateSessionManagerCache(deletedPath);
+  }
+  // Their attachment folders (fork addition, lib/session-attachments.ts); best effort too.
+  for (const deletedId of deletedSessionIds) {
+    try {
+      deleteSessionAttachments(deletedId);
+    } catch (error) {
+      console.warn(`[pi-web] could not remove the attachments of session ${deletedId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   // Drop their pins and archive times; best effort, the files are already gone.
   try {
