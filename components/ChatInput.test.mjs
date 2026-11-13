@@ -503,7 +503,8 @@ test("renders the compact composer with the standard Send button and no session 
   );
 
   assert.match(html, /<textarea/);
-  assert.match(html, /title="Send"/); // fork: icon-only send button (UI refresh)
+  // fork: icon-only send button (UI refresh) — the one control is a button named by title.
+  assert.match(html, /<button\b[^>]*title="Send"/);
   assert.equal((html.match(/<button\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /type="file"|Attach files|Change tool preset/);
 });
