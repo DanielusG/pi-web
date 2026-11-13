@@ -6,16 +6,21 @@ and install steps. The web client is unchanged by these routes — every fork-on
 opt-in, so an older server simply ignores it and a newer one behaves as before without them.
 
 ## Running-state stream (`lib/run-status-stream.ts`)
-- `GET /api/agent/running/events` sends the `/api/agent/running` snapshot plus `waitingSessionIds`
-  on connect, then again **only when it changes**, detected by an in-memory check once a second. The
-  app does not poll; the web client keeps its own 2.5 s polling of `/api/agent/running`.
+- `GET /api/agent/running/events` sends the poll's shared fields — `sessionListVersion`,
+  `runningSessionIds`, `completionNotificationSuppressedSessionIds` — with `waitingSessionIds` in
+  place of `awaitingInputSessionIds`, on connect, then again **only when it changes**, detected by
+  an in-memory check once a second. The poll's `serverNow`, `sessionUiStateRevision` and
+  `subagentsActiveSessionIds` are not in the snapshot. The app does not poll; the web client keeps
+  its own 2.5 s polling of `/api/agent/running`.
 - Since the v0.11.1 merge the field comes from upstream's `getAwaitingInputRpcSessionIds()` (the name
   stays for installed APKs): a session counts only while its run is **live** and a dialog is open —
-  select/confirm/input/editor, or a `custom` overlay not yet closed. The fork's own
+  select/confirm/input/editor, a `custom` overlay not yet closed, or a pending native
+  `ask_user_question` (`hasOpenQuestion`, `lib/ask-user-extension.ts`). The fork's own
   `BLOCKING_DIALOG_METHODS` list was dropped, so two things changed at once:
   - `custom` overlays count now. The app cannot show or settle one (`ChatViewModel.kt` reads only
     select/confirm/input/editor), yet `RunWatcherService` still notifies for them — accepted on
-    purpose: the notification says "go to the desktop/web client to answer", which is true.
+    purpose: the notification only says "Waiting for your input." (`Notifications.kt`) — the app
+    cannot settle such an overlay, and opening the chat shows nothing for it.
   - `isAwaitingInput()` gates on `isRunning()` where the fork's `getWaitingRpcSessionIds()` used
     `isAlive()`, so **any** dialog parked on an alive-but-idle wrapper (not just `custom`) drops out
     of the set, and the app cancels the notification for it. Upstream's own
@@ -35,8 +40,9 @@ opt-in, so an older server simply ignores it and a newer one behaves as before w
 - `GET /api/agent/[id]/events?toolUpdates=tail` (`ClientAgentEventOptions` in
   `lib/agent-event-wire.ts`) cuts the text of each `tool_execution_update` to its last 16 lines,
   8000 characters at most: bash resends its whole accumulated output with every update (3.7 MB for
-  one verbose command). `tool_execution_end` still carries the complete result, so the app's tool
-  rows stay correct — its `ChatViewModel` reads only `toolCallId` / `toolName` from the end event.
+  one verbose command). `tool_execution_end` is never tailed and carries only `toolCallId`,
+  `toolName`, `isError` and `durationMs` — the complete result reaches the app as the tool result
+  message that follows, which is what keeps its tool rows correct.
   The tail is applied inside upstream's `toClientToolExecutionEvent()` after the nested-call drop,
   the codemode cap and the coalescing, so upstream's slimming rules and the tail compose.
 - Upstream's own wire slimming (v0.12.0, #1176) sends a non-assistant `message_start` as
@@ -84,7 +90,7 @@ A response of ~7 MB on a machine with 2 000 sessions, most of it first messages.
 - `ids=a,b` keeps only those sessions (notification titles). `firstMessageChars=N` shortens first
   messages after collapsing a skill expansion to its `/skill:` command — but since v0.12.0 upstream
   pre-cuts every catalog row's first message to **500 code units** in `catalogFirstMessage()`
-  (`lib/session-reader.ts`, called at :254 and by `lib/rpc-manager.ts:2326`) *before* the fork's
+  (`lib/session-reader.ts`, called from `mapScannedSession` and by `lib/rpc-manager.ts`) *before* the fork's
   trim runs, so `N` above 500 cannot recover text the catalog dropped. The app asks 200 for windows
   and 80 for notification titles, so nothing is lost today; raising a request past 500 needs
   upstream's cut lifted first. `app/api/sessions/detail-route-fork.test.mjs` pins the ceiling.
@@ -140,7 +146,8 @@ the existing path (`ImageAttachments`: compression, EXIF, limits). Documents tak
 - **What reads it back:** the app's user bubble shows a chip per file (tap: the file viewer
   with `?sessionId=`, which reads a path outside the roots because the user message names it —
   [files-and-access.md](files-and-access.md)) and the text after the prefix; copy and Edit from
-  here use that text. Upstream's `catalogFirstMessage()` strips the prefix (the list row shows the
+  here use that text. `catalogFirstMessage()` — upstream's cut carrying the fork's prefix-strip —
+  strips the prefix (the list row shows the
   typed text, or the file names for files alone; without it 500 code units of paths filled the
   row's budget), and so does the app's chat title, which `GET /api/sessions/[id]` hands whole.
   The web bubble still shows the raw prefix: rendering it there is a later step.
@@ -202,7 +209,9 @@ pi's `/resume` selector does; the app's list has a search mode on top of it
 - **Where the hit is** is pi-web's own addition: the first message block where a phrase, a
   literal word or the regex occurs, in query order (`snippet`: entry id, block index, 80
   characters each side), and the hit in the name (`nameMatch`). A word pi matched only as
-  scattered letters has no snippet. The app marks the title instead of repeating a snippet that
+  scattered letters has no snippet, and neither do hits pi found in the session's id or cwd or a
+  phrase spanning message boundaries — `locatorPatterns()` searches the name and each message
+  block's own text only. The app marks the title instead of repeating a snippet that
   is the title (an unnamed session's first message).
 - **Opening at the hit** (web: ChatWindow's `searchTarget`, which loads one extra page of 200 and
   then gives up): the chat route takes `entry`, and `ChatViewModel.locate()` keeps the loading row
@@ -222,7 +231,8 @@ pi's `/resume` selector does; the app's list has a search mode on top of it
 - **In the app** the search lives in `SessionsViewModel` (`SessionSearch`), so Back from a result's
   chat finds it as it was left; Back from the search closes and forgets it. The project chip lists
   the paged list's projects (its `key` is the route's `project`), the sort switch is the file
-  viewer's segmented control, the hint line is the TUI's (`"phrase" exact · re:<pattern> regex`),
+  viewer's segmented control, the hint line is the TUI's own words, reordered
+  (`"phrase" exact · re:<pattern> regex` against the TUI's `re:<pattern> regex · "phrase" exact`),
   and the mark is the muted fill, never the accent.
 
 ## Subagent runs
@@ -297,5 +307,6 @@ dialog, not the extension dialog's generic select and input requests.
   switcher's totals and the transcript notices). The app reads neither; its usage numbers stay on
   the context pages it already fetches.
 
-`android/` has its own Gradle test task (105 tests on the v0.9.3 baseline). Run it after changing a
+`android/` has its own Gradle test task (105 at the v0.9.3 baseline, grown since — about 200 `@Test`
+methods now). Run it after changing a
 route contract the app depends on.

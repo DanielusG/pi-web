@@ -67,9 +67,9 @@ bar unmounts while a blocking request is open; dialog state (`value` / `collapse
   has no fork counterpart — the fork labels the dialog through `dialogTitleId` / `aria-labelledby`
   rather than repeating the title in a hidden node — so the card has two title renders to upstream's
   three. `ChatWindow.extension-request.test.mjs` asserts the wrapped forms.
-- What the inline card still **lacks** is upstream's `aria-expanded` on the collapsed pill and on
-  the collapse button: this fork's own rewrite dropped both before v0.15.0, the merge kept the
-  fork's shape, and nothing asserts the attribute. Worth adding on the next pass over the card.
+- The inline card carries upstream's `aria-expanded` — `false` on the collapsed pill, `true` on
+  the collapse button (`components/ChatWindow.tsx`) — but nothing asserts the attribute yet; pin
+  it in `ChatWindow.extension-request.test.mjs` on the next pass over the card.
 
 ## Message and composer geometry
 - **User bubble**: asymmetric radius `"14px 14px 4px 14px"` with a `color-mix(in srgb, var(--accent)
@@ -105,7 +105,11 @@ error, `title` carrying the raw `mcp__` name). After it:
 - the preview span reads `patchLabel ?? (codemode ? codemodeScriptPreview(code) : summary)`, where
   `summary` comes from `toolSummaryLine()` in `lib/tool-display.ts`. Upstream v0.11.1 grew its own
   `getToolPreview()` for that fallback; the fork keeps its richer line, so upstream's function came
-  in unused and was deleted at both the v0.11.1 and the v0.13.0 merge. What v0.13.0 brought is kept
+  in unused and was deleted at both the v0.11.1 and the v0.13.0 merge. At v0.16.0 upstream grew
+  `toolInputPreview()` (#1535/#1620) in `lib/tool-fields.ts`, and this time the fork **kept** it —
+  upstream-as-written, unwired, nothing imports it in production — because deleting an upstream
+  file's export turns every later merge of that file into a conflict; `toolSummaryLine` already
+  covers what it names, grep and find leading with the pattern (#1620). What v0.13.0 brought is kept
   instead: `resultPatchPath` (#1460). A call that names **no** file — an anchor-addressed edit, a
   package tool — is labelled with the one file its result's patch changed; a call that does name a
   file keeps its own path. `components/MessageView.test.mjs` pins both halves of that rule;

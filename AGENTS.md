@@ -263,7 +263,7 @@ components/
   ProjectTrustDialog.tsx   trust confirmation listing the project's MCP servers
   AgentsConfig.tsx         built-in subagent toggle + agent profile editor
   SessionChatPanel.tsx     right-panel tab of a subagent or side chat: a ChatWindow for that session
-  side-tab-state.ts        a root's side tabs in localStorage (#1512): append, restore against the session list
+  side-tab-state.ts        a root's side tabs in sessionStorage (#1512): append, restore against the session list
   DebugPanel.tsx           Debug top panel (toolbar, left of the stats): page and server state, its own tick and poll, error boundary
   debug-panel-state.ts     pure helpers of DebugPanel: formatting, server clock, poller, issues, session grouping, poll samples
   PluginsConfig.tsx        Settings › Plugins: installed package plugins
@@ -290,7 +290,7 @@ lib/ (fork-only additions)
   cold-context.ts          reading a session's context when no wrapper is running
   session-find.ts          pi's /resume matcher loaded from the SDK, the text it searches, project scope, sort, cap and hit location behind /api/sessions/find
   word-diff.ts             word-level diff of edit tool results (ProposedChangesPreview)
-  edit-preview.ts          pending-diff computation behind /api/edit-preview
+  edit-preview.ts          the fork's server-side pending-diff computation behind /api/edit-preview (upstream v0.16.0's browser-side lib/edit-preview.ts content was dropped at the merge)
   tool-display.ts          toolSummaryLine() / getToolArgsView(): the tool header's one-line summary and its argument view
   ask-user-question.ts     client-safe: the native ask_user_question's arguments, validation, answers and the model's text (rpiv-compatible)
   ask-user-extension.ts    the native ask_user_question tool: inline extension, open questions per session, rpiv suppression
@@ -390,6 +390,18 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
   raw bytes. A `mcp.json` saved with a byte-order mark therefore loads in the CLI and is refused by
   Settings › MCP, with the parse error naming nothing useful. Matching pi means stripping the BOM
   in both readers (found while auditing the 1.2.0 → 1.4.0 SDK jump for the v0.13.0 merge).
+- **`toolInputPreview()` in `lib/tool-fields.ts` is dead here**: upstream #1535/#1620 grew it for
+  the collapsed header preview, but this fork's card reads `toolSummaryLine()`
+  (`lib/tool-display.ts`, see docs/agents/chat-ui.md), and nothing in production imports
+  `toolInputPreview` — only its test does. It stays because upstream ships the file; deleting an
+  export turns every future merge of `lib/tool-fields.ts` into a conflict, as with
+  `SystemPromptPanel` above.
+- **FileViewer keeps two hardcoded-colour classes**: the diff view's added-row background is still
+  `rgba(0,200,80,0.12)` while its removed-row sibling reads `color-mix(… var(--danger) 14% …)` (so
+  the light theme never gets the green tint), and `VideoViewer` still paints `#4ade80` for the
+  watching state and `#f87171` for its error line while the Image/Audio/Document viewers were
+  retuned. Same class as the `app/settings.css` entry; the v0.16.0 merge only retuned lines it
+  newly wrote around these (#1594, #1592).
 ---
 
 ## Old Safari (iOS 16.2)

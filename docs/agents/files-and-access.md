@@ -41,8 +41,10 @@
 - Upstream's v0.12.2 drop targets reach the explorer: a folder row or its header takes a drop of
   files into that folder, so `performUpload` carries the target directory through the conflict
   dialog (`pendingConflict.directory`) — the fork's sidebar placement of the explorer is unchanged.
-  A changed file's diff resolves its own repository rather than the cwd's (`lib/project-tree.ts`),
-  which is what the fork's changed-files count shows as well.
+  A changed file's diff resolves its own repository rather than the cwd's
+  (`findFileRepositoryRoot()` in `lib/git-changes.ts`, what `app/api/git/diff/route.ts` calls); the
+  changed-files count lists what `getGitStatus()` found under the folder, so it covers those
+  repositories too.
 
 - The explorer's Upload button and a non-image file dropped onto the chat share one client, `uploadFiles()` (`lib/file-upload-client.ts`), and the one endpoint, `POST /api/files/<cwd>?type=upload`; never add a second write path for drops. The explorer asks `upload-check` first and lets the user replace or skip; a chat drop goes straight to `conflict=skip`, so it never replaces a file. It then inserts `@name` for every file the response lists as uploaded *or* skipped (a skipped name is a file already there, often the very file dragged out of the project) and says in a notice that the mention points to the existing file.
 - Dropped images still attach to the prompt, as the original bytes (up to `MAX_ATTACHED_IMAGE_BYTES`, 10MB): the browser never resizes or re-encodes them. pi resizes prompt images itself in `_normalizePromptImages()`, following `images.autoResize` and the model's `inputLimits.images.resize`; a canvas pass first (1024px / JPEG 0.85 before #1442) blurred text in scans and screenshots and ignored both settings. Folders are left out with a notice: the endpoint writes flat file names only (`validateUploadFileNames()`), and the browser cannot tell where a dropped file lives on disk, so the copy always lands in the cwd root.
