@@ -116,6 +116,7 @@ test("only completed assistant messages trigger an immediate usage read", () => 
       agentRunningRef: { current: true }, sessionIdRef: { current: "a" }, optimisticUserMessageKeyRef: { current: null },
       isSystemMessageEvent: (event) => event.message.role === "system",
       normalizeToolCalls: (message) => message, userMessageKey: () => "user", setMessages() {}, dispatch() {}, setAgentPhase() {},
+      setToolClocks() {}, withoutToolClock: (clocks) => clocks,
       refreshContextUsage: (sid) => reads.push(sid),
       // The fork coalesces tool output deltas; message_end flushes what is still pending.
       flushPendingDeltas: () => {},
@@ -132,7 +133,7 @@ test("each event stream connection reads usage, since connecting resumes an idle
     script.runInNewContext({
       event: { type: "connected", sessionId: sid ?? "pending", isStreaming },
       sessionIdRef: { current: sid }, sdkAgentActiveRef: { current: false }, agentRunningRef: { current: false },
-      dispatch() {}, cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {},
+      dispatch() {}, cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {}, setToolClocks() {}, endedToolClocks: (clocks) => clocks, NO_TOOL_CLOCKS: new Map(),
       // The fork coalesces tool output deltas; a connection flushes what is pending.
       flushPendingDeltas: () => {},
       refreshContextUsage: (id) => reads.push(id),

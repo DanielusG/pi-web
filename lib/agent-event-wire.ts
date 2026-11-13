@@ -54,6 +54,8 @@ const OMITTED_EVENT_TYPES = new Set([
   // Carries the whole appended entry (an extension's custom entry, such as a
   // codemode `store()` write, can be 1 MiB), and nothing in the browser reads it.
   "entry_appended",
+  // A `!` command's output per chunk: the wrapper sends `bash_output` snapshots instead.
+  "bash_execution_update",
 ]);
 
 /**
@@ -99,7 +101,7 @@ function truncateCodemodeSnapshot(partialResult: unknown): unknown {
 /**
  * Nested calls travel as a slim start and end, and their progress updates are
  * dropped. A `tool_execution_end` never carries `result`: the browser only
- * reads its ids and renders the tool result message that follows, while the
+ * reads its ids and time and renders the tool result message that follows, while the
  * raw result can hold up to 1 MiB of bash output in `structuredContent`.
  *
  * `options.toolUpdates` is the fork's per-client choice, applied to the
@@ -138,6 +140,9 @@ function toClientToolExecutionEvent(
     toolCallId: event.toolCallId,
     toolName: event.toolName,
     isError: event.isError,
+    // pi's measured run time: a card shows it before the result message, which
+    // a parallel batch sends only once its last call ends.
+    ...(!nested && typeof event.durationMs === "number" ? { durationMs: event.durationMs } : {}),
     ...(nested ? { parentToolCallId: event.parentToolCallId } : {}),
   };
 }

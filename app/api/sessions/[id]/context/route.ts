@@ -34,13 +34,15 @@ export async function GET(
     // `before` is the oldest entry already on the client; fetch its ancestors
     // only (excludeLeaf) so prepending the page does not duplicate `before`.
     const entries = sm.getEntries();
+    // Without a leaf, pi's own, as the full read walks from: the reply names it.
+    const branchLeafId = leafId ?? sm.getLeafId();
     const transcriptNotices = readSessionTranscriptNotices({
       entries: entries as unknown as SessionEntry[],
       cwd: sm.getHeader()?.cwd ?? "",
-      leafId: leafId ?? sm.getLeafId(),
+      leafId: branchLeafId,
       models: liveRpc?.inner.modelRuntime,
     });
-    const context = attachTranscriptNotices(buildSessionContext(entries as never, before ?? leafId, {
+    const context = attachTranscriptNotices(buildSessionContext(entries as never, before ?? branchLeafId, {
       deferThinking,
       deferToolResultImages,
       tail,
@@ -54,11 +56,11 @@ export async function GET(
       ? null
       : await computeFileContextUsage(
           entries as never,
-          leafId ?? sm.getLeafId(),
+          branchLeafId,
           sm.getHeader()?.cwd || process.cwd(),
         );
 
-    return jsonResponse(req, { context, contextUsage, tail, before: before ?? null });
+    return jsonResponse(req, { context, contextUsage, tail, before: before ?? null, leafId: branchLeafId });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

@@ -15,12 +15,16 @@ const routeSrc = readFileSync(new URL("./[id]/context/route.ts", import.meta.url
 
 test("the context route answers through jsonResponse, so the page ships gzipped", () => {
   assert.match(routeSrc, /import \{ jsonResponse \} from "@\/lib\/json-response"/);
-  assert.match(routeSrc, /return jsonResponse\(req, \{ context, contextUsage, tail, before: before \?\? null \}\);/);
+  // Upstream #1538 named the leaf the reply stands on (branchLeafId); the fork's
+  // gzip path ships that field through the same jsonResponse.
+  assert.match(routeSrc, /return jsonResponse\(req, \{ context, contextUsage, tail, before: before \?\? null, leafId: branchLeafId \}\);/);
   assert.doesNotMatch(routeSrc, /NextResponse\.json\(\{ context,/);
 });
 
 test("the context route wires ?tail and ?before, excluding the boundary on paging", () => {
   assert.match(routeSrc, /const tail = Number\.isFinite\(rawTail\) && rawTail > 0 \? Math\.min\(rawTail, 1000\) : 50/);
   assert.match(routeSrc, /const before = url\.searchParams\.get\("before"\)/);
-  assert.match(routeSrc, /attachTranscriptNotices\(buildSessionContext\(entries as never, before \?\? leafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
+  // The walk start keeps upstream's branchLeafId name; excludeLeaf stays the
+  // fork's rule that a prepended page never duplicates its own boundary (#555).
+  assert.match(routeSrc, /attachTranscriptNotices\(buildSessionContext\(entries as never, before \?\? branchLeafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
 });

@@ -208,7 +208,7 @@ test("sessions the user never overrode follow pi's configured defaultTools (#700
   );
 });
 
-test("only the session-mount load probes disk for external appends", () => {
+test("only the session-mount load and the held bash result force a disk probe", () => {
   const loadSessionSource = source.slice(
     source.indexOf("  const loadSession = useCallback"),
     source.indexOf("  const loadContext = useCallback"),
@@ -224,7 +224,10 @@ test("only the session-mount load probes disk for external appends", () => {
   assert.match(loadSessionSource, /if \(d\.wrapperRebuilt\) \{\s*eventConnectionRef\.current\?\.close\("rebuilt"\);\s*eventConnectionRef\.current\?\.maintain\(sid\);/);
   assert.match(mountSource, /loadSession\(session\.id, !cached, true, \{ force: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
-  assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
+  // Upstream #1538 brought the second forced read: a `!` result held for the run's
+  // end is re-read once the run settles, before its card goes.
+  assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 2);
+  assert.match(source, /if \(sid\) void loadSession\(sid, false, false, \{ force: true \}\)/);
 });
 
 test("forking stays available during a run while in-session branch switches wait for it", () => {
@@ -239,7 +242,9 @@ test("forking stays available during a run while in-session branch switches wait
 
   // Fork copies into a new file, so only a shell command blocks it; the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
+  // Upstream #1539 passes handleFork through forkFromMessage, so the copy starts
+  // with the forked message already in the new composer.
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : forkFromMessage\}/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
   // Upstream #1502 replaced the fork's selection "Ask in new chat" with a plain Quote:
   // inserting text starts no session, so bashRunning no longer gates the button.
@@ -259,7 +264,7 @@ test("first user messages expose both branch actions and edit before their own e
     source.indexOf("  const handleLeafChange = useCallback"),
   );
 
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : forkFromMessage\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user"/);
   assert.doesNotMatch(chatWindowSource, /prevAssistantEntryId/);
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
@@ -394,7 +399,12 @@ test("built-in clone switches to the independent child session", () => {
   );
 
   assert.match(builtinSource, /case "clone"/);
-  assert.match(builtinSource, /type: "clone",\s+leafId: activeLeafId/);
+  // Upstream #1538 sends the appended leaf while it is still the branch tip, so
+  // /clone copies the branch the page shows after an entry an extension added.
+  assert.match(
+    builtinSource,
+    /type: "clone",\s+leafId: appended\?\.base === activeLeafId && appended\.lastEntryId === entryIdsRef\.current\.at\(-1\)\s*\?\s*appended\.leafId\s*\n\s*: activeLeafId,/,
+  );
   assert.match(builtinSource, /agentRunningRef\.current \|\| bashRunningRef\.current/);
   assert.match(builtinSource, /onSessionForked\?\.\(result\.newSessionId\)/);
 });
@@ -418,9 +428,11 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
   assert.match(source, /new AgentEventConnection\(\{/);
   // The hook hands the connection its own predicate instead of an inline arrow (now
   // extracted to wantsEventStream above the connection, which the debug reader shares);
-  // that predicate is what still demands sid be this hook's session.
+  // that predicate is what still demands sid be this hook's session — and, since
+  // upstream #1564, a session whose run ended: its shutdown is honored, so the
+  // stream lets go instead of holding the wrapper open.
   assert.match(source, /shouldMaintain: wantsEventStream,/);
-  assert.match(source, /const wantsEventStream = useCallback\(\(sid: string\) => \(\s*sessionHookMountedRef\.current\s*&& sessionIdRef\.current === sid/);
+  assert.match(source, /const wantsEventStream = useCallback\(\(sid: string\) => \(\s*sessionHookMountedRef\.current\s*&& endedSessionRef\.current !== sid\s*&& sessionIdRef\.current === sid/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = useStreamingSelector\(streamingStore, selectHasStreamingContent\)/);
