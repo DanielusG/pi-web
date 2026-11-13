@@ -1238,8 +1238,6 @@ function hasPreviewableInput(block: ToolCallContent): boolean {
   return false;
 }
 
-// `cwd` stays: the pending edit/write preview fetches /api/edit-preview with it,
-
 /**
  * A card's time before its result message: the run so far, redrawn each second as pi's TUI
  * redraws its `Elapsed`, then pi's measured time once the call ends. Its own state, so a tick
@@ -1258,15 +1256,12 @@ function ToolClockTime({ clock }: { clock: ToolClock }) {
   return <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{formatToolDuration(ms)}</span>;
 }
 
+// `cwd` stays: the pending edit/write preview fetches /api/edit-preview with it.
 // `resultFooter` is drawn under the result, so only while the card is expanded:
 // what it offers acts on the result the reader is looking at.
 // `notRun`: the message ended aborted or in an error, so pi ran none of its
 // calls and no result will come (pi-agent-core's agent loop).
-// and the sub-agent button takes upstream's onOpenSubagent (the right-panel tab).
-// `resultFooter` is drawn under the result, so only while the card is expanded:
-// what it offers acts on the result the reader is looking at.
-// `notRun`: the message ended aborted or in an error, so pi ran none of its
-// calls and no result will come (pi-agent-core's agent loop).
+// The sub-agent button takes upstream's onOpenSubagent (the right-panel tab).
 function ToolCallBlock({ block, result, notRun, duration, clock, cwd, onOpenSubagent, resultFooter }: { block: ToolCallContent; result?: ToolResultMessage; notRun?: boolean; duration?: number; clock?: ToolClock; cwd?: string; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(() => isToolCallExpanded(block.toolCallId));
@@ -2187,7 +2182,7 @@ function ResultImages({ images, isError }: { images: ImageContent[]; isError: bo
         flexWrap: "wrap",
         padding: "10px",
         background: "var(--bg)",
-        borderTop: `1px solid ${isError ? "rgba(248,113,113,0.3)" : "rgba(34,197,94,0.15)"}`,
+        borderTop: `1px solid ${isError ? "color-mix(in srgb, var(--danger) 30%, transparent)" : "color-mix(in srgb, var(--success) 15%, transparent)"}`,
       }}
     >
       {images.map((image, index) => {
@@ -2826,7 +2821,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
         padding: "5px 10px",
         fontSize: 11,
         color: "var(--text-dim)",
-        borderTop: `1px solid ${isError ? "rgba(248,113,113,0.3)" : "rgba(34,197,94,0.15)"}`,
+        borderTop: `1px solid ${isError ? "color-mix(in srgb, var(--danger) 30%, transparent)" : "color-mix(in srgb, var(--success) 15%, transparent)"}`,
       }}
     >
       <span role="status">
