@@ -123,6 +123,9 @@ export async function checkExtensionDialogs(page, artifacts, width) {
     // editor setText() does; pasteToEditor() inserts at the caret, and "" inserts nothing.
     const composer = page.locator("textarea").last();
     const editorText = await start("editor-text");
+    // Fork geometry (docs/agents/chat-ui.md): the card shows in the composer's place and the
+    // composer stays mounted hidden behind it, so an editor write during the request still lands.
+    assert.equal(await composer.isHidden(), true, "The composer is mounted hidden behind the card");
     assert.equal(await composer.inputValue(), "E2E replaced", "setEditorText replaces the draft");
     await editorText.getByRole("button", { name: "Cancel", exact: true }).click();
     const cleared = page.getByRole("dialog", { name: "E2E editor-text cleared", exact: true });

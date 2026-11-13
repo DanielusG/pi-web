@@ -96,9 +96,9 @@ test("the header: the brand and its versions line, then the bar right above the 
   const start = chatWindowSource.indexOf("{isEmptyNew && (\n          <div className=\"new-session-hero\"");
   assert.ok(start > 0);
   // Fork deviation: the composer slot holds an ask_user_question or extension
-  // dialog while one is open (docs/agents/chat-ui.md), so the hero ends at that slot, not at
-  // {chatInputElement}.
-  const hero = chatWindowSource.slice(start, chatWindowSource.indexOf("{askUserDialogElement ?? extensionDialogElement ?? chatInputElement}", start));
+  // dialog while one is open, with the composer mounted hidden behind it
+  // (docs/agents/chat-ui.md), so the hero ends at that slot.
+  const hero = chatWindowSource.slice(start, chatWindowSource.indexOf("{blockingDialogElement ? (", start));
   // The composer's side padding and width; the logo, then "Pi Web" over its
   // versions line; then the bar, the header's last child, so the composer
   // follows it. Nothing on the right: no versions block, no float.

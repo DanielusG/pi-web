@@ -9,10 +9,25 @@ deviation back to upstream's shape during a merge.
 Upstream renders the `ExtensionDialog` as a non-blocking overlay over the message area (expanded
 card bottom-anchored, collapsed pill top-anchored, pointer-events pass-through so input/stop stay
 alive). This fork restores the pre-v0.9.0 layout: the dialog is rendered **inline in the composer
-slot, replacing the input bar** — `{extensionDialogElement ?? chatInputElement}` — in both states:
-expanded card (`maxHeight: EXTENSION_DIALOG_MAX_HEIGHT`) and collapsed pill (pulsing dot). The input
-bar unmounts while a blocking request is open; dialog state (`value` / `collapsed`) resets on
-`[request]`.
+slot, in the input bar's place** — `blockingDialogElement` (`askUserDialogElement ??
+extensionDialogElement`) with the composer behind it — in both states: expanded card
+(`maxHeight: EXTENSION_DIALOG_MAX_HEIGHT`) and collapsed pill (pulsing dot). Dialog state
+(`value` / `collapsed`) resets on `[request]`.
+
+- **The composer stays mounted behind the card, `hidden` and `inert`** (`components/ChatWindow.tsx`).
+  Until v0.16.0 it unmounted while a blocking request was open, which dropped an extension's
+  `setEditorText()` / `pasteToEditor()` silently: `hooks/useAgentSession.ts` reaches the draft
+  through `chatInputRef.current`, and pi's TUI keeps its editor alive under a dialog. `hidden`
+  alone would leave the field focusable and in the accessibility tree, so `inert` goes with it
+  (React 19 takes `inert` as a boolean). What that shape costs, measured against Chromium:
+  `inputValue()` and `evaluate()` still work through the card — which is why upstream's #1537
+  editor-text check runs unchanged here — while `fill()`, typing and `Escape` never reach it;
+  `element.focus()` succeeds but `document.activeElement` stays outside, so the dialog keeps the
+  keyboard and `hooks/useKeyboardShortcuts.ts` never sees the composer as an event target.
+  `replaceTextareaRange()`'s `document.execCommand("insertText")` cannot run on a hidden field, so a
+  mid-dialog write lands through its plain-replacement fallback: the text lands, the undo entry is
+  lost. `ChatInput`'s `ResizeObserver` watches the textarea's **width**, so it re-grows itself when
+  the card closes.
 
 - `EXTENSION_DIALOG_MAX_HEIGHT = "min(45vh, 360px)"`, the title's max height is
   `calc(${EXTENSION_DIALOG_MAX_HEIGHT} * 0.4)`, and the title span is keyed by `request.id`.
@@ -130,8 +145,8 @@ error, `title` carrying the raw `mcp__` name). After it:
   preview was dropped too, as upstream's `isHiddenCustomMessage` + inline collapsed preview supersede it.
 
 The native `ask_user_question`'s dialog (`components/AskUserQuestionDialog.tsx`) takes the same
-composer slot, ahead of an extension dialog — `{askUserDialogElement ?? extensionDialogElement ??
-chatInputElement}` — with the same chrome (pill, maximize, "+N more", Escape declines); in the
+composer slot, ahead of an extension dialog — it is `blockingDialogElement`'s first term, with the
+composer mounted hidden behind it — with the same chrome (pill, maximize, "+N more", Escape declines); in the
 message list `BlockView` shows the waiting call as a running generic card and an answered one as
 `components/AskUserQuestionCard.tsx` — see [tools.md](tools.md).
 

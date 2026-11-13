@@ -1339,6 +1339,9 @@ compactError,
       />
     </div>
   ) : null;
+  // A blocking request owns the composer slot, but pi's TUI keeps its editor alive under its
+  // dialog, so ctx.ui.setEditorText() and pasteToEditor() must still reach the composer.
+  const blockingDialogElement = askUserDialogElement ?? extensionDialogElement;
 
 
   if (loading) {
@@ -1631,7 +1634,15 @@ compactError,
             </div>
           </div>
         )}
-        {askUserDialogElement ?? extensionDialogElement ?? chatInputElement}
+        {blockingDialogElement ? (
+          <>
+            {blockingDialogElement}
+            {/* The card shows in the composer's place; the composer stays mounted behind it,
+                hidden and inert: out of the layout, the accessibility tree and the keyboard,
+                while its handle stays alive for extension editor writes. */}
+            <div hidden inert={true}>{chatInputElement}</div>
+          </>
+        ) : chatInputElement}
         <ExtensionStatusBar
           statuses={extensionStatuses}
           widgets={extensionWidgets}

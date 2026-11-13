@@ -9,10 +9,16 @@ const dialogSource = source.slice(dialogStart, customStart);
 const customSource = source.slice(customStart);
 
 test("renders the extension dialog inline in the composer slot (fork layout)", () => {
-  // While a blocking extension request is open, the dialog replaces the input bar.
+  // While a blocking extension request is open, the dialog shows in the input bar's place.
   assert.match(source, /const extensionDialogElement = extensionDialog \?/);
   // The native ask_user_question's dialog takes the same slot, ahead of an extension's.
-  assert.match(source, /\{askUserDialogElement \?\? extensionDialogElement \?\? chatInputElement\}/);
+  assert.match(source, /const blockingDialogElement = askUserDialogElement \?\? extensionDialogElement;/);
+  assert.match(source, /\{blockingDialogElement \? \(/);
+  // The composer stays mounted behind the card — pi's TUI keeps its editor alive under a dialog,
+  // so an extension's setEditorText()/pasteToEditor() still lands while the request is open.
+  // Both attributes are required: `hidden` alone leaves it focusable and readable.
+  assert.match(source, /<div hidden inert={true}>\{chatInputElement\}<\/div>/);
+  assert.match(source, /\) : chatInputElement}/);
   // The dialog is not an overlay: no absolute positioning in the dialog component.
   assert.doesNotMatch(dialogSource, /position: "absolute"/);
   assert.doesNotMatch(dialogSource, /inset: 0/);
